@@ -39,7 +39,7 @@ const markdownComponents = {
   ),
   table: ({ children }: any) => (
     <div
-      className="table-scroll-x overflow-x-auto overscroll-x-contain my-2 -mx-1 rounded-lg border border-border/40"
+      className="table-scroll-x w-full max-w-full min-w-0 overflow-x-auto overscroll-x-contain my-2 rounded-lg border border-border/40"
       data-table-scroll-x="true"
     >
       <table className="w-full min-w-[720px] table-auto text-xs border-collapse">
