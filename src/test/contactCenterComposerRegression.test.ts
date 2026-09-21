@@ -51,6 +51,9 @@ describe("contact center composer regressions", () => {
     expect(globalCss).toContain(".contact-chat-photo-control");
     expect(globalCss).toContain(".contact-unanswered-banner");
     expect(globalCss).toContain(".message-primary-actions");
+    expect(globalCss).not.toMatch(
+      /@media \(max-width: 767px\)[\s\S]*?\.message-primary-actions\s*\{[\s\S]*?position:\s*absolute/,
+    );
   });
 
   it("offers only resolvable canonical message tokens and product fields in broadcasts", () => {
