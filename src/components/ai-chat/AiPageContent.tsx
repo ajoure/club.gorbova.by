@@ -434,7 +434,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       images: images.length > 0
         ? images.map((img) => ({
             ...img,
-            mimeType: allFiles.find((f) => f.name === img.filename)?.type || "image/jpeg",
+            mimeType: img.mimeType || allFiles.find((f) => f.name === img.filename)?.type || "image/jpeg",
           }))
         : undefined,
       unsupportedFiles,
