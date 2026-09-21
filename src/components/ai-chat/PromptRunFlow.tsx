@@ -98,7 +98,11 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
           >
             <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
             <p className="text-xs text-muted-foreground">Перетащите файлы или нажмите для выбора</p>
-            <p className="text-[10px] text-muted-foreground/60 mt-1">PDF, Excel/CSV, XML/JSON/MT940, Word, текст, изображения (макс. {MAX_FILES})</p>
+            <p className="text-[10px] text-muted-foreground/60 mt-1">
+              {isBankStatement
+                ? `PDF, XLSX/XLS, CSV, TXT, DOCX, JPG/JPEG, PNG, WebP (макс. ${MAX_FILES})`
+                : `PDF, Excel/CSV, XML/JSON/MT940, Word, текст, изображения (макс. ${MAX_FILES})`}
+            </p>
           </div>
           <input
             ref={inputRef}

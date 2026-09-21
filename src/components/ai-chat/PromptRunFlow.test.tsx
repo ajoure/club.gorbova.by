@@ -51,4 +51,44 @@ describe("PromptRunFlow bank statement guidance", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Файл больше 20 МБ");
     expect(screen.getByRole("button", { name: "Анализировать" })).toBeDisabled();
   });
+
+  it("shows only the formats accepted by the bank statement mode", () => {
+    const { container } = render(
+      <PromptRunFlow
+        scenario={bankStatementScenario}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+        isLoading={false}
+      />,
+    );
+
+    expect(screen.getByText(/PDF, XLSX\/XLS, CSV, TXT, DOCX, JPG\/JPEG, PNG, WebP/)).toBeInTheDocument();
+    const file = new File(["statement"], "statement.xml", { type: "application/xml" });
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [file] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Не поддерживается формат: statement.xml");
+  });
+
+  it("rejects more than five files instead of silently truncating the selection", () => {
+    const { container } = render(
+      <PromptRunFlow
+        scenario={bankStatementScenario}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+        isLoading={false}
+      />,
+    );
+    const files = Array.from({ length: 6 }, (_, index) => (
+      new File([`statement-${index}`], `statement-${index}.csv`, { type: "text/csv" })
+    ));
+
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("не более 5 файлов");
+    expect(screen.getByRole("button", { name: "Анализировать" })).toBeDisabled();
+  });
 });
