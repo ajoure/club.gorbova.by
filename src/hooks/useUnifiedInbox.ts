@@ -15,6 +15,7 @@ import {
   type TelegramUnansweredSummary,
 } from "@/lib/contactCenterTelegramQueue";
 import { formatContactName } from "@/lib/nameUtils";
+import { useRetainedQueryData } from "@/hooks/useRetainedQueryData";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -340,7 +341,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
             .map((item) => item.dialog?.user_id || item.unanswered?.user_id)
             .filter((id): id is string => !!id),
         ),
-      ),
+      ).sort(),
     [tgQueue],
   );
   const tgProfiles = useQuery({
@@ -369,14 +370,15 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       const m = new Map<string, any>();
       results.forEach((result) => {
         if (result.error) {
-          console.error("[unified-tg-profiles] batch error:", result.error);
-          return;
+          throw result.error;
         }
         (result.data || []).forEach((p: any) => m.set(p.id, p));
       });
       return Array.from(m.values()) as any[];
     },
   });
+
+  const retainedTgProfiles = useRetainedQueryData(tgProfiles.data, user?.id);
 
   // --- Instagram: аккаунты + диалоги по каждому активному аккаунту ---
   const igAccounts = useQuery({
@@ -567,7 +569,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     if (!enabled) return [];
 
     const tgProfileMap = new Map<string, any>();
-    (tgProfiles.data || []).forEach((p: any) => {
+    (retainedTgProfiles || []).forEach((p: any) => {
       if (p.user_id) tgProfileMap.set(p.user_id, p);
       if (p.id) tgProfileMap.set(p.id, p);
     });
@@ -598,6 +600,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       const userId = d?.user_id || unanswered?.user_id;
       if (!userId) continue;
       const p = tgProfileMap.get(userId);
+      // An unresolved/failed identity read is not a confirmed unlinked contact.
+      if (!p && !tgProfiles.isSuccess) continue;
       const pref = tgPrefMap.get(userId);
       const latestIdentity = d?.last_message_id
         ? tgMessageIdentityMap.get(d.last_message_id)
@@ -729,7 +733,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     tgQueue,
     tgLastMessageIdentities.data,
     tgBusinessAccounts.data,
-    tgProfiles.data,
+    retainedTgProfiles,
+    tgProfiles.isSuccess,
     tgPrefs.data,
     tgUnanswered.data,
     igDialogs.data,
@@ -860,7 +865,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
   }, [contactRows]);
 
   const loadingBySource: Record<UnifiedSource, boolean> = {
-    telegram: enabled && (tg.isLoading || tgUnanswered.isLoading),
+    telegram: enabled && (tg.isLoading || tgUnanswered.isLoading || tgProfiles.isLoading),
     instagram:
       enabled &&
       (igAccounts.isLoading || (igAccountIds.length > 0 && igDialogs.isLoading)),
@@ -881,7 +886,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       Object.values(loadingBySource).some(Boolean),
     loadingBySource,
     errors: {
-      telegram: (tg.error || tgUnanswered.error) as Error | null,
+      telegram: (tg.error || tgUnanswered.error || tgProfiles.error) as Error | null,
       instagram: igDialogs.error as Error | null,
       support: support.error as Error | null,
     },

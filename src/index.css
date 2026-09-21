@@ -634,7 +634,6 @@ body.impersonation-active .impersonation-offset {
 @media (max-width: 767px), (any-pointer: coarse) {
   .app-viewport-shell {
     position: relative;
-    top: var(--visual-viewport-top, 0px);
   }
   [data-viewport-dialog] {
     top: calc(var(--visual-viewport-top, 0px) + var(--app-height) / 2);
@@ -660,6 +659,18 @@ body.impersonation-active .impersonation-offset {
   }
   [data-viewport-sheet="left"] { left: env(safe-area-inset-left, 0px); }
   [data-viewport-sheet="right"] { right: env(safe-area-inset-right, 0px); }
+  /* The contact shell's !important desktop 100dvh sizing must not override
+     the available height when the keyboard covers part of the screen. */
+  [data-viewport-sheet="right"].entity-shell-contact {
+    top: calc(var(--visual-viewport-top, 0px) + 0.5rem) !important;
+    bottom: auto !important;
+    height: calc(var(--app-height) - 1rem) !important;
+    max-height: calc(var(--app-height) - 1rem) !important;
+    left: auto !important;
+    right: max(0.5rem, env(safe-area-inset-right, 0px)) !important;
+    width: calc(100vw - max(0.5rem, env(safe-area-inset-left, 0px)) - max(0.5rem, env(safe-area-inset-right, 0px)));
+    min-width: 0;
+  }
   [data-viewport-sheet="top"] { top: var(--visual-viewport-top, 0px); }
   [data-viewport-sheet="bottom"] {
     bottom: max(0px, calc(100dvh - var(--app-height) - var(--visual-viewport-top, 0px)));

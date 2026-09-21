@@ -206,7 +206,22 @@ export function useInboxRealtimeInvalidation(): void {
           })
       : null;
 
+    // Mobile/PWA suspension can miss events while the socket is disconnected.
+    // Catch up the queue on resume, using the same batch as live events.
+    const resume = () => {
+      if (document.visibilityState !== "visible") return;
+      markInbox();
+      markUnread();
+      if (unifiedEnabled) { markIg(); markSupport(); }
+    };
+    window.addEventListener("online", resume);
+    window.addEventListener("pageshow", resume);
+    document.addEventListener("visibilitychange", resume);
+
     return () => {
+      window.removeEventListener("online", resume);
+      window.removeEventListener("pageshow", resume);
+      document.removeEventListener("visibilitychange", resume);
       // Flush ожидающих инвалидаций, чтобы последний invalidate не потерялся
       // при unmount/route-change.
       if (timerRef.current !== null) {
