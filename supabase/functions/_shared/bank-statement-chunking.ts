@@ -1,4 +1,5 @@
 const DEFAULT_CHUNK_SIZE = 60_000;
+const DEFAULT_IMAGE_BATCH_SIZE = 2;
 
 /** Splits extracted statement text without cutting a row when possible. */
 export function splitBankStatementText(
@@ -33,4 +34,19 @@ export function splitBankStatementText(
   }
   if (current) chunks.push(current);
   return chunks;
+}
+
+/** Keeps scanned statements out of one large vision request. */
+export function batchBankStatementImages<T>(
+  images: T[],
+  batchSize = DEFAULT_IMAGE_BATCH_SIZE,
+): T[][] {
+  if (!Number.isInteger(batchSize) || batchSize < 1) {
+    throw new Error("batchSize must be a positive integer");
+  }
+  const batches: T[][] = [];
+  for (let offset = 0; offset < images.length; offset += batchSize) {
+    batches.push(images.slice(offset, offset + batchSize));
+  }
+  return batches;
 }

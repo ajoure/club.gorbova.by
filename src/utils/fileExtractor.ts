@@ -131,7 +131,15 @@ async function extractFromExcel(file: File): Promise<ExtractedContent> {
   }
 }
 
-async function extractTextFromPdf(file: File): Promise<string> {
+interface ExtractedPdfContent {
+  text: string;
+  pageImages: Array<{ base64: string; filename: string; mimeType: string }>;
+}
+
+const PDF_TEXT_LAYER_MIN_CHARS = 80;
+const PDF_RENDER_MAX_DIMENSION = 1_600;
+
+async function extractTextFromPdf(file: File): Promise<ExtractedPdfContent> {
   const [pdfjs, workerModule] = await Promise.all([
     import("pdfjs-dist"),
     import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
@@ -140,6 +148,7 @@ async function extractTextFromPdf(file: File): Promise<string> {
   const data = new Uint8Array(await file.arrayBuffer());
   const document = await pdfjs.getDocument({ data }).promise;
   const pages: string[] = [];
+  const pageImages: ExtractedPdfContent["pageImages"] = [];
 
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -153,11 +162,34 @@ async function extractTextFromPdf(file: File): Promise<string> {
       if (text) pages.push(`--- Страница ${pageNumber} ---\n${text}`);
       page.cleanup();
     }
+
+    const text = pages.join("\n");
+    if (text.trim().length < PDF_TEXT_LAYER_MIN_CHARS) {
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+        const page = await document.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, PDF_RENDER_MAX_DIMENSION / Math.max(baseViewport.width, baseViewport.height));
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext("2d", { alpha: false });
+        if (!context) throw new Error("PDF canvas is unavailable");
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+        pageImages.push({
+          base64: canvas.toDataURL("image/jpeg", 0.72),
+          filename: `${file.name} — страница ${pageNumber}`,
+          mimeType: "image/jpeg",
+        });
+        canvas.width = 1;
+        canvas.height = 1;
+        page.cleanup();
+      }
+    }
+    return { text, pageImages };
   } finally {
     await document.destroy();
   }
-
-  return pages.join("\n");
 }
 
 export async function extractAllFilesContent(
@@ -202,19 +234,13 @@ export async function extractAllFilesContent(
       }
     } else if (type === "pdf") {
       try {
-        const pdfText = await extractTextFromPdf(file);
-        if (pdfText.trim().length >= 80) {
-          textParts.push(`--- Содержимое PDF: ${file.name} ---\n${pdfText}\n--- Конец PDF ---`);
+        const pdf = await extractTextFromPdf(file);
+        if (pdf.text.trim().length >= PDF_TEXT_LAYER_MIN_CHARS) {
+          textParts.push(`--- Содержимое PDF: ${file.name} ---\n${pdf.text}\n--- Конец PDF ---`);
         } else {
-          // Scanned statements have no text layer. Keep the original PDF for
-          // vision processing, while text PDFs never pay this expensive cost.
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          images.push({ base64, filename: file.name, mimeType: "application/pdf" });
+          // Send scanned statements page by page. Small JPEG batches are much
+          // faster and more reliable for vision models than one large PDF.
+          images.push(...pdf.pageImages);
           textParts.push(`[Сканированный PDF: ${file.name}]`);
         }
       } catch (e) {
