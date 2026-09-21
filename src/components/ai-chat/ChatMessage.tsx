@@ -103,7 +103,10 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
   const scenarioLabel = message.metadata?.launcher_title_snapshot || message.metadata?.prompt_title_snapshot;
 
   return (
-    <div className={`flex w-full min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`flex w-full min-w-0 ${isUser ? "justify-end" : "justify-start"}`}
+      style={{ maxWidth: "min(100%, calc(100dvw - 3.125rem))" }}
+    >
       <div
         className={`min-w-0 ${
           isUser
