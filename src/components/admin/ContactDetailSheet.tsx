@@ -222,6 +222,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
+  const [resendingEntitlementSourceId, setResendingEntitlementSourceId] = useState<string | null>(null);
   const [extendDays, setExtendDays] = useState(30);
   const [isProcessing, setIsProcessing] = useState(false);
   const [grantProductId, setGrantProductId] = useState("");
@@ -668,11 +669,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
       const productIds = [...new Set((sourceRows || []).map(row => row.product_id).filter(Boolean))];
       const tariffIds = [...new Set((sourceRows || []).map(row => row.tariff_id).filter(Boolean))] as string[];
-      let sourceProducts: Array<{ id: string; name: string; code: string }> = [];
+      let sourceProducts: Array<{ id: string; name: string; code: string; telegram_club_id: string | null }> = [];
       if (productIds.length > 0) {
         const { data, error } = await supabase
           .from("products_v2")
-          .select("id, name, code")
+          .select("id, name, code, telegram_club_id")
           .in("id", productIds);
         if (error) throw error;
         sourceProducts = data || [];
@@ -1846,6 +1847,50 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     if (new Date(source.starts_at).getTime() > now) return false;
     return !source.expires_at || new Date(source.expires_at).getTime() > now;
   });
+
+  const canResendEntitlementTelegram =
+    hasPermission("entitlements.manage") || isAdmin() || isSuperAdmin();
+
+  const resendEntitlementTelegramLinks = async (source: any) => {
+    const clubId = source?.product?.telegram_club_id || source?.meta?.target_club_id;
+    const targetUserId = source?.user_id || resolvedUserId;
+    if (!clubId || !targetUserId || !source?.id || resendingEntitlementSourceId) return;
+
+    const confirmed = window.confirm(
+      "Повторно сформировать и отправить клиенту личные ссылки на Telegram-канал и чат? Срок доступа не изменится.",
+    );
+    if (!confirmed) return;
+
+    setResendingEntitlementSourceId(source.id);
+    try {
+      const adminUser = (await supabase.auth.getUser()).data.user;
+      const { data, error } = await supabase.functions.invoke("telegram-grant-access", {
+        body: {
+          user_id: targetUserId,
+          club_id: clubId,
+          is_manual: true,
+          force_resend: true,
+          entitlement_source_id: source.id,
+          source: "admin_entitlement_source_resend",
+          source_id: source.id,
+          access_rule_id: source?.meta?.source_rule_id || undefined,
+          admin_id: adminUser?.id,
+          comment: "Повторная выдача ссылок по действующему продуктовому доступу",
+        },
+      });
+      if (error) throw error;
+      if (data?.blocked || data?.success === false) {
+        throw new Error(data?.reason || data?.error || "Повторная отправка заблокирована");
+      }
+      toast.success("Новые ссылки на канал и чат отправлены клиенту");
+      queryClient.invalidateQueries({ queryKey: ["telegram-access", targetUserId] });
+      queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+    } catch (error) {
+      toast.error(`Не удалось отправить ссылки: ${normalizeEdgeFunctionError(error)}`);
+    } finally {
+      setResendingEntitlementSourceId(null);
+    }
+  };
   const activeSourceProductIds = new Set(activeEntitlementSources.map(source => source.product_id));
 
   const activeEntitlements = (entitlements || []).filter(e => {
@@ -3825,6 +3870,23 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                               <span>{source.expires_at ? format(new Date(source.expires_at), "dd.MM.yy") : "бессрочно"}</span>
                             </div>
                           </div>
+                          {canResendEntitlementTelegram && source.product?.telegram_club_id && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="mt-3 w-full sm:w-auto gap-1.5"
+                              disabled={resendingEntitlementSourceId !== null}
+                              onClick={() => resendEntitlementTelegramLinks(source)}
+                            >
+                              {resendingEntitlementSourceId === source.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Send className="h-3.5 w-3.5" />
+                              )}
+                              Отправить новые ссылки
+                            </Button>
+                          )}
                         </CardContent>
                       </Card>
                     );
