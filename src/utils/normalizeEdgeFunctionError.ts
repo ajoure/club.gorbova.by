@@ -142,6 +142,10 @@ function extractMeaningful(body: unknown): string | null {
 function mapKnown(raw: string): string | null {
   const s = raw.toLowerCase();
 
+  if (s.includes("request idle timeout") || s.includes("timeout limit")) {
+    return "Анализ занял слишком много времени. Повторите запрос или загрузите выписку в PDF с текстовым слоем, XLSX либо CSV.";
+  }
+
   // Gotenberg / PDF conversion
   if (s.includes('gotenberg_not_configured')) return 'Gotenberg не настроен';
   if (s.includes('gotenberg_disabled')) return 'Конвертация PDF отключена';
