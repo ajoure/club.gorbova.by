@@ -146,13 +146,13 @@ async function extractTextFromPdf(file: File): Promise<ExtractedPdfContent> {
   ]);
   pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default;
   const data = new Uint8Array(await file.arrayBuffer());
-  const document = await pdfjs.getDocument({ data }).promise;
+  const pdfDocument = await pdfjs.getDocument({ data }).promise;
   const pages: string[] = [];
   const pageImages: ExtractedPdfContent["pageImages"] = [];
 
   try {
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      const page = await pdfDocument.getPage(pageNumber);
       const content = await page.getTextContent();
       const text = content.items
         .map((item) => ("str" in item ? item.str : ""))
@@ -165,8 +165,8 @@ async function extractTextFromPdf(file: File): Promise<ExtractedPdfContent> {
 
     const text = pages.join("\n");
     if (text.trim().length < PDF_TEXT_LAYER_MIN_CHARS) {
-      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-        const page = await document.getPage(pageNumber);
+      for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+        const page = await pdfDocument.getPage(pageNumber);
         const baseViewport = page.getViewport({ scale: 1 });
         const scale = Math.min(2, PDF_RENDER_MAX_DIMENSION / Math.max(baseViewport.width, baseViewport.height));
         const viewport = page.getViewport({ scale });
@@ -188,7 +188,7 @@ async function extractTextFromPdf(file: File): Promise<ExtractedPdfContent> {
     }
     return { text, pageImages };
   } finally {
-    await document.destroy();
+    await pdfDocument.destroy();
   }
 }
 
