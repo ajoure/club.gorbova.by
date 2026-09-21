@@ -27,6 +27,8 @@ interface GrantAccessRequest {
   product_name?: string;     // For logging in telegram chat
   duration_days?: number;    // For calculating access end
   access_rule_id?: string;   // Exact access_rules lineage for finite bonuses
+  entitlement_source_id?: string; // Existing active entitlement used for an admin resend
+  force_resend?: boolean;    // Explicitly reissue personal links after server-side validation
   // Sub-patch B: Parent lineage for downstream ledger propagation
   parent_event_key?: string | null;
   parent_execution_key?: string | null;
@@ -262,6 +264,7 @@ Deno.serve(async (req) => {
     // ========== AUTH GUARD (PATCH-1 + PATCH-2: Service Role bypass) ==========
     const isServiceRoleCall = requestHasServiceRoleKey(req, supabaseServiceKey);
     const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+    let authenticatedAdminId: string | null = null;
     if (!isServiceRoleCall && !authHeader.toLowerCase().startsWith('bearer ')) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized', code: 'MISSING_TOKEN' }),
@@ -285,6 +288,7 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+      authenticatedAdminId = user.id;
 
       // Check admin permission using service role
       const { data: hasPermission } = await supabase.rpc('has_permission', {
@@ -320,7 +324,7 @@ Deno.serve(async (req) => {
     // ========== END AUTH GUARD ==========
 
     const body: GrantAccessRequest = await req.json();
-    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days, access_rule_id, parent_event_key, parent_execution_key, _from_primary_path } = body;
+    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days, access_rule_id, entitlement_source_id, force_resend, parent_event_key, parent_execution_key, _from_primary_path } = body;
 
     // Sub-patch B: Validate parent lineage contract
     if (_from_primary_path === true && (!parent_event_key || !parent_execution_key)) {
@@ -362,6 +366,88 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'club_id or club_ids is required — access to all clubs is never granted automatically' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // An administrator may reissue expired personal links, but only from an
+    // existing active entitlement source.  The source is the authority for
+    // the user, club and end date; browser-supplied values never widen it.
+    let boundedValidUntil = valid_until || null;
+    if (force_resend === true) {
+      if (
+        !is_manual ||
+        !entitlement_source_id ||
+        resolvedClubIds.length !== 1 ||
+        source_id !== entitlement_source_id ||
+        source !== 'admin_entitlement_source_resend'
+      ) {
+        return new Response(JSON.stringify({
+          error: 'force_resend requires one club and an entitlement source',
+          code: 'INVALID_FORCE_RESEND_REQUEST',
+        }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const { data: entitlementSource, error: sourceError } = await supabase
+        .from('entitlement_sources')
+        .select('id,user_id,product_id,starts_at,expires_at,status,meta')
+        .eq('id', entitlement_source_id)
+        .maybeSingle();
+      if (sourceError) throw new Error(`entitlement_source_read_failed:${sourceError.message}`);
+
+      const now = Date.now();
+      const sourceStartsAt = entitlementSource?.starts_at ? Date.parse(entitlementSource.starts_at) : Number.NaN;
+      const sourceExpiresAt = entitlementSource?.expires_at ? Date.parse(entitlementSource.expires_at) : null;
+      if (
+        !entitlementSource ||
+        String(entitlementSource.user_id) !== String(user_id) ||
+        entitlementSource.status !== 'active' ||
+        !Number.isFinite(sourceStartsAt) ||
+        sourceStartsAt > now ||
+        (sourceExpiresAt !== null && (!Number.isFinite(sourceExpiresAt) || sourceExpiresAt <= now))
+      ) {
+        return new Response(JSON.stringify({
+          error: 'Active entitlement source not found',
+          code: 'ENTITLEMENT_SOURCE_NOT_ACTIVE',
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const sourceMeta = (entitlementSource.meta || {}) as Record<string, unknown>;
+      const mappedClubId = typeof sourceMeta.target_club_id === 'string'
+        ? sourceMeta.target_club_id
+        : null;
+      const requestedClubId = resolvedClubIds[0];
+      const { data: sourceProduct, error: productError } = await supabase
+        .from('products_v2')
+        .select('telegram_club_id')
+        .eq('id', entitlementSource.product_id)
+        .maybeSingle();
+      if (productError) throw new Error(`entitlement_source_product_read_failed:${productError.message}`);
+      if (
+        String(mappedClubId || sourceProduct?.telegram_club_id || '') !== String(requestedClubId)
+      ) {
+        return new Response(JSON.stringify({
+          error: 'Entitlement source is not mapped to this club',
+          code: 'ENTITLEMENT_SOURCE_CLUB_MISMATCH',
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      boundedValidUntil = entitlementSource.expires_at || null;
+      const { error: resendAuditError } = await supabase.from('audit_logs').insert({
+        action: 'admin.telegram.force_resend.requested',
+        actor_type: 'admin',
+        actor_id: authenticatedAdminId || admin_id || null,
+        actor_label: 'telegram-grant-access',
+        target_user_id: user_id,
+        meta: {
+          entitlement_source_id,
+          club_id: requestedClubId,
+          source: source || 'admin_entitlement_source_resend',
+          reason: comment || null,
+          bounded_valid_until: boundedValidUntil,
+        },
+      });
+      if (resendAuditError) {
+        throw new Error(`force_resend_audit_failed:${resendAuditError.message}`);
+      }
     }
 
     // Get user profile - user_id in the request maps to profiles.user_id (auth id)
@@ -620,7 +706,7 @@ Deno.serve(async (req) => {
       // fulfilment may skip a second notification only while the projection is
       // already healthy. Missing/revoked projections must pass through the full
       // unban + personal-link flow below.
-      let activeUntil: string | null = valid_until || null;
+      let activeUntil: string | null = boundedValidUntil;
       if (!is_manual) {
         const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
         const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
