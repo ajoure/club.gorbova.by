@@ -38,8 +38,11 @@ const markdownComponents = {
     <pre className="my-2 p-2 rounded-md bg-muted/70 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto">{children}</pre>
   ),
   table: ({ children }: any) => (
-    <div className="overflow-x-auto my-2 -mx-1 rounded-lg border border-border/40">
-      <table className="w-full table-fixed text-xs border-collapse">
+    <div
+      className="table-scroll-x overflow-x-auto overscroll-x-contain my-2 -mx-1 rounded-lg border border-border/40"
+      data-table-scroll-x="true"
+    >
+      <table className="w-full min-w-[720px] table-auto text-xs border-collapse">
         {children}
       </table>
     </div>
@@ -49,10 +52,10 @@ const markdownComponents = {
     <tr className="even:bg-muted/30">{children}</tr>
   ),
   th: ({ children }: any) => (
-    <th className="px-1.5 sm:px-2.5 py-1.5 text-left font-semibold border-b border-border/30 whitespace-normal break-words">{children}</th>
+    <th className="px-2.5 py-1.5 text-left font-semibold border-b border-border/30 whitespace-normal break-words">{children}</th>
   ),
   td: ({ children }: any) => (
-    <td className="px-1.5 sm:px-2.5 py-1.5 border-b border-border/20 break-words [overflow-wrap:anywhere]">{children}</td>
+    <td className="px-2.5 py-1.5 border-b border-border/20 align-top break-words">{children}</td>
   ),
   hr: () => <hr className="my-3 border-border/30" />,
   blockquote: ({ children }: any) => (
