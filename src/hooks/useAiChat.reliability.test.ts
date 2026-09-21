@@ -76,4 +76,31 @@ describe('conversation isolation', () => {
     await act(async () => { await result.current.sendMessage('Second'); });
     expect(mocks.invoke.mock.calls[1][1].body.messages).toEqual([{ role: 'user', content: 'First' }, { role: 'user', content: 'Second' }]);
   });
+
+  it('keeps a bank statement failure in chat with recovery steps and allows retry', async () => {
+    mocks.invoke.mockResolvedValueOnce({
+      error: new Error('Request idle timeout limit (150s) reached'),
+    });
+    const { result } = renderHook(() => useAiChat());
+
+    let succeeded!: boolean;
+    await act(async () => {
+      succeeded = await result.current.runBankStatementAnalyzer({
+        fileContents: 'statement contents',
+        fileNames: ['statement.pdf'],
+      });
+    });
+
+    expect(succeeded).toBe(false);
+    expect(result.current.messages.at(-1)?.metadata).toMatchObject({
+      is_error: true,
+      scenario_code: 'bank_statement_analysis',
+      launcher_title_snapshot: 'Анализ выписки',
+    });
+    expect(result.current.messages.at(-1)?.content).toContain('Выписку не удалось распознать');
+    expect(result.current.messages.at(-1)?.content).toContain('statement.pdf');
+    expect(result.current.messages.at(-1)?.content).toContain('Что сделать');
+    expect(result.current.messages.at(-1)?.content).toContain('XLSX или CSV');
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
 });
