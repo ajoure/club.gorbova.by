@@ -11,7 +11,7 @@ import { reusePendingSubscriptionCheckout,samePendingSubscriptionPurchase } from
 const proposal={user_id:'user',product_id:'product',tariff_id:'tariff',offer_id:'offer',currency:'BYN',final_price:250,purchase_snapshot:{access_days:30,is_trial:false}};
 const order={...proposal,id:'order',order_number:'order-number',status:'pending',paid_amount:0,meta:{payment_type:'subscription'}};
 function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order, baseProvider:any={id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}}, baseSubscription:any={id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}) {
- const rows:any={subscriptions_v2:[baseSubscription],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
+ const rows:any={subscriptions_v2:Array.isArray(baseSubscription)?baseSubscription:[baseSubscription],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
  const db:any={rpc:vi.fn().mockResolvedValue({data:true,error:null}),from:vi.fn((table:string)=>{
   let orphanQuery=false;const q:any={is:vi.fn(()=>{orphanQuery=true;return q;})};for(const op of ['select','eq','in','gt','limit','maybeSingle','insert']) q[op]=vi.fn(()=>q);
   q.then=(resolve:any)=>Promise.resolve({data:orphanQuery ? [] : rows[table] ?? null,error:null}).then(resolve);return q;
@@ -79,6 +79,17 @@ describe('provider-confirmed subscription checkout reuse',()=>{
   const db=dbFixture([],[{id:'other',provider:'bepaid',state:'active',subscription_v2_id:'other-sub'}]);
   await expect(reusePendingSubscriptionCheckout(db,proposal,'stripe','account')).rejects.toThrow('multiple_live_provider');
   expect(stripeGetCheckoutSession).not.toHaveBeenCalled();
+ });
+ it('reuses the valid pending link when the only other provider row belongs to a superseded purchase',async()=>{
+  const provider={id:'provider-row',provider:'bepaid',subscription_v2_id:'sub',provider_subscription_id:'sbs_live',order_id:'order',state:'redirecting',meta:{checkout_url:'https://checkout.example.test/live'}};
+  const historical={id:'historical-row',provider:'bepaid',subscription_v2_id:'old-sub',provider_subscription_id:'sbs_old',order_id:'old-order',state:'redirecting',meta:{}};
+  const subscriptions=[
+   {id:'sub',order_id:'order',status:'past_due',tariff_id:'tariff',meta:{}},
+   {id:'old-sub',order_id:'old-order',status:'superseded',tariff_id:'tariff',meta:{}},
+  ];
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:vi.fn().mockResolvedValue({subscription:{id:'sbs_live',state:'redirecting',checkout_url:'https://checkout.example.test/live',last_transaction:{status:'pending'}}})}));
+  const db=dbFixture([],[historical],order,provider,subscriptions);
+  await expect(reusePendingSubscriptionCheckout(db,proposal,'bepaid')).resolves.toMatchObject({order_id:'order',redirect_url:'https://checkout.example.test/live'});
  });
  it('syncs only an already expired checkout and never retries a complete or unknown provider session',async()=>{
   const db=dbFixture();vi.mocked(stripeGetCheckoutSession).mockResolvedValue({ok:true,status:200,data:{id:'cs_test',status:'expired'}});

@@ -1,4 +1,4 @@
-import { BLOCKING_PROVIDER_STATES } from './subscription-conflict.ts';
+import { BLOCKING_PROVIDER_STATES, TERMINAL_STATUSES } from './subscription-conflict.ts';
 import { pendingPurchaseContext } from './pending-purchase.ts';
 import { getBepaidCredsStrict, isBepaidCredsError, createBepaidAuthHeader } from './bepaid-credentials.ts';
 import { readAcquiringSecret } from './acquiring/vault.ts';
@@ -91,7 +91,15 @@ export async function reusePendingSubscriptionCheckout(db:any,proposed:Row,provi
     return null;
   }
   const {p,sub,order}=matches[0];
-  if(providers.some(other=>other.id!==p.id)) throw new Error('multiple_live_provider_subscriptions_require_reconciliation');
+  const otherLiveProviders=providers.filter(other=>{
+    if(other.id===p.id) return false;
+    const otherSub=subs?.find((candidate:Row)=>candidate.id===other.subscription_v2_id);
+    // Historical provider rows attached to a locally terminal purchase are
+    // not a second live mandate. The same rule is used by the conflict guard;
+    // otherwise a superseded checkout can block reuse forever.
+    return !otherSub || !(TERMINAL_STATUSES as readonly string[]).includes(String(otherSub.status));
+  });
+  if(otherLiveProviders.length) throw new Error('multiple_live_provider_subscriptions_require_reconciliation');
   const {data:money,error:moneyError}=await db.from('payments_v2').select('id').eq('order_id',order.id)
     .in('status',['succeeded','refunded','partially_refunded']).gt('amount',0).eq('is_deleted',false).limit(1);
   if(moneyError || money?.length) throw new Error('pending_purchase_payment_requires_reconciliation');
