@@ -236,7 +236,7 @@ Deno.test("terminal superseded local stays non-blocking even with historical pro
     product_id: PRODUCT,
     providers: ["bepaid"],
   });
-  assertEquals(conflict.status, "ok");
+  assertEquals(conflict.status, "no_conflict");
 });
 
 Deno.test("orphan guard — terminal local without live provider state stays non-blocking", async () => {
