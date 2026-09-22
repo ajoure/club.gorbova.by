@@ -1,12 +1,17 @@
 import { describe,it,expect,vi,beforeEach } from 'vitest';
 vi.mock('../../supabase/functions/_shared/acquiring/vault.ts',()=>({readAcquiringSecret:vi.fn().mockResolvedValue('test-only-placeholder')}));
 vi.mock('../../supabase/functions/_shared/acquiring/stripe-client.ts',()=>({stripeGetCheckoutSession:vi.fn()}));
+vi.mock('../../supabase/functions/_shared/bepaid-credentials.ts',()=>({
+ getBepaidCredsStrict:vi.fn().mockResolvedValue({shop_id:'33524',secret_key:'test-secret',test_mode:true}),
+ isBepaidCredsError:vi.fn().mockReturnValue(false),
+ createBepaidAuthHeader:vi.fn().mockReturnValue('Basic test'),
+}));
 import { stripeGetCheckoutSession } from '../../supabase/functions/_shared/acquiring/stripe-client';
 import { reusePendingSubscriptionCheckout,samePendingSubscriptionPurchase } from '../../supabase/functions/_shared/pending-subscription-checkout';
 const proposal={user_id:'user',product_id:'product',tariff_id:'tariff',offer_id:'offer',currency:'BYN',final_price:250,purchase_snapshot:{access_days:30,is_trial:false}};
 const order={...proposal,id:'order',order_number:'order-number',status:'pending',paid_amount:0,meta:{payment_type:'subscription'}};
-function dbFixture(money:any[]=[], extraProviders:any[]=[]) {
- const rows:any={subscriptions_v2:[{id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}],provider_subscriptions:[{id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}},...extraProviders],orders_v2:order,payments_v2:money};
+function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order, baseProvider:any={id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}}) {
+ const rows:any={subscriptions_v2:[{id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
  const db:any={rpc:vi.fn().mockResolvedValue({data:true,error:null}),from:vi.fn((table:string)=>{
   let orphanQuery=false;const q:any={is:vi.fn(()=>{orphanQuery=true;return q;})};for(const op of ['select','eq','in','gt','limit','maybeSingle','insert']) q[op]=vi.fn(()=>q);
   q.then=(resolve:any)=>Promise.resolve({data:orphanQuery ? [] : rows[table] ?? null,error:null}).then(resolve);return q;
@@ -19,10 +24,25 @@ describe('provider-confirmed subscription checkout reuse',()=>{
   for(const changed of [{user_id:'other'},{final_price:251},{currency:'USD'},{purchase_snapshot:{access_days:60}},{status:'paid'},{paid_amount:1},{is_deleted:true}])
    expect(samePendingSubscriptionPurchase({...order,...changed},proposal)).toBe(false);
  });
+ it('reuses an offer-less system renewal for the same public tariff checkout only',()=>{
+  const renewal={...order,offer_id:null,meta:{payment_type:'subscription',payment_flow:'renewal_subscription'}};
+  expect(samePendingSubscriptionPurchase(renewal,proposal)).toBe(true);
+  expect(samePendingSubscriptionPurchase({...renewal,meta:{payment_type:'subscription',payment_flow:'admin_subscription'}},proposal)).toBe(false);
+  expect(samePendingSubscriptionPurchase({...renewal,tariff_id:'other'},proposal)).toBe(false);
+  expect(samePendingSubscriptionPurchase({...renewal,final_price:251},proposal)).toBe(false);
+ });
  it('returns the same legacy purchase only for a verified open unexpired Stripe session',async()=>{
   vi.mocked(stripeGetCheckoutSession).mockResolvedValue({ok:true,status:200,data:{id:'cs_test',status:'open',expires_at:Math.floor(Date.now()/1000)+3600,payment_status:'unpaid',url:'https://checkout.example.test/live'}});
   const db=dbFixture();const result=await reusePendingSubscriptionCheckout(db,proposal,'stripe','account');
   expect(result).toMatchObject({order_id:'order',subscription_v2_id:'sub',redirect_url:'https://checkout.example.test/live'});
+  expect(db.rpc).not.toHaveBeenCalled();
+ });
+ it('reopens the same provider-confirmed bePaid renewal checkout when its legacy order has no offer id',async()=>{
+  const renewal={...order,offer_id:null,meta:{payment_type:'subscription',payment_flow:'renewal_subscription'}};
+  const provider={id:'provider-row',provider:'bepaid',subscription_v2_id:'sub',provider_subscription_id:'sbs_test',order_id:'order',state:'pending',meta:{checkout_url:'https://checkout.example.test/legacy'}};
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:vi.fn().mockResolvedValue({subscription:{id:'sbs_test',state:'pending',checkout_url:'https://checkout.example.test/live',last_transaction:{status:'pending'}}})}));
+  const db=dbFixture([],[],renewal,provider);
+  await expect(reusePendingSubscriptionCheckout(db,proposal,'bepaid')).resolves.toMatchObject({order_id:'order',redirect_url:'https://checkout.example.test/live',bepaid_subscription_id:'sbs_test'});
   expect(db.rpc).not.toHaveBeenCalled();
  });
  it('does not return a pending link alongside another live mandate, even at a different provider',async()=>{

@@ -360,7 +360,35 @@ Deno.serve(async (req) => {
       purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
     };
     checkoutStage = 'pending_checkout_lookup';
-    const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
+    let recoveredCheckout: Awaited<ReturnType<typeof reusePendingSubscriptionCheckout>>;
+    try {
+      recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
+    } catch (error) {
+      const reconciliationCodes = new Set([
+        'orphan_provider_subscription_requires_reconciliation',
+        'multiple_pending_provider_checkouts_require_reconciliation',
+        'existing_provider_subscription_requires_reconciliation',
+        'multiple_live_provider_subscriptions_require_reconciliation',
+        'pending_purchase_payment_requires_reconciliation',
+        'pending_checkout_payment_requires_reconciliation',
+      ]);
+      const reason = error instanceof Error ? error.message : String(error);
+      if (!reconciliationCodes.has(reason)) throw error;
+      console.warn('[bepaid-sub-checkout] checkout_reconciliation_required', {
+        incident_id: incidentId,
+        stage: checkoutStage,
+        reason,
+      });
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Найдена незавершённая оплата. Обратитесь в поддержку и сообщите код обращения.',
+        code: 'CHECKOUT_RECONCILIATION_REQUIRED',
+        incident_id: incidentId,
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     if(recoveredCheckout) return new Response(JSON.stringify(recoveredCheckout), {headers:{...corsHeaders,'Content-Type':'application/json'}});
     const reusedCheckout = await lookupPendingCheckout(supabase,pendingProposal,'subscription','bepaid');
     if (reusedCheckout) return new Response(JSON.stringify(reusedCheckout), {headers:{...corsHeaders,'Content-Type':'application/json'}});
