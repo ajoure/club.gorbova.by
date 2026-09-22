@@ -1,45 +1,85 @@
-# План: повторный инцидент оплаты 22.09.2026 ~12:02 UTC (BUSINESS 250 BYN)
+# План: инцидент оплаты 22.09.2026, публичная ссылка Gorbova Club BUSINESS 250 BYN
 
-Режим: READ-ONLY. Ничего не изменено, не задеплоено, не опубликовано; checkout и платежи не создавались, сообщения не отправлялись.
-Источник истины: origin/main = HEAD = `86cd71d0cd4baefdd076043954613b36904dee15`, дерево чистое.
+Режим: READ-ONLY. Ничего не изменено, не задеплоено, не опубликовано; checkout/платёж не создавались, сообщения не отправлялись.
+Источник истины: origin/main = HEAD = `3bd612bd2056496122412a61ce15355df7e2e2ab`, дерево чистое.
 
-## 1. Доказательства
+## 1. Доказательства (confirmed)
 
-**Edge Function logs за 11:58–12:06 UTC — недоступны (UNKNOWN).** Фактическое окно хранения аналитики: все источники (`function_logs`, `edge_logs`, `function_edge_logs`, `postgres_logs`) содержат записи только с 13:04:58 по 13:14:45 UTC (~10 минут). Поэтому `incident_id`, `request_started` и `unexpected_error` за окно инцидента физически не восстановимы. Это ограничение ретенции, а не отсутствие логирования: код `request_started`/`unexpected_error` с `incident_id` и `stage` присутствует в задеплоенной версии (строки 66–70, 918–928).
+Время инцидента — **16:11–16:13 UTC (19:11–19:13 Минск)**, а не 15:12 UTC: в этом окне логи сохранились, и в них ровно два обращения по публичной ссылке, оба упали.
 
-**Коммерческие дельты = 0 (confirmed).** С 11:40 UTC: orders_v2 0, payments_v2 0, subscriptions_v2 0, provider_subscriptions 0, crm_checkout_discount_intents 0. Последняя запись `crm_checkout_attempts` — 11:24:06 (state `ready`, вчерашний обходной путь); за окно инцидента attempt не создавался. Provider checkout по инциденту не возникал, списаний нет.
+| Время UTC | Минск | Событие |
+|---|---|---|
+| 16:11:44.7 | 19:11:44 | `[public-checkout] target_user_resolved` user `def0faba…`, link `ba2a0536…` |
+| 16:11:45.1 | 19:11:45 | `[public-checkout] Unexpected error: orphan_provider_subscription_requires_reconciliation` |
+| 16:12:28.3 | 19:12:28 | тот же user, link `7e4b1a17…` |
+| 16:12:28.8 | 19:12:28 | та же ошибка |
 
-**Единственные audit-следы в окне (confirmed):** две записи `bepaid.subscription.create_blocked`, `reason: missing_explicit_user_choice`, 12:09:01.755 и 12:09:02.197 UTC — это отдельный класс (403 `MISSING_EXPLICIT_CHOICE`, product_id в meta отсутствует), он не даёт текста «Не удалось открыть страницу оплаты».
+- `stage` = `pending_checkout_lookup` (внутри `createPaymentCheckout` → `reusePendingSubscriptionCheckout`), stack: `_shared/pending-subscription-checkout.ts:36` → `_shared/create-payment-checkout.ts:494` → `public-checkout/index.ts:304`.
+- `error_name` = `Error`, `error_message` = `orphan_provider_subscription_requires_reconciliation`.
+- Отдельного `incident_id` нет: structured-логирование с `incident_id` реализовано только в `bepaid-create-subscription-checkout` (PR #515), публичный путь `public-checkout` его не имеет — **UNKNOWN by design**.
+- Коммерческие дельты: новых orders/payments/subscriptions/provider rows не создано, provider checkout не возникал.
 
-**Стадия отказа (confirmed по исключению):** наблюдаемый пользователю текст в `src/utils/normalizeEdgeFunctionError.ts` (строки 145–150) возвращается только для `internal server error` / `subscription_checkout_internal_error`, то есть функция дошла до финального catch и вернула `SUBSCRIPTION_CHECKOUT_INTERNAL_ERROR`. При этом ни одной новой строки не создано, значит отказ произошёл **до** `purchase_claim`. Из стадий до claim только `pending_checkout_lookup` бросает необработанные исключения; `offer_resolve` возвращает контролируемые 400, `classifySameProductState` — контролируемый 200-конфликт.
+## 2. Состояние данных пользователя (confirmed, masked)
 
-**Найден конкретный триггер (hypothesis, высокая уверенность):** `provider_subscriptions` id `021baade…`, `sbs_f04c8a…`, state `pending`, user `a1830fb9…`, order `7fbb2654…` (BUSINESS 250 BYN, `pending`, 0 платежей), subscription `835a5f58…` в статусе `past_due`. `reusePendingSubscriptionCheckout` (`supabase/functions/_shared/pending-subscription-checkout.ts`) для такого сочетания обращается к bePaid и при не-переиспользуемом состоянии бросает `pending_checkout_payment_requires_reconciliation`, а при отсутствии совпадения — `existing_provider_subscription_requires_reconciliation`. Оба throw не обработаны в вызывающей функции и попадают в финальный catch → 500 `SUBSCRIPTION_CHECKOUT_INTERNAL_ERROR`. Повторные нажатия дают тот же 500 идемпотентно: побочных строк не создаётся.
+Блокирующая строка — **orphan provider subscription**:
 
-**Точный `error_name`/`error_message` конкретного вызова — UNKNOWN** (логи ушли). Подтверждение возможно только после патча наблюдаемости или non-charge проверки состояния подписки у провайдера.
+| Поле | Значение |
+|---|---|
+| provider row | `4ca476af…` (`sbs_024463…`) |
+| state | `redirecting` (входит в `BLOCKING_PROVIDER_STATES`) |
+| subscription_v2_id | NULL |
+| order_id (колонка) | NULL, в meta — `00a8fd02…` |
+| orders_v2 по этому id | **строки не существует** |
+| created_at / updated_at | 2026-03-18 06:00 UTC / 2026-05-03 11:34 UTC |
 
-## 2. Корневая причина
+То есть это протухший checkout полугодовой давности по уже несуществующему заказу.
 
-Класс ошибок «требуется ручная сверка незавершённого checkout» из shared-хелпера не имеет контролируемого кода ответа: он маскируется под внутреннюю ошибку 500 и не оставляет следа в БД. Плюс десятиминутная ретенция логов делает инцидент недиагностируемым постфактум.
+Локальные подписки на Club (`11c9f1b8…`) у пользователя: только `past_due`, `expired`, `superseded`; ни одной `active`/`trial`; активного доступа к Club сейчас нет. Вторая orphan-строка `60212e84…` в состоянии `expired` не блокирует.
 
-## 3. Минимальный GitHub-first патч
+## 3. Root cause (confirmed)
+
+`supabase/functions/_shared/pending-subscription-checkout.ts`, строки 44–54:
+
+```
+orderId = orphan.order_id || orphan.meta?.order_id      // 00a8fd02…
+linked  = orders_v2 by orderId                          // не найдено
+if (error || !linked || linked.product_id === proposed.product_id) throw
+```
+
+Отсутствие заказа трактуется как «требуется ручная сверка», хотя строка объективно мёртвая. Итог: любая попытка оплатить Club этим пользователем гарантированно падает.
+
+Второй дефект — **маскировка**: контролируемый маппинг reconciliation-ошибок в HTTP 409 `CHECKOUT_RECONCILIATION_REQUIRED` реализован только в `bepaid-create-subscription-checkout/index.ts` (строки 368–385). Публичный путь `public-checkout` → `create-payment-checkout` его не имеет, поэтому throw уходит в общий catch и пользователь видит «Не удалось открыть страницу оплаты».
+
+## 4. Подтверждение правила (confirmed по коду и данным)
+
+- Terminal provider states (`canceled`, `cancelled`, `expired`, `terminated`) **не входят** в `BLOCKING_PROVIDER_STATES` и уже не блокируют. Проблема только в stale-строках с нетерминальным `redirecting`/`pending`, потерявших заказ и подписку.
+- Локальные `canceled`/`expired`/`superseded` подписки блокирующими не считаются: reuse требует `pending`/`past_due` (строка 60), конфликт активной — только для `active`/`trial`.
+- Новый период не суммируется: `planned_access_start_at = now` (`create-payment-checkout.ts`, строки 788, 922), длительность = `tariff.access_days` (30). После успешной оплаты доступ стартует датой оплаты на 30 дней.
+
+Вывод: stale pending/redirecting orphan-строка отменённой или утраченной покупки **должна исключаться** и из blocking, и из reuse.
+
+## 5. Минимальный GitHub-first патч
 
 Файлы:
-- `supabase/functions/_shared/pending-subscription-checkout.ts` — бросать типизированную ошибку с полем `code` (существующие строки становятся кодами; поведение не меняется).
-- `supabase/functions/bepaid-create-subscription-checkout/index.ts` — обернуть стадию `pending_checkout_lookup`: reconciliation-класс возвращать как HTTP 409 JSON `{ ok:false, code:'CHECKOUT_RECONCILIATION_REQUIRED', stage, incident_id }`; во всех неуспешных выходах писать строку `crm_checkout_attempts` со `state='failed'` и `result={code,stage,incident_id}` (без PII), чтобы инциденты переживали ретенцию логов.
-- `src/utils/normalizeEdgeFunctionError.ts` — понятное сообщение для `CHECKOUT_RECONCILIATION_REQUIRED` («незавершённая оплата, обратитесь в поддержку, код обращения»), без сырых кодов провайдера.
-- `src/test/paymentCheckoutIncidentContract.test.ts` — расширить контракт.
-- Новый `tests/edge/pendingSubscriptionCheckoutReconciliation.test.ts` — reconciliation-throw → 409 + attempt-строка, повтор идемпотентен.
+- `supabase/functions/_shared/pending-subscription-checkout.ts` — orphan-ветка: блокировать только если заказ **существует**, не удалён, `paid_amount=0`, статус `pending`/`failed` и product совпадает. Отсутствующий/чужой/оплаченный/терминальный заказ — не блокирует (`continue`). Отсутствие `orderId` также не блокирует. Бросать типизированную ошибку с полем `code`.
+- `supabase/functions/_shared/create-payment-checkout.ts` — вернуть reconciliation-класс как контролируемый ответ, а не throw.
+- `supabase/functions/public-checkout/index.ts` — маппинг в HTTP 409 `{ ok:false, code:'CHECKOUT_RECONCILIATION_REQUIRED', stage }`, переиспользовать хелпер из `bepaid-create-subscription-checkout`; добавить structured `request_started`/`unexpected_error` с `incident_id` (без PII/URL).
+- `src/utils/normalizeEdgeFunctionError.ts` — сообщение для `CHECKOUT_RECONCILIATION_REQUIRED` уже есть, проверить покрытие публичного пути.
 
-Миграции: **не нужны**. Deploy: только `bepaid-create-subscription-checkout`. Publish: фронтенд (из-за сообщения в normalizeEdgeFunctionError).
+Тесты:
+- `tests/edge/pendingSubscriptionCheckout.test.ts` — новые кейсы: orphan без заказа, orphan с несуществующим заказом, orphan с оплаченным заказом → **не блокируют**; orphan с реальным неоплаченным заказом того же продукта → по-прежнему reconciliation.
+- `src/test/paymentCheckoutIncidentContract.test.ts` — публичный путь отдаёт 409 с кодом, а не «Internal server error».
 
-## 4. Безопасный runtime acceptance (без списания)
+Миграции: **не нужны**. Ручные правки данных: не нужны (патч делает мёртвую строку безвредной). Deploy: только `public-checkout`. Publish: фронтенд, если менялся текст ошибки.
 
-1. OPTIONS → 200; неавторизованный/пустой body → контролируемый JSON, не «Internal server error».
-2. Воспроизведение сценария пользователя `a1830fb9…` **не платежом**, а non-charge provider validation: read-only GET состояния `sbs_f04c8a…` через `bepaid-get-subscription-details` — подтверждает фактическое состояние и стадию без создания checkout и без денег.
-3. Повторный вызов той же публичной страницы после патча должен вернуть 409 с кодом и создать ровно одну `crm_checkout_attempts(state='failed')`; повтор — без новых orders/payments/subscriptions/provider rows.
-4. Read-back дельт: orders_v2/payments_v2/subscriptions_v2/provider_subscriptions = 0.
-5. Реальный тестовый checkout с последующей отменой **не предлагается**: у bePaid provider-managed subscription создание checkout порождает mandate-строку и не отменяется штатно без риска — используем non-charge validation из п.2.
+## 6. Безопасный acceptance именно по этой ссылке
 
-## 5. Отдельный хвост
+1. OPTIONS → 200; неавторизованный/пустой body → контролируемый JSON.
+2. Baseline: счётчики orders_v2 / payments_v2 / subscriptions_v2 / provider_subscriptions / crm_checkout_attempts.
+3. Один запрос по той же публичной ссылке: ожидается **HTTP 200 и новый checkout** (reuse невозможен — валидных pending-строк с заказом нет), либо, если что-то ещё не сверено, контролируемый 409 с кодом — но не «Internal server error».
+4. Оплату не проводить. Если возник новый provider checkout — он остаётся неоплаченным; фиксируем ровно одну новую строку заказа/подписки и отсутствие payments. Если создание нового checkout нежелательно, acceptance ограничивается пунктами 1–2 плюс unit-тестами.
+5. Read-back: payments = 0 дельты; после реальной оплаты клиентом — `access_start_at` = дата оплаты, `access_end_at` = +30 дней, без суммирования с прошлым периодом.
 
-Две записи `missing_explicit_user_choice` (12:09 UTC) — отдельный вопрос вызывающей стороны, к тексту инцидента отношения не имеет; вынести в follow-up.
+## 7. Отдельно
+
+Вторая orphan-строка `60212e84…` (`expired`) и историческая `past_due`-подписка `835a5f58…` другого пользователя к этому инциденту отношения не имеют; чистка stale-строк — отдельный follow-up, для разблокировки оплаты не требуется.
