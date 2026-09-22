@@ -1,7 +1,7 @@
 import { isContactMoneyDeal } from "@/lib/deals/dealFinancialKind";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { resolveStripeNextChargeAt } from "@/utils/resolveStripeNextChargeAt";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
@@ -1886,7 +1886,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       queryClient.invalidateQueries({ queryKey: ["telegram-access", targetUserId] });
       queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
     } catch (error) {
-      toast.error(`Не удалось отправить ссылки: ${normalizeEdgeFunctionError(error)}`);
+      toast.error(`Не удалось отправить ссылки: ${await normalizeEdgeFunctionErrorAsync(error)}`);
     } finally {
       setResendingEntitlementSourceId(null);
     }
