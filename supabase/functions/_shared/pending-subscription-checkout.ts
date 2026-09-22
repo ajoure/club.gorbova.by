@@ -8,11 +8,21 @@ type Row=Record<string,any>;
 const stable=(value:any):string=>value && typeof value==='object' ? Array.isArray(value)
   ? '['+value.map(stable).join(',')+']' : '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+stable(value[k])).join(',')+'}' : JSON.stringify(value);
 export function samePendingSubscriptionPurchase(existing:Row, proposed:Row):boolean {
+  const existingContext=pendingPurchaseContext(existing,'subscription');
+  const proposedContext=pendingPurchaseContext(proposed,'subscription');
+  // Renewal checkout writers historically did not persist offer_id. A later
+  // public link for the same recipient/product/tariff/price must reuse that
+  // provider checkout instead of treating it as an unrelated mandate. Keep
+  // offer_id contractual for every other flow.
+  if(existing.offer_id==null && proposed.offer_id!=null && existing.meta?.payment_flow==='renewal_subscription') {
+    existingContext.offer_id=null;
+    proposedContext.offer_id=null;
+  }
   return !existing.is_deleted && ['pending','failed'].includes(existing.status) && Number(existing.paid_amount||0)===0
     && ['user_id','product_id','tariff_id'].every(k=>existing[k]===proposed[k])
     && Number(existing.final_price)===Number(proposed.final_price)
     && String(existing.currency).toUpperCase()===String(proposed.currency).toUpperCase()
-    && stable(pendingPurchaseContext(existing,'subscription'))===stable(pendingPurchaseContext(proposed,'subscription'));
+    && stable(existingContext)===stable(proposedContext);
 }
 
 /** Reuse legacy and expired local caches only after a provider GET. Never

@@ -142,6 +142,10 @@ function extractMeaningful(body: unknown): string | null {
 function mapKnown(raw: string): string | null {
   const s = raw.toLowerCase();
 
+  if (s.includes('checkout_reconciliation_required')) {
+    return 'Найдена незавершённая оплата. Обратитесь в поддержку и сообщите код обращения.';
+  }
+
   if (
     s.includes('internal server error') ||
     s.includes('subscription_checkout_internal_error') ||

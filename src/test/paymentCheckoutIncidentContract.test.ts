@@ -24,4 +24,12 @@ describe('payment checkout incident contract', () => {
       'Не удалось открыть страницу оплаты. Попробуйте ещё раз через несколько секунд.',
     );
   });
+
+  it('maps unresolved provider checkout conflicts to an actionable message', () => {
+    expect(normalizeEdgeFunctionError(new Error('CHECKOUT_RECONCILIATION_REQUIRED'))).toBe(
+      'Найдена незавершённая оплата. Обратитесь в поддержку и сообщите код обращения.',
+    );
+    expect(subscriptionCheckout).toContain("code: 'CHECKOUT_RECONCILIATION_REQUIRED'");
+    expect(subscriptionCheckout).toContain('checkout_reconciliation_required');
+  });
 });
