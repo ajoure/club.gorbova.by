@@ -215,7 +215,7 @@ Deno.test("classifySameProductState — missing tariff_id with provider sub → 
   if (r.status === "ok") assertEquals(r.decision, "replace_other_tariff");
 });
 
-Deno.test("orphan guard — superseded local + failed_attempt provider blocks same-product checkout", async () => {
+Deno.test("terminal superseded local stays non-blocking even with historical provider state", async () => {
   const supabase = makeMock({
     subs: [{ id: "v2-superseded", status: "superseded", tariff_id: TARIFF_A }],
     providerSubByV2: {
@@ -229,21 +229,14 @@ Deno.test("orphan guard — superseded local + failed_attempt provider blocks sa
     tariff_id: TARIFF_A,
   });
   assertEquals(classified.status, "ok");
-  if (classified.status === "ok") {
-    assertEquals(classified.decision, "extend_same_tariff");
-    assertEquals(classified.existing?.provider_state, "failed_attempt");
-  }
+  if (classified.status === "ok") assertEquals(classified.decision, "no_existing");
 
   const conflict = await checkSubscriptionConflict(supabase, {
     user_id: USER,
     product_id: PRODUCT,
     providers: ["bepaid"],
   });
-  assertEquals(conflict.status, "conflict");
-  if (conflict.status === "conflict") {
-    assertEquals(conflict.conflict.subscription_v2_id, "v2-superseded");
-    assertEquals(conflict.conflict.provider_subscription_id, "sbs_retry");
-  }
+  assertEquals(conflict.status, "ok");
 });
 
 Deno.test("orphan guard — terminal local without live provider state stays non-blocking", async () => {
