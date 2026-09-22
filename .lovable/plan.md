@@ -1,45 +1,38 @@
-# План: повторный инцидент оплаты 22.09.2026 ~12:02 UTC (BUSINESS 250 BYN)
+# План: выполнение SHA 8603fcab (PR #517) — reuse renewal-checkout + контролируемый 409
 
-Режим: READ-ONLY. Ничего не изменено, не задеплоено, не опубликовано; checkout и платежи не создавались, сообщения не отправлялись.
-Источник истины: origin/main = HEAD = `86cd71d0cd4baefdd076043954613b36904dee15`, дерево чистое.
+Режим подготовки: READ-ONLY. Код, данные, миграции не изменялись; deploy и Publish не выполнялись.
 
-## 1. Доказательства
+## 1. Проверка дельты (confirmed)
 
-**Edge Function logs за 11:58–12:06 UTC — недоступны (UNKNOWN).** Фактическое окно хранения аналитики: все источники (`function_logs`, `edge_logs`, `function_edge_logs`, `postgres_logs`) содержат записи только с 13:04:58 по 13:14:45 UTC (~10 минут). Поэтому `incident_id`, `request_started` и `unexpected_error` за окно инцидента физически не восстановимы. Это ограничение ретенции, а не отсутствие логирования: код `request_started`/`unexpected_error` с `incident_id` и `stage` присутствует в задеплоенной версии (строки 66–70, 918–928).
+`origin/main` = HEAD = `8603fcab46d8bd649bb98e393710683eb45ba3e5`, дерево чистое.
+Дельта `86cd71d0 → 8603fcab` затрагивает ровно 5 заявленных файлов + `.lovable/plan.md` (документ, не код). Миграций нет.
 
-**Коммерческие дельты = 0 (confirmed).** С 11:40 UTC: orders_v2 0, payments_v2 0, subscriptions_v2 0, provider_subscriptions 0, crm_checkout_discount_intents 0. Последняя запись `crm_checkout_attempts` — 11:24:06 (state `ready`, вчерашний обходной путь); за окно инцидента attempt не создавался. Provider checkout по инциденту не возникал, списаний нет.
+- `_shared/pending-subscription-checkout.ts`: в `samePendingSubscriptionPurchase` `offer_id` исключается из контрактного сравнения **только** когда у существующего заказа `offer_id=null` **и** `meta.payment_flow==='renewal_subscription'` **и** у предложения `offer_id` задан. Все прочие проверки сохранены: не удалён, статус `pending|failed`, `paid_amount=0`, совпадение `user_id/product_id/tariff_id`, точное `final_price`, валюта, полный остальной контрактный контекст (`purchase_snapshot` и т.д.).
+- `bepaid-create-subscription-checkout/index.ts`: стадия `pending_checkout_lookup` обёрнута try/catch. Шесть reconciliation-кодов (orphan / multiple pending / existing provider / multiple live / pending purchase payment / pending checkout payment) возвращают HTTP 409 JSON `{success:false, code:'CHECKOUT_RECONCILIATION_REQUIRED', incident_id}` и warn-лог без PII. Любая другая ошибка пробрасывается в прежний путь 500.
+- `normalizeEdgeFunctionError.ts`: новое сообщение «Найдена незавершённая оплата. Обратитесь в поддержку и сообщите код обращения.» до общей ветки internal error.
+- Тесты: контракт 409-кода + 3 новых кейса на renewal-reuse (и негативные: другой payment_flow, другой тариф, другая цена).
 
-**Единственные audit-следы в окне (confirmed):** две записи `bepaid.subscription.create_blocked`, `reason: missing_explicit_user_choice`, 12:09:01.755 и 12:09:02.197 UTC — это отдельный класс (403 `MISSING_EXPLICIT_CHOICE`, product_id в meta отсутствует), он не даёт текста «Не удалось открыть страницу оплаты».
+Root cause подтверждён: публичная ссылка не совпадала с системным renewal-заказом только из-за отсутствующего `offer_id`, что уводило поток в reconciliation-throw → необработанные 500.
 
-**Стадия отказа (confirmed по исключению):** наблюдаемый пользователю текст в `src/utils/normalizeEdgeFunctionError.ts` (строки 145–150) возвращается только для `internal server error` / `subscription_checkout_internal_error`, то есть функция дошла до финального catch и вернула `SUBSCRIPTION_CHECKOUT_INTERNAL_ERROR`. При этом ни одной новой строки не создано, значит отказ произошёл **до** `purchase_claim`. Из стадий до claim только `pending_checkout_lookup` бросает необработанные исключения; `offer_resolve` возвращает контролируемые 400, `classifySameProductState` — контролируемый 200-конфликт.
+Локально: targeted Vitest 9/9 PASS. **GitHub checks точного SHA — UNKNOWN**: в песочнице нет `gh`/токена GitHub, статус проверок прочитать нечем. Перед выполнением подтвердите зелёные checks на стороне GitHub.
 
-**Найден конкретный триггер (hypothesis, высокая уверенность):** `provider_subscriptions` id `021baade…`, `sbs_f04c8a…`, state `pending`, user `a1830fb9…`, order `7fbb2654…` (BUSINESS 250 BYN, `pending`, 0 платежей), subscription `835a5f58…` в статусе `past_due`. `reusePendingSubscriptionCheckout` (`supabase/functions/_shared/pending-subscription-checkout.ts`) для такого сочетания обращается к bePaid и при не-переиспользуемом состоянии бросает `pending_checkout_payment_requires_reconciliation`, а при отсутствии совпадения — `existing_provider_subscription_requires_reconciliation`. Оба throw не обработаны в вызывающей функции и попадают в финальный catch → 500 `SUBSCRIPTION_CHECKOUT_INTERNAL_ERROR`. Повторные нажатия дают тот же 500 идемпотентно: побочных строк не создаётся.
+## 2. Execute-план
 
-**Точный `error_name`/`error_message` конкретного вызова — UNKNOWN** (логи ушли). Подтверждение возможно только после патча наблюдаемости или non-charge проверки состояния подписки у провайдера.
+1. Sync ровно `8603fcab46d8bd649bb98e393710683eb45ba3e5`; read-back HEAD == origin/main, дерево чистое, дельта = 5 файлов, миграций 0.
+2. Проверки: targeted Vitest (2 файла), typecheck, production build.
+3. Deploy только `bepaid-create-subscription-checkout`. Никаких миграций, никаких изменений данных.
+4. Publish фронтенда (нужен из-за нового сообщения об ошибке).
+5. Baseline до шага 6: счётчики orders_v2 / payments_v2 / subscriptions_v2 / provider_subscriptions / crm_checkout_attempts.
 
-## 2. Корневая причина
+## 3. Безопасная runtime-проверка (ссылка Бобровник)
 
-Класс ошибок «требуется ручная сверка незавершённого checkout» из shared-хелпера не имеет контролируемого кода ответа: он маскируется под внутреннюю ошибку 500 и не оставляет следа в БД. Плюс десятиминутная ретенция логов делает инцидент недиагностируемым постфактум.
+- Один повторный запрос по существующей публичной ссылке; ожидание: ответ 200 с **переиспользованием** прежнего provider-confirmed checkout — тот же `order_id`, та же `subscription_v2_id`, тот же `bepaid_subscription_id`; новый provider checkout не создаётся.
+- Если провайдер отдаёт не переиспользуемое состояние — ожидается контролируемый 409 `CHECKOUT_RECONCILIATION_REQUIRED` с `incident_id`, а не «Internal server error».
+- Read-back дельт за окно проверки: orders_v2 = 0, payments_v2 = 0, subscriptions_v2 = 0, provider_subscriptions = 0; новых `crm_checkout_attempts` со `state='ready'` не появляется.
+- Повтор запроса идемпотентен: те же идентификаторы, снова нулевые дельты.
+- URL оплаты, токены и персональные данные не выводятся; только masked ID, статусы и счётчики.
+- Оплата не проводится, платёж не подтверждается, сообщений клиенту не отправляется.
 
-## 3. Минимальный GitHub-first патч
+## 4. Стоп-условия
 
-Файлы:
-- `supabase/functions/_shared/pending-subscription-checkout.ts` — бросать типизированную ошибку с полем `code` (существующие строки становятся кодами; поведение не меняется).
-- `supabase/functions/bepaid-create-subscription-checkout/index.ts` — обернуть стадию `pending_checkout_lookup`: reconciliation-класс возвращать как HTTP 409 JSON `{ ok:false, code:'CHECKOUT_RECONCILIATION_REQUIRED', stage, incident_id }`; во всех неуспешных выходах писать строку `crm_checkout_attempts` со `state='failed'` и `result={code,stage,incident_id}` (без PII), чтобы инциденты переживали ретенцию логов.
-- `src/utils/normalizeEdgeFunctionError.ts` — понятное сообщение для `CHECKOUT_RECONCILIATION_REQUIRED` («незавершённая оплата, обратитесь в поддержку, код обращения»), без сырых кодов провайдера.
-- `src/test/paymentCheckoutIncidentContract.test.ts` — расширить контракт.
-- Новый `tests/edge/pendingSubscriptionCheckoutReconciliation.test.ts` — reconciliation-throw → 409 + attempt-строка, повтор идемпотентен.
-
-Миграции: **не нужны**. Deploy: только `bepaid-create-subscription-checkout`. Publish: фронтенд (из-за сообщения в normalizeEdgeFunctionError).
-
-## 4. Безопасный runtime acceptance (без списания)
-
-1. OPTIONS → 200; неавторизованный/пустой body → контролируемый JSON, не «Internal server error».
-2. Воспроизведение сценария пользователя `a1830fb9…` **не платежом**, а non-charge provider validation: read-only GET состояния `sbs_f04c8a…` через `bepaid-get-subscription-details` — подтверждает фактическое состояние и стадию без создания checkout и без денег.
-3. Повторный вызов той же публичной страницы после патча должен вернуть 409 с кодом и создать ровно одну `crm_checkout_attempts(state='failed')`; повтор — без новых orders/payments/subscriptions/provider rows.
-4. Read-back дельт: orders_v2/payments_v2/subscriptions_v2/provider_subscriptions = 0.
-5. Реальный тестовый checkout с последующей отменой **не предлагается**: у bePaid provider-managed subscription создание checkout порождает mandate-строку и не отменяется штатно без риска — используем non-charge validation из п.2.
-
-## 5. Отдельный хвост
-
-Две записи `missing_explicit_user_choice` (12:09 UTC) — отдельный вопрос вызывающей стороны, к тексту инцидента отношения не имеет; вынести в follow-up.
+Расхождение SHA, грязное дерево, красные GitHub checks, появление любой коммерческой строки, ответ с сырым «Internal server error» или неоднозначный rowcount — остановка и отчёт без Publish/повторных вызовов.
