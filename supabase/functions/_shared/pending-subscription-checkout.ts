@@ -47,9 +47,17 @@ export async function reusePendingSubscriptionCheckout(db:any,proposed:Row,provi
   if(orphanError) throw new Error('pending_provider_read_failed');
   for(const orphan of orphans || []) {
     const orderId=orphan.order_id || orphan.meta?.order_id;
-    if(!orderId) throw new Error('orphan_provider_subscription_requires_reconciliation');
-    const {data:linked,error}=await db.from('orders_v2').select('product_id').eq('id',orderId).maybeSingle();
-    if(error || !linked || linked.product_id===proposed.product_id)
+    // Historical provider rows can outlive both their local subscription and
+    // order (for example after an administrator cancels the old mandate). Such
+    // rows cannot represent an unfinished purchase and must not permanently
+    // block a fresh checkout. Reconcile only against a real, unpaid,
+    // non-deleted pending order for the same product.
+    if(!orderId) continue;
+    const {data:linked,error}=await db.from('orders_v2')
+      .select('product_id,status,paid_amount,is_deleted').eq('id',orderId).maybeSingle();
+    if(error) throw new Error('pending_purchase_read_failed');
+    if(linked && linked.product_id===proposed.product_id && !linked.is_deleted
+      && ['pending','failed'].includes(String(linked.status)) && Number(linked.paid_amount || 0)===0)
       throw new Error('orphan_provider_subscription_requires_reconciliation');
   }
   const matches:Row[]=[];

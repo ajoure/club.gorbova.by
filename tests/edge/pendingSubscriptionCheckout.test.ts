@@ -17,6 +17,17 @@ function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order,
   q.then=(resolve:any)=>Promise.resolve({data:orphanQuery ? [] : rows[table] ?? null,error:null}).then(resolve);return q;
  })};return db;
 }
+function orphanDbFixture(orphan:any, linkedOrder:any) {
+ const db:any={rpc:vi.fn().mockResolvedValue({data:true,error:null}),from:vi.fn((table:string)=>{
+  let orphanQuery=false;let requestedId:string|undefined;
+  const q:any={is:vi.fn(()=>{orphanQuery=true;return q;})};
+  q.select=vi.fn(()=>q);q.in=vi.fn(()=>q);q.gt=vi.fn(()=>q);q.limit=vi.fn(()=>q);q.insert=vi.fn(()=>q);
+  q.eq=vi.fn((column:string,value:any)=>{if(table==='orders_v2' && column==='id') requestedId=value;return q;});
+  q.maybeSingle=vi.fn(()=>Promise.resolve({data:requestedId && linkedOrder?.id===requestedId ? linkedOrder : null,error:null}));
+  q.then=(resolve:any)=>Promise.resolve({data:table==='subscriptions_v2' ? [] : table==='provider_subscriptions' && orphanQuery ? [orphan] : [],error:null}).then(resolve);
+  return q;
+ })};return db;
+}
 describe('provider-confirmed subscription checkout reuse',()=>{
  beforeEach(()=>vi.clearAllMocks());
  it('requires exact price, currency, contract and recipient and excludes paid orders',()=>{
@@ -44,6 +55,20 @@ describe('provider-confirmed subscription checkout reuse',()=>{
   const db=dbFixture([],[],renewal,provider);
   await expect(reusePendingSubscriptionCheckout(db,proposal,'bepaid')).resolves.toMatchObject({order_id:'order',redirect_url:'https://checkout.example.test/live',bepaid_subscription_id:'sbs_test'});
   expect(db.rpc).not.toHaveBeenCalled();
+ });
+ it('ignores stale orphan provider rows that have no surviving order',async()=>{
+  const orphan={id:'orphan',order_id:null,meta:{order_id:'missing-order'}};
+  await expect(reusePendingSubscriptionCheckout(orphanDbFixture(orphan,null),proposal,'bepaid')).resolves.toBeNull();
+ });
+ it('ignores orphan provider rows without an order id or with a terminal local order',async()=>{
+  await expect(reusePendingSubscriptionCheckout(orphanDbFixture({id:'orphan',order_id:null,meta:{}},null),proposal,'bepaid')).resolves.toBeNull();
+  const paid={id:'paid-order',product_id:'product',status:'paid',paid_amount:250,is_deleted:false};
+  await expect(reusePendingSubscriptionCheckout(orphanDbFixture({id:'orphan',order_id:'paid-order',meta:{}},paid),proposal,'bepaid')).resolves.toBeNull();
+ });
+ it('still blocks an orphan tied to a real unpaid pending order for the same product',async()=>{
+  const pending={id:'pending-order',product_id:'product',status:'pending',paid_amount:0,is_deleted:false};
+  await expect(reusePendingSubscriptionCheckout(orphanDbFixture({id:'orphan',order_id:'pending-order',meta:{}},pending),proposal,'bepaid'))
+    .rejects.toThrow('orphan_provider_subscription_requires_reconciliation');
  });
  it('does not return a pending link alongside another live mandate, even at a different provider',async()=>{
   const db=dbFixture([],[{id:'other',provider:'bepaid',state:'active',subscription_v2_id:'other-sub'}]);
