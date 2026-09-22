@@ -86,8 +86,10 @@ function formatForDisplay(dateStr: string | null): string | null {
  *   3. Если есть хотя бы одна с provider-связью — это блокирующий конфликт.
  *   4. Если есть только строки без живой provider-связи — игнорируем (data anomaly).
  *
- * Локальный canceled/superseded не доказывает остановку автосписаний:
- * provider active/failed_attempt остаётся SOT и блокирует новый checkout.
+ * Терминальная локальная запись уже не является действующей покупкой.
+ * Историческая provider-строка такой записи не должна навсегда блокировать
+ * новый checkout; живая подписка блокируется только при нетерминальном
+ * локальном статусе.
  *
  * fail-closed: при ошибке запроса возвращает `error` — caller обязан остановить flow.
  */
@@ -130,6 +132,8 @@ export async function checkSubscriptionConflict(
   }
 
   for (const cand of (candidates as any[])) {
+    if ((TERMINAL_STATUSES as readonly string[]).includes(String(cand.status))) continue;
+
     const { data: provSubRaw, error: provErr } = await supabase
       .from('provider_subscriptions')
       .select('provider_subscription_id, state, provider')
