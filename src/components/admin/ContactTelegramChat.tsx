@@ -932,7 +932,11 @@ function TelegramChannelChat({
   const pinToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const vp = getScrollViewport();
     if (!vp) return;
-    vp.scrollTo({ top: vp.scrollHeight, behavior });
+    if (typeof vp.scrollTo === "function") {
+      vp.scrollTo({ top: vp.scrollHeight, behavior });
+    } else {
+      vp.scrollTop = vp.scrollHeight;
+    }
   }, [getScrollViewport]);
 
   const startStickyScroll = useCallback((durationMs = 1800) => {
@@ -1722,7 +1726,11 @@ function TelegramChannelChat({
       "[data-radix-scroll-area-viewport]"
     ) as HTMLElement | null;
     if (vp) {
-      vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+      if (typeof vp.scrollTo === "function") {
+        vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+      } else {
+        vp.scrollTop = vp.scrollHeight;
+      }
     }
     shouldStickToBottomRef.current = true;
     setUnreadCount(0);
