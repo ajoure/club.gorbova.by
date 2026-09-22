@@ -333,6 +333,10 @@ export async function classifySameProductState(
   let anyProviderSub: ExistingProviderSub | null = null;
 
   for (const cand of candidates as any[]) {
+    // Terminal local purchases are not active subscriptions. Historical
+    // provider rows may remain redirecting/failed after cancellation or
+    // replacement, but they must not block a fresh checkout forever.
+    if ((TERMINAL_STATUSES as readonly string[]).includes(String(cand.status))) continue;
     const { data: provRaw, error: provErr } = await supabase
       .from('provider_subscriptions')
       .select('provider_subscription_id, state, provider')
