@@ -29,6 +29,15 @@ describe("entitlement Telegram link resend contract", () => {
   it("requires an explicit audited admin resend and never creates commercial rows", () => {
     expect(grantFunction).toContain("force_resend requires one club and an entitlement source");
     expect(grantFunction).toContain("admin.telegram.force_resend.requested");
+    expect(grantFunction).toContain("actor_user_id: auditActorUserId");
+    expect(grantFunction).not.toContain("actor_type: 'admin'\n        actor_id:");
+    expect(grantFunction).toContain("if (!skipGrant && force_resend !== true)");
+    expect(grantFunction).toContain("is_manual && force_resend !== true && admin_id");
     expect(grantFunction).not.toContain("admin_entitlement_source_resend').from('orders_v2')");
+  });
+
+  it("preserves the entitlement end date and exposes the real function error", () => {
+    expect(grantFunction).toContain("valid_until: boundedValidUntil");
+    expect(contactSheet).toContain("await normalizeEdgeFunctionErrorAsync(error)");
   });
 });

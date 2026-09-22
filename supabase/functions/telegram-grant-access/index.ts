@@ -431,10 +431,11 @@ Deno.serve(async (req) => {
       }
 
       boundedValidUntil = entitlementSource.expires_at || null;
+      const auditActorUserId = authenticatedAdminId || (isServiceRoleCall ? admin_id || null : null);
       const { error: resendAuditError } = await supabase.from('audit_logs').insert({
         action: 'admin.telegram.force_resend.requested',
-        actor_type: 'admin',
-        actor_id: authenticatedAdminId || admin_id || null,
+        actor_type: auditActorUserId ? 'user' : 'service',
+        actor_user_id: auditActorUserId,
         actor_label: 'telegram-grant-access',
         target_user_id: user_id,
         meta: {
@@ -487,7 +488,7 @@ Deno.serve(async (req) => {
           pending_access: true,
           source: source || (is_manual ? 'manual' : 'system'),
           comment,
-          valid_until,
+          valid_until: boundedValidUntil,
           channel_grant_enabled: targetChannelGrantEnabled,
         },
         priority: 10, // High priority for access notifications
@@ -501,7 +502,7 @@ Deno.serve(async (req) => {
           state_chat: 'pending',
           state_channel: targetClub?.channel_id && targetChannelGrantEnabled ? 'pending' : 'none',
           invites_pending: true,
-          active_until: valid_until || null,
+          active_until: boundedValidUntil,
         }, { onConflict: 'user_id,club_id' });
       }
 
@@ -978,7 +979,7 @@ Deno.serve(async (req) => {
         }
       }
       
-      if (!skipGrant) {
+      if (!skipGrant && force_resend !== true) {
         await supabase.from('telegram_access_grants').insert({
           user_id,
           club_id: club.id,
@@ -993,12 +994,12 @@ Deno.serve(async (req) => {
       }
 
       // Create manual access record if needed
-      if (is_manual && admin_id) {
+      if (is_manual && force_resend !== true && admin_id) {
         await supabase.from('telegram_manual_access').upsert({
           user_id,
           club_id: club.id,
           is_active: true,
-          valid_until: valid_until || null,
+          valid_until: boundedValidUntil,
           comment: comment || null,
           created_by_admin_id: admin_id,
         }, { onConflict: 'user_id,club_id' });
