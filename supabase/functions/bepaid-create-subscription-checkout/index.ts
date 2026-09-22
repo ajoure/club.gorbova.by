@@ -63,11 +63,16 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const incidentId = crypto.randomUUID();
+  let checkoutStage = 'request_received';
+
   try {
+    console.log('[bepaid-sub-checkout] request_started', { incident_id: incidentId });
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    checkoutStage = 'request_parse';
     const body: CreateSubscriptionCheckoutRequest = await req.json();
     const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice, replacement_of_subscription_v2_id } = body;
 
@@ -102,6 +107,7 @@ Deno.serve(async (req) => {
     }
 
     // PATCH-P0.9.1: Strict creds
+    checkoutStage = 'credentials';
     const credsResult = await getBepaidCredsStrict(supabase);
     if (isBepaidCredsError(credsResult)) {
       console.error('[bepaid-sub-checkout] No bePaid credentials found:', credsResult.error);
@@ -259,6 +265,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    checkoutStage = 'offer_resolve';
     const { data: offerData, error: offerError } = await supabase
       .from('tariff_offers')
       .select('id, tariff_id, is_active, payment_method, is_installment, installment_count, auto_charge_amount, amount, meta')
@@ -338,6 +345,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    checkoutStage = 'referral_quote';
     const referralQuote = await resolveReferralCheckoutDiscount({
       supabase, userId: userId!, productId, amountMinor: amountCents,
       allowImmediateDiscount: false,
@@ -351,6 +359,7 @@ Deno.serve(async (req) => {
       final_price:amountCents/100, currency, meta:{...referralMeta, replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
       purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
     };
+    checkoutStage = 'pending_checkout_lookup';
     const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
     if(recoveredCheckout) return new Response(JSON.stringify(recoveredCheckout), {headers:{...corsHeaders,'Content-Type':'application/json'}});
     const reusedCheckout = await lookupPendingCheckout(supabase,pendingProposal,'subscription','bepaid');
@@ -481,6 +490,7 @@ Deno.serve(async (req) => {
       reason:routing.reason || 'unknown',offer_id:effectiveOfferId || null,tariff_id:tariff.id,product_id:productId,
       resolved_via:routing.resolved_via ?? 'none', candidates_count:routing.candidates_count ?? 0,
     });
+    checkoutStage = 'purchase_claim';
     const checkoutClaim = await claimPendingPurchase(supabase, {
         user_id: userId,
         profile_id: profileId,
@@ -741,6 +751,7 @@ Deno.serve(async (req) => {
     });
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
+    checkoutStage = 'provider_request';
     const bepaidResponse = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
@@ -897,14 +908,25 @@ Deno.serve(async (req) => {
 
     };
     if (provSubError) throw new Error('provider_subscription_persist_failed');
+    checkoutStage = 'attempt_finalize';
     await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
     return new Response(JSON.stringify(readyResult), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (e: any) {
-    console.error('[bepaid-sub-checkout] Error:', e);
-    return new Response(JSON.stringify({ error: e.message }), {
+    console.error('[bepaid-sub-checkout] unexpected_error', {
+      incident_id: incidentId,
+      stage: checkoutStage,
+      error_name: e instanceof Error ? e.name : 'UnknownError',
+      error_message: e instanceof Error ? e.message : String(e),
+    });
+    return new Response(JSON.stringify({
+      success: false,
+      error: 'Не удалось открыть страницу оплаты. Попробуйте ещё раз через несколько секунд.',
+      code: 'SUBSCRIPTION_CHECKOUT_INTERNAL_ERROR',
+      incident_id: incidentId,
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

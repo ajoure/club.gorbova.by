@@ -142,6 +142,14 @@ function extractMeaningful(body: unknown): string | null {
 function mapKnown(raw: string): string | null {
   const s = raw.toLowerCase();
 
+  if (
+    s.includes('internal server error') ||
+    s.includes('subscription_checkout_internal_error') ||
+    s.includes('payment service error')
+  ) {
+    return 'Не удалось открыть страницу оплаты. Попробуйте ещё раз через несколько секунд.';
+  }
+
   if (s.includes("request idle timeout") || s.includes("timeout limit")) {
     return "Анализ занял слишком много времени. Повторите запрос или загрузите выписку в PDF с текстовым слоем, XLSX либо CSV.";
   }
