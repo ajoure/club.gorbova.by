@@ -80,7 +80,12 @@ export async function reusePendingSubscriptionCheckout(db:any,proposed:Row,provi
     // subscription still require manual reconciliation.
     const unreconciled=providers.filter(p=>{
       const sub=subs?.find((s:Row)=>s.id===p.subscription_v2_id);
-      return !sub || !['active','trial'].includes(String(sub.status));
+      // A canceled/expired/superseded local subscription is no longer a live
+      // purchase. Historical provider rows attached to it must not block a
+      // fresh checkout forever. Active/trial rows are handled by the caller's
+      // same-product conflict; only genuinely unfinished local subscriptions
+      // still require reconciliation here.
+      return !sub || !['active','trial','canceled','expired','superseded'].includes(String(sub.status));
     });
     if(unreconciled.length) throw new Error('existing_provider_subscription_requires_reconciliation');
     return null;
