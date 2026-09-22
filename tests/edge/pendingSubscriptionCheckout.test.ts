@@ -10,8 +10,8 @@ import { stripeGetCheckoutSession } from '../../supabase/functions/_shared/acqui
 import { reusePendingSubscriptionCheckout,samePendingSubscriptionPurchase } from '../../supabase/functions/_shared/pending-subscription-checkout';
 const proposal={user_id:'user',product_id:'product',tariff_id:'tariff',offer_id:'offer',currency:'BYN',final_price:250,purchase_snapshot:{access_days:30,is_trial:false}};
 const order={...proposal,id:'order',order_number:'order-number',status:'pending',paid_amount:0,meta:{payment_type:'subscription'}};
-function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order, baseProvider:any={id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}}) {
- const rows:any={subscriptions_v2:[{id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
+function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order, baseProvider:any={id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}}, baseSubscription:any={id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}) {
+ const rows:any={subscriptions_v2:[baseSubscription],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
  const db:any={rpc:vi.fn().mockResolvedValue({data:true,error:null}),from:vi.fn((table:string)=>{
   let orphanQuery=false;const q:any={is:vi.fn(()=>{orphanQuery=true;return q;})};for(const op of ['select','eq','in','gt','limit','maybeSingle','insert']) q[op]=vi.fn(()=>q);
   q.then=(resolve:any)=>Promise.resolve({data:orphanQuery ? [] : rows[table] ?? null,error:null}).then(resolve);return q;
@@ -69,6 +69,11 @@ describe('provider-confirmed subscription checkout reuse',()=>{
   const pending={id:'pending-order',product_id:'product',status:'pending',paid_amount:0,is_deleted:false};
   await expect(reusePendingSubscriptionCheckout(orphanDbFixture({id:'orphan',order_id:'pending-order',meta:{}},pending),proposal,'bepaid'))
     .rejects.toThrow('orphan_provider_subscription_requires_reconciliation');
+ });
+ it('does not let a provider row on a superseded local subscription block a fresh checkout',async()=>{
+  const provider={id:'provider-row',provider:'bepaid',subscription_v2_id:'sub',provider_subscription_id:'sbs_old',order_id:'order',state:'redirecting',meta:{}};
+  const superseded={id:'sub',order_id:'order',status:'superseded',tariff_id:'tariff',meta:{}};
+  await expect(reusePendingSubscriptionCheckout(dbFixture([],[],order,provider,superseded),proposal,'bepaid')).resolves.toBeNull();
  });
  it('does not return a pending link alongside another live mandate, even at a different provider',async()=>{
   const db=dbFixture([],[{id:'other',provider:'bepaid',state:'active',subscription_v2_id:'other-sub'}]);
