@@ -16,6 +16,7 @@ interface PromptRunFlowProps {
 // Binary formats still go through the extraction guard before the analysis starts.
 const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".rtf", ".xls", ".xlsx", ".csv", ".xml", ".json", ".sta", ".txt", ".jpg", ".jpeg", ".png", ".webp"];
 const BANK_STATEMENT_EXTENSIONS = [".pdf", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".jpg", ".jpeg", ".png", ".webp"];
+const ACT_RECONCILIATION_EXTENSIONS = BANK_STATEMENT_EXTENSIONS;
 const MAX_FILES = 5;
 const MAX_FILE_SIZE_MB = 20;
 
@@ -25,6 +26,8 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
   const [fileError, setFileError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const isBankStatement = scenario.code === "bank_statement_analysis";
+  const isActReconciliation = scenario.code === "act_reconciliation";
+  const scenarioFileLimit = isActReconciliation ? 2 : MAX_FILES;
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList) return;
@@ -32,26 +35,32 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
     const selectedFiles = Array.from(fileList);
     const unsupportedFiles = selectedFiles.filter(f => {
       const ext = f.name.toLowerCase().substring(f.name.lastIndexOf("."));
-      const allowedExtensions = isBankStatement ? BANK_STATEMENT_EXTENSIONS : ALLOWED_EXTENSIONS;
+      const allowedExtensions = isBankStatement
+        ? BANK_STATEMENT_EXTENSIONS
+        : isActReconciliation
+          ? ACT_RECONCILIATION_EXTENSIONS
+          : ALLOWED_EXTENSIONS;
       return !allowedExtensions.includes(ext);
     });
     if (unsupportedFiles.length > 0) {
       setFileError(`Не поддерживается формат: ${unsupportedFiles.map(file => file.name).join(", ")}. Выберите PDF, XLSX/XLS, CSV, TXT, DOCX, JPG, PNG или WebP.`);
       return;
     }
-    const oversizedFiles = isBankStatement
+    const oversizedFiles = (isBankStatement || isActReconciliation)
       ? selectedFiles.filter(file => file.size > MAX_FILE_SIZE_MB * 1024 * 1024)
       : [];
     if (oversizedFiles.length > 0) {
-      setFileError(`Файл больше ${MAX_FILE_SIZE_MB} МБ: ${oversizedFiles.map(file => file.name).join(", ")}. Уменьшите файл или разделите выписку по месяцам.`);
+      setFileError(`Файл больше ${MAX_FILE_SIZE_MB} МБ: ${oversizedFiles.map(file => file.name).join(", ")}. Уменьшите файл или сформируйте документ за меньший период.`);
       return;
     }
-    if (files.length + selectedFiles.length > MAX_FILES) {
-      setFileError(`Можно загрузить не более ${MAX_FILES} файлов за один анализ.`);
+    if (files.length + selectedFiles.length > scenarioFileLimit) {
+      setFileError(isActReconciliation
+        ? "Для сверки нужны ровно два файла: первый акт вашей организации и второй акт контрагента."
+        : `Можно загрузить не более ${scenarioFileLimit} файлов за один анализ.`);
       return;
     }
     const newFiles = selectedFiles;
-    setFiles(prev => [...prev, ...newFiles].slice(0, MAX_FILES));
+    setFiles(prev => [...prev, ...newFiles].slice(0, scenarioFileLimit));
   };
 
   const removeFile = (idx: number) => setFiles(prev => prev.filter((_, i) => i !== idx));
@@ -88,6 +97,22 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
         </div>
       )}
 
+      {isActReconciliation && (
+        <div className="mb-3 rounded-lg border border-blue-200/70 bg-blue-50/70 p-3 text-xs text-slate-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-slate-200">
+          <div className="mb-2 flex items-center gap-2 font-medium text-slate-900 dark:text-slate-100">
+            <Info className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+            Как подготовить акты
+          </div>
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>Сначала загрузите акт вашей организации, затем акт контрагента.</li>
+            <li>Нужно ровно два файла за одинаковый период и по одной паре организаций.</li>
+            <li>Лучшие форматы — XLSX, XLS, CSV или PDF с выделяемым текстом. Поддерживаются также DOCX, TXT и чёткие сканы.</li>
+            <li>Каждый файл — до {MAX_FILE_SIZE_MB} МБ. Для длинных актов лучше выбрать период до одного года или разделить сверку.</li>
+            <li>В документах должны читаться даты, номера документов, суммы, назначение операций и сальдо. Файлы с паролем не поддерживаются.</li>
+          </ol>
+        </div>
+      )}
+
       {isFileType && (
         <>
           <div
@@ -101,6 +126,8 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
             <p className="text-[10px] text-muted-foreground/60 mt-1">
               {isBankStatement
                 ? `PDF, XLSX/XLS, CSV, TXT, DOCX, JPG/JPEG, PNG, WebP (макс. ${MAX_FILES})`
+                : isActReconciliation
+                  ? "Ровно 2 файла: PDF, XLSX/XLS, CSV, TXT, DOCX, JPG/JPEG, PNG или WebP"
                 : `PDF, Excel/CSV, XML/JSON/MT940, Word, текст, изображения (макс. ${MAX_FILES})`}
             </p>
           </div>
@@ -110,7 +137,9 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
             multiple
             accept={isBankStatement
               ? BANK_STATEMENT_EXTENSIONS.join(",")
-              : ALLOWED_EXTENSIONS.join(",")}
+              : isActReconciliation
+                ? ACT_RECONCILIATION_EXTENSIONS.join(",")
+                : ALLOWED_EXTENSIONS.join(",")}
             className="hidden"
             onChange={e => {
               handleFiles(e.target.files);
@@ -130,7 +159,9 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
               {files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs bg-muted/50 rounded px-2 py-1">
                   <FileText className="h-3 w-3 text-muted-foreground" />
-                  <span className="truncate flex-1">{f.name}</span>
+                  <span className="truncate flex-1">
+                    {isActReconciliation ? `${i + 1}. ${i === 0 ? "Ваш акт" : "Акт контрагента"}: ` : ""}{f.name}
+                  </span>
                   <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeFile(i)}>
                     <X className="h-3 w-3" />
                   </Button>
@@ -167,7 +198,7 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
         className="w-full mt-3"
         disabled={
           isLoading ||
-          (isFileType && files.length === 0) ||
+          (isFileType && (isActReconciliation ? files.length !== 2 : files.length === 0)) ||
           (isAssetClassifier && text.trim().length < 3)
         }
         onClick={() => onSubmit(files, text)}

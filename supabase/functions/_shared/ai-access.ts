@@ -32,6 +32,8 @@ export const ASSET_CLASSIFIER_SCENARIO_CODE = 'asset_classifier';
 export const ASSET_CLASSIFIER_SECTION_CODE = 'ai_asset_classifier';
 export const BANK_STATEMENT_ANALYZER_SCENARIO_CODE = 'bank_statement_analysis';
 export const BANK_STATEMENT_ANALYZER_SECTION_CODE = 'ai_bank_statement_analysis';
+export const ACT_RECONCILIATION_SCENARIO_CODE = 'act_reconciliation';
+export const ACT_RECONCILIATION_SECTION_CODE = 'ai_act_reconciliation';
 
 export interface AiAccess {
   tier: 'full' | 'zg_only' | 'none';
@@ -196,6 +198,7 @@ const DENIAL_HUMAN: Record<string, string> = {
   scenario_requires_full_tier: 'Этот сценарий доступен в тарифах Business / Gorbova Club.',
   asset_classifier_not_in_products: 'Сервис «Определение шифра ОС» не входит в ваши активные продукты.',
   bank_statement_analysis_not_in_products: 'Сервис «Анализ выписки» не входит в ваши активные продукты.',
+  act_reconciliation_not_in_products: 'Сервис «Сверка актов» не входит в ваши активные продукты.',
   no_access: 'AI-помощник недоступен на вашем тарифе.',
 };
 
@@ -210,12 +213,15 @@ export async function resolveAiAccessStatus(
   knownScenarioCodes: string[],
 ): Promise<AiAccessStatusUi> {
   const access = await resolveAiAccess(supabase, userId);
-  const [assetClassifierAllowed, bankStatementAnalyzerAllowed] = await Promise.all([
+  const [assetClassifierAllowed, bankStatementAnalyzerAllowed, actReconciliationAllowed] = await Promise.all([
     knownScenarioCodes.includes(ASSET_CLASSIFIER_SCENARIO_CODE)
       ? resolveSectionAccess(supabase, userId, ASSET_CLASSIFIER_SECTION_CODE)
       : false,
     knownScenarioCodes.includes(BANK_STATEMENT_ANALYZER_SCENARIO_CODE)
       ? resolveSectionAccess(supabase, userId, BANK_STATEMENT_ANALYZER_SECTION_CODE)
+      : false,
+    knownScenarioCodes.includes(ACT_RECONCILIATION_SCENARIO_CODE)
+      ? resolveSectionAccess(supabase, userId, ACT_RECONCILIATION_SECTION_CODE)
       : false,
   ]);
   const chatCheck = isModeAllowed(access, 'chat');
@@ -232,6 +238,13 @@ export async function resolveAiAccessStatus(
         code,
         allowed: bankStatementAnalyzerAllowed,
         denial_reason: bankStatementAnalyzerAllowed ? undefined : 'bank_statement_analysis_not_in_products',
+      };
+    }
+    if (code === ACT_RECONCILIATION_SCENARIO_CODE) {
+      return {
+        code,
+        allowed: actReconciliationAllowed,
+        denial_reason: actReconciliationAllowed ? undefined : 'act_reconciliation_not_in_products',
       };
     }
     const check = isModeAllowed(access, 'prompt', code);

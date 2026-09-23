@@ -103,4 +103,26 @@ describe('conversation isolation', () => {
     expect(result.current.messages.at(-1)?.content).toContain('XLSX или CSV');
     expect(mocks.toast).not.toHaveBeenCalled();
   });
+
+  it('keeps an act reconciliation failure in chat with file order and retry steps', async () => {
+    mocks.invoke.mockResolvedValueOnce({ error: new Error('Не удалось распознать два акта') });
+    const { result } = renderHook(() => useAiChat());
+    let succeeded!: boolean;
+    await act(async () => {
+      succeeded = await result.current.runActReconciliation({
+        fileContents: 'two act contents',
+        fileNames: ['ours.xlsx', 'their.xlsx'],
+      });
+    });
+    expect(succeeded).toBe(false);
+    expect(result.current.messages.at(-1)?.metadata).toMatchObject({
+      is_error: true,
+      scenario_code: 'act_reconciliation',
+      launcher_title_snapshot: 'Сверка актов',
+    });
+    expect(result.current.messages.at(-1)?.content).toContain('Акты не удалось распознать');
+    expect(result.current.messages.at(-1)?.content).toContain('ours.xlsx');
+    expect(result.current.messages.at(-1)?.content).toContain('сначала ваш, затем акт контрагента');
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
 });

@@ -86,6 +86,20 @@ function buildBankStatementErrorMessage(message: string, fileNames: string[] = [
   return `### Анализ выписки завершился с ошибкой${files}\n\n${message}\n\n**Что сделать:** попробуйте ещё раз. Если ошибка повторится, загрузите экспорт из интернет-банка в XLSX или CSV за один месяц.`;
 }
 
+function buildActReconciliationErrorMessage(message: string, fileNames: string[] = []): string {
+  const normalized = message.toLowerCase();
+  const files = fileNames.length > 0
+    ? `\n\n**Файлы:** ${fileNames.map((name, index) => `${index + 1}. ${name}`).join("; ")}`
+    : "";
+  if (normalized.includes("времени") || normalized.includes("timeout")) {
+    return `### Сверка актов не завершена${files}\n\nОбработка заняла слишком много времени.\n\n**Что сделать:**\n1. Сформируйте оба акта за одинаковый, более короткий период.\n2. Лучше загрузите XLSX/CSV или PDF с выделяемым текстом.\n3. Проверьте порядок: сначала ваш акт, затем акт контрагента.\n4. Запустите сверку ещё раз.`;
+  }
+  if (normalized.includes("распознат") || normalized.includes("ровно два") || normalized.includes("прочитать") || normalized.includes("поддержива")) {
+    return `### Акты не удалось распознать${files}\n\n${message}\n\n**Что проверить:**\n- загружено ровно два акта: сначала ваш, затем акт контрагента;\n- период и стороны в документах совпадают;\n- читаются даты, номера документов, суммы, операции и сальдо;\n- файлы не защищены паролем;\n- предпочтительный формат — XLSX, CSV или PDF с выделяемым текстом.\n\nИсправьте файлы и запустите сверку ещё раз.`;
+  }
+  return `### Сверка актов завершилась с ошибкой${files}\n\n${message}\n\n**Что сделать:** повторите попытку. Если ошибка повторится, сформируйте оба акта за меньший период в XLSX, CSV или PDF с текстовым слоем.`;
+}
+
 export function useAiChat() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -465,6 +479,76 @@ export function useAiChat() {
     }
   }, [user?.id]);
 
+  const runActReconciliation = useCallback(async (payload: {
+    fileContents?: string;
+    fileNames?: string[];
+    images?: Array<{ base64: string; filename: string; mimeType?: string }>;
+    unsupportedFiles?: UnsupportedFileInfo[];
+  }): Promise<boolean> => {
+    if (payload.fileNames?.length !== 2 || (!payload.fileContents && !payload.images?.length) || requestPending.current) return false;
+    const epoch = requestEpoch.current;
+    const isCurrent = () => epoch === requestEpoch.current && currentUserId.current === user?.id;
+    requestPending.current = true;
+    setMessages((previous) => [...previous, {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: `Сверка актов: ${(payload.fileNames || []).join(" ↔ ")}`,
+      timestamp: new Date(),
+      metadata: {
+        file_names: payload.fileNames,
+        scenario_code: "act_reconciliation",
+        scenario_type: "file_analysis",
+        exclude_from_ai_history: true,
+      },
+    }]);
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("act-reconciliation-analyzer", {
+        body: {
+          file_contents: payload.fileContents,
+          file_names: payload.fileNames,
+          images: payload.images,
+          unsupported_files: payload.unsupportedFiles,
+        },
+      });
+      if (!isCurrent()) return false;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: data?.content || "Не удалось сформировать отчёт по сверке актов.",
+        timestamp: new Date(),
+        metadata: { ...(data?.metadata || {}), exclude_from_ai_history: true },
+      }]);
+      setActiveScenarioContext(null);
+      return true;
+    } catch (error) {
+      if (!isCurrent()) return false;
+      const message = error instanceof Error ? error.message : "Произошла ошибка при сверке актов.";
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: buildActReconciliationErrorMessage(message, payload.fileNames),
+        timestamp: new Date(),
+        metadata: {
+          is_error: true,
+          exclude_from_ai_history: true,
+          scenario_code: "act_reconciliation",
+          scenario_type: "file_analysis",
+          launcher_title_snapshot: "Сверка актов",
+          file_names: payload.fileNames,
+        },
+      }]);
+      return false;
+    } finally {
+      if (isCurrent()) {
+        requestPending.current = false;
+        setIsLoading(false);
+      }
+    }
+  }, [user?.id]);
+
   const clearChat = useCallback(() => {
     requestEpoch.current++;
     requestPending.current = false;
@@ -487,6 +571,7 @@ export function useAiChat() {
     sendMessage,
     runAssetClassifier,
     runBankStatementAnalyzer,
+    runActReconciliation,
     clearChat,
     fetchScenarios,
     loadConversation,
