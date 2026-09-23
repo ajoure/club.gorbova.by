@@ -1,85 +1,83 @@
-# План: инцидент оплаты 22.09.2026, публичная ссылка Gorbova Club BUSINESS 250 BYN
+# План: PR #524 «Сверка актов», exact SHA 4bdd224c6cd2c1ff96bcef7d64b3e6aaa5174682
 
-Режим: READ-ONLY. Ничего не изменено, не задеплоено, не опубликовано; checkout/платёж не создавались, сообщения не отправлялись.
-Источник истины: origin/main = HEAD = `3bd612bd2056496122412a61ce15355df7e2e2ab`, дерево чистое.
+Режим подготовки плана: READ-ONLY. Ничего не изменено, не применено, не задеплоено, Publish не нажимался. Предыдущий план по PR #514 не исполнялся.
 
-## 1. Доказательства (confirmed)
+## 1. Подтверждённые факты (read-only)
 
-Время инцидента — **16:11–16:13 UTC (19:11–19:13 Минск)**, а не 15:12 UTC: в этом окне логи сохранились, и в них ровно два обращения по публичной ссылке, оба упали.
+**SHA.** Рабочее дерево Lovable уже находится ровно на `4bdd224c6cd2c1ff96bcef7d64b3e6aaa5174682`, дерево чистое. Синхронизация exact SHA возможна и фактически не требует переключения.
 
-| Время UTC | Минск | Событие |
+**Состав коммита (16 файлов).** UI: `AiPageContent.tsx`, `PromptRunFlow.tsx`, `useAiChat.ts` + 6 тестов. Backend: новая `act-reconciliation-analyzer/index.ts`, три новых shared-модуля (`act-reconciliation-input/-extraction/-report.ts`), изменённый `_shared/ai-access.ts`, `supabase/config.toml` (`[functions.act-reconciliation-analyzer] verify_jwt = true`), миграция `20260923112039_cb_act_reconciliation_scenario.sql`.
+
+**Миграция ещё НЕ применена.** В production:
+- `app_sections` с `code='ai_act_reconciliation'` — 0 строк;
+- `ai_user_prompts` с `code='act_reconciliation'` — 0 строк;
+- конфликтов по code/section/prompt нет, миграция идемпотентна (`ON CONFLICT (code) DO UPDATE`, `WHERE NOT EXISTS` для rules).
+
+**Продукты и тарифы.**
+| Продукт | ID | Тарифов |
 |---|---|---|
-| 16:11:44.7 | 19:11:44 | `[public-checkout] target_user_resolved` user `def0faba…`, link `ba2a0536…` |
-| 16:11:45.1 | 19:11:45 | `[public-checkout] Unexpected error: orphan_provider_subscription_requires_reconciliation` |
-| 16:12:28.3 | 19:12:28 | тот же user, link `7e4b1a17…` |
-| 16:12:28.8 | 19:12:28 | та же ошибка |
+| Ценный бухгалтер \| 1 ступень 2.0 \| 20 поток | `3e43fb28-8322-41bc-bfee-714731bdc630` | 5 |
+| Ценный бухгалтер \| 1 ступень 2.0 \| 21 поток | `2b7bf6d4-ad8d-46ad-9399-7f96c307c596` | 8 |
 
-- `stage` = `pending_checkout_lookup` (внутри `createPaymentCheckout` → `reusePendingSubscriptionCheckout`), stack: `_shared/pending-subscription-checkout.ts:36` → `_shared/create-payment-checkout.ts:494` → `public-checkout/index.ts:304`.
-- `error_name` = `Error`, `error_message` = `orphan_provider_subscription_requires_reconciliation`.
-- Отдельного `incident_id` нет: structured-логирование с `incident_id` реализовано только в `bepaid-create-subscription-checkout` (PR #515), публичный путь `public-checkout` его не имеет — **UNKNOWN by design**.
-- Коммерческие дельты: новых orders/payments/subscriptions/provider rows не создано, provider checkout не возникал.
+Ожидаемый rowcount новых `section_access` rules: **ровно 13** (5 + 8, все тарифы активны).
+Baseline: `access_rules` всего **151**, из них `section_access` **62**. Ожидаемый post: **164** и **75**.
 
-## 2. Состояние данных пользователя (confirmed, masked)
+**Preflight внутри миграции.** `DO $$`-блок падает, если активная секция ≠ 1 или любой из счётчиков тарифов = 0. Текущие значения (5 и 8) проходят.
 
-Блокирующая строка — **orphan provider subscription**:
+**Функции к deploy.** Ровно две:
+- `act-reconciliation-analyzer` — новая; импортирует `_shared/ai-access.ts` и три новых shared-модуля, читает `LOVABLE_API_KEY`;
+- `ai-access-status` — импортирует изменённый `_shared/ai-access.ts`.
 
-| Поле | Значение |
-|---|---|
-| provider row | `4ca476af…` (`sbs_024463…`) |
-| state | `redirecting` (входит в `BLOCKING_PROVIDER_STATES`) |
-| subscription_v2_id | NULL |
-| order_id (колонка) | NULL, в meta — `00a8fd02…` |
-| orders_v2 по этому id | **строки не существует** |
-| created_at / updated_at | 2026-03-18 06:00 UTC / 2026-05-03 11:34 UTC |
+Тот же shared-модуль импортируют также `asset-classifier`, `bank-statement-analyzer`, `gorbova-ai-chat`. Изменение в `ai-access.ts` — **аддитивное** (новые константы, третья ветка в `Promise.all`, новый denial-текст), поведение существующих сценариев не меняется, поэтому их redeploy в scope не входит. Если требуется полное единообразие bundle — это отдельный follow-up, не блокер.
 
-То есть это протухший checkout полугодовой давности по уже несуществующему заказу.
+**Секрет.** `LOVABLE_API_KEY` присутствует в production (managed). Значение не выводилось и не требуется.
 
-Локальные подписки на Club (`11c9f1b8…`) у пользователя: только `past_due`, `expired`, `superseded`; ни одной `active`/`trial`; активного доступа к Club сейчас нет. Вторая orphan-строка `60212e84…` в состоянии `expired` не блокирует.
+## 2. Порядок исполнения
 
-## 3. Root cause (confirmed)
+1. Sync exact SHA `4bdd224c…`; подтвердить чистое дерево и дельту ровно в 16 файлах.
+2. Прогнать фронтовые тесты (`PromptRunFlow.test.tsx`, `useAiChat.reliability.test.ts`, 4 теста `actReconciliation*`). Красный тест — стоп.
+3. Снять pre-read-back (запросы ниже).
+4. Применить **только** миграцию `20260923112039_cb_act_reconciliation_scenario.sql`.
+5. Снять post-read-back; сверить ожидаемые дельты.
+6. Deploy ровно `act-reconciliation-analyzer` и `ai-access-status`.
+7. Runtime smoke (п. 4).
+8. Publish и визуальная проверка (п. 5).
 
-`supabase/functions/_shared/pending-subscription-checkout.ts`, строки 44–54:
+## 3. Pre/post read-back запросы
 
+```sql
+-- 1) секция
+select count(*) from app_sections where code='ai_act_reconciliation' and is_active=true;  -- pre 0, post 1
+-- 2) промпт
+select count(*) from ai_user_prompts where code='act_reconciliation' and is_active=true and is_archived=false; -- pre 0, post 1
+-- 3) новые правила: только тарифы ЦБ20/21
+select product_id, count(*) from access_rules
+where grant_target_type='section_access'
+  and target_ref=(select id::text from app_sections where code='ai_act_reconciliation')
+group by product_id;  -- post: 5 и 8, других product_id быть не должно
+-- 4) отсутствие изменений прочих правил
+select count(*) from access_rules;                                    -- 151 -> 164
+select count(*) from access_rules where grant_target_type='section_access'; -- 62 -> 75
+-- 5) контроль: ни одно существующее правило не изменено
+select count(*) from access_rules where updated_at > <момент_перед_миграцией>
+  and target_ref <> (select id::text from app_sections where code='ai_act_reconciliation'); -- ожидается 0
 ```
-orderId = orphan.order_id || orphan.meta?.order_id      // 00a8fd02…
-linked  = orders_v2 by orderId                          // не найдено
-if (error || !linked || linked.product_id === proposed.product_id) throw
-```
 
-Отсутствие заказа трактуется как «требуется ручная сверка», хотя строка объективно мёртвая. Итог: любая попытка оплатить Club этим пользователем гарантированно падает.
+Любое расхождение (rowcount ≠ 13, чужой product_id, изменение прочих правил) — **стоп** и откат не производится вручную: докладывается факт.
 
-Второй дефект — **маскировка**: контролируемый маппинг reconciliation-ошибок в HTTP 409 `CHECKOUT_RECONCILIATION_REQUIRED` реализован только в `bepaid-create-subscription-checkout/index.ts` (строки 368–385). Публичный путь `public-checkout` → `create-payment-checkout` его не имеет, поэтому throw уходит в общий catch и пользователь видит «Не удалось открыть страницу оплаты».
+## 4. Безопасный runtime smoke (без реальных клиентских данных)
 
-## 4. Подтверждение правила (confirmed по коду и данным)
+- Никаких тестовых пользователей не создаётся.
+- Проверка «есть доступ»: под админом/владельцем открыть «Нейросеть» → режим «Сверка актов» виден и запускается.
+- Два синтетических CSV (выдуманные контрагент, номера и суммы, без PII): загрузка ровно двух файлов → отчёт о расхождениях + проект письма.
+- Проверка «нет доступа»: side-effect-free вызов `ai-access-status` от существующей учётной записи без тарифов ЦБ → сценарий `act_reconciliation` возвращает `allowed=false`, `denial_reason='act_reconciliation_not_in_products'`; либо, если такой учётки без риска нет, ограничиться контрактным тестом shared-модуля.
+- Проверить, что доступы других ИИ-инструментов (`ai_asset_classifier`, `ai_bank_statement_analysis`) в том же ответе не изменились.
+- Никаких писем контрагентам не отправляется — только генерация текста в интерфейсе.
 
-- Terminal provider states (`canceled`, `cancelled`, `expired`, `terminated`) **не входят** в `BLOCKING_PROVIDER_STATES` и уже не блокируют. Проблема только в stale-строках с нетерминальным `redirecting`/`pending`, потерявших заказ и подписку.
-- Локальные `canceled`/`expired`/`superseded` подписки блокирующими не считаются: reuse требует `pending`/`past_due` (строка 60), конфликт активной — только для `active`/`trial`.
-- Новый период не суммируется: `planned_access_start_at = now` (`create-payment-checkout.ts`, строки 788, 922), длительность = `tariff.access_days` (30). После успешной оплаты доступ стартует датой оплаты на 30 дней.
+## 5. Publish и визуальная проверка
 
-Вывод: stale pending/redirecting orphan-строка отменённой или утраченной покупки **должна исключаться** и из blocking, и из reuse.
+Publish фронтенда после всех PASS. Затем на опубликованном URL — desktop и mobile: режим «Сверка актов» присутствует в списке, подсказка про загрузку двух файлов читаема, отчёт и письмо не обрезаны и не перекрываются. Скриншоты без PII и без подписанных URL.
 
-## 5. Минимальный GitHub-first патч
+## 6. Стоп-условия
 
-Файлы:
-- `supabase/functions/_shared/pending-subscription-checkout.ts` — orphan-ветка: блокировать только если заказ **существует**, не удалён, `paid_amount=0`, статус `pending`/`failed` и product совпадает. Отсутствующий/чужой/оплаченный/терминальный заказ — не блокирует (`continue`). Отсутствие `orderId` также не блокирует. Бросать типизированную ошибку с полем `code`.
-- `supabase/functions/_shared/create-payment-checkout.ts` — вернуть reconciliation-класс как контролируемый ответ, а не throw.
-- `supabase/functions/public-checkout/index.ts` — маппинг в HTTP 409 `{ ok:false, code:'CHECKOUT_RECONCILIATION_REQUIRED', stage }`, переиспользовать хелпер из `bepaid-create-subscription-checkout`; добавить structured `request_started`/`unexpected_error` с `incident_id` (без PII/URL).
-- `src/utils/normalizeEdgeFunctionError.ts` — сообщение для `CHECKOUT_RECONCILIATION_REQUIRED` уже есть, проверить покрытие публичного пути.
-
-Тесты:
-- `tests/edge/pendingSubscriptionCheckout.test.ts` — новые кейсы: orphan без заказа, orphan с несуществующим заказом, orphan с оплаченным заказом → **не блокируют**; orphan с реальным неоплаченным заказом того же продукта → по-прежнему reconciliation.
-- `src/test/paymentCheckoutIncidentContract.test.ts` — публичный путь отдаёт 409 с кодом, а не «Internal server error».
-
-Миграции: **не нужны**. Ручные правки данных: не нужны (патч делает мёртвую строку безвредной). Deploy: только `public-checkout`. Publish: фронтенд, если менялся текст ошибки.
-
-## 6. Безопасный acceptance именно по этой ссылке
-
-1. OPTIONS → 200; неавторизованный/пустой body → контролируемый JSON.
-2. Baseline: счётчики orders_v2 / payments_v2 / subscriptions_v2 / provider_subscriptions / crm_checkout_attempts.
-3. Один запрос по той же публичной ссылке: ожидается **HTTP 200 и новый checkout** (reuse невозможен — валидных pending-строк с заказом нет), либо, если что-то ещё не сверено, контролируемый 409 с кодом — но не «Internal server error».
-4. Оплату не проводить. Если возник новый provider checkout — он остаётся неоплаченным; фиксируем ровно одну новую строку заказа/подписки и отсутствие payments. Если создание нового checkout нежелательно, acceptance ограничивается пунктами 1–2 плюс unit-тестами.
-5. Read-back: payments = 0 дельты; после реальной оплаты клиентом — `access_start_at` = дата оплаты, `access_end_at` = +30 дней, без суммирования с прошлым периодом.
-
-## 7. Отдельно
-
-Вторая orphan-строка `60212e84…` (`expired`) и историческая `past_due`-подписка `835a5f58…` другого пользователя к этому инциденту отношения не имеют; чистка stale-строк — отдельный follow-up, для разблокировки оплаты не требуется.
+SHA mismatch; красный тест; ошибка preflight-блока миграции; rowcount ≠ 13 или затронуты другие `access_rules`; отсутствие/недоступность `LOVABLE_API_KEY` в рантайме функции; любой critical finding security scan в scope. Известный фон: 13 pre-existing RLS findings, к этому scope не относятся и его не блокируют.
