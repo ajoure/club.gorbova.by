@@ -5,6 +5,12 @@ const TRANSPARENT_GIF = Uint8Array.from(
   (character) => character.charCodeAt(0),
 );
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+};
+
 function isLikelyMachine(userAgent: string): boolean {
   return /(bot|crawler|spider|scanner|preview|prefetch|headless|googleimageproxy|facebookexternalhit|slackbot|discordbot|whatsapp)/i.test(
     userAgent,
@@ -49,6 +55,7 @@ function pixelResponse(status = 200): Response {
 }
 
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -93,6 +100,17 @@ Deno.serve(async (request) => {
   try {
     const target = new URL(result.url);
     if (target.protocol !== "https:" && target.protocol !== "http:") throw new Error("unsafe protocol");
+    if (new URL(request.url).searchParams.get("format") === "json") {
+      return new Response(JSON.stringify({ url: target.toString() }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
     return new Response(null, {
       status: 302,
       headers: {

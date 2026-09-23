@@ -134,7 +134,8 @@ Deno.serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const aiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!authHeader || !supabaseUrl || !anonKey || !serviceKey || !aiKey) return json({ error: "Сервис временно недоступен" }, 503);
+    if (!authHeader) return json({ error: "Необходима авторизация" }, 401);
+    if (!supabaseUrl || !anonKey || !serviceKey || !aiKey) return json({ error: "Сервис временно недоступен" }, 503);
 
     const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
