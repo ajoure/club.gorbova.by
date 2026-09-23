@@ -6,6 +6,8 @@ import dispatcherSource from "../../supabase/functions/process-scheduled-broadca
 import telegramSource from "../../supabase/functions/telegram-mass-broadcast/index.ts?raw";
 import emailSource from "../../supabase/functions/email-mass-broadcast/index.ts?raw";
 import trackerSource from "../../supabase/functions/broadcast-track/index.ts?raw";
+import trackingPageSource from "../pages/BroadcastTrackingPage.tsx?raw";
+import appSource from "../App.tsx?raw";
 import supabaseConfigSource from "../../supabase/config.toml?raw";
 import {
   extractHtmlLinks,
@@ -86,6 +88,12 @@ describe("аналитика рассылок", () => {
     expect(trackedHtml).toContain("/broadcast-track/c/22222222-2222-4222-8222-222222222222");
     expect(trackedHtml).toContain("/broadcast-track/o/11111111-1111-4111-8111-111111111111.gif");
     expect(instrumentTelegramText("Открыть https://gorbova.by/a", tracking)).toContain("/broadcast-track/c/22222222-2222-4222-8222-222222222222");
+    expect(instrumentTelegramText("Открыть https://gorbova.by/a", tracking)).toContain("https://gorbova.by/broadcast-track/c/");
+    expect(instrumentTelegramText("Открыть https://gorbova.by/a", tracking)).not.toContain("supabase.co");
+    expect(trackedHtml).toContain("https://gorbova.by/broadcast-track/c/");
+    expect(trackerSource).toContain('searchParams.get("format") === "json"');
+    expect(trackingPageSource).toContain("window.location.replace(payload.url)");
+    expect(appSource).toContain('path="/broadcast-track/c/:token"');
   });
 
   it("показывает честные ограничения и мобильную детализацию", () => {

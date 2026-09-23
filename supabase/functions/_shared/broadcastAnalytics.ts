@@ -283,13 +283,23 @@ export function trackingBaseUrl(): string {
   return `${base}/functions/v1/broadcast-track`;
 }
 
+export function publicTrackingBaseUrl(): string {
+  const configured = Deno.env.get("PUBLIC_APP_HOST")?.trim().replace(/\/+$/, "");
+  const base = configured && /^https:\/\//i.test(configured)
+    && !/\.supabase\.co(?:\/|$)/i.test(configured)
+    && !/lovable\.(?:app|dev)(?:\/|$)/i.test(configured)
+    ? configured
+    : "https://gorbova.by";
+  return `${base}/broadcast-track`;
+}
+
 export function instrumentEmailHtml(html: string, tracking: AnalyticsTracking): string {
   const base = trackingBaseUrl();
   let instrumented = html;
   const replacements = Array.from(tracking.clickTokens.entries())
     .sort(([a], [b]) => b.length - a.length);
   for (const [originalUrl, token] of replacements) {
-    const trackedUrl = `${base}/c/${token}`;
+    const trackedUrl = `${publicTrackingBaseUrl()}/c/${token}`;
     instrumented = instrumented.split(originalUrl).join(trackedUrl);
   }
   if (tracking.openToken) {
@@ -302,7 +312,7 @@ export function instrumentEmailHtml(html: string, tracking: AnalyticsTracking): 
 }
 
 export function instrumentTelegramText(message: string, tracking: AnalyticsTracking): string {
-  const base = trackingBaseUrl();
+  const base = publicTrackingBaseUrl();
   let instrumented = message;
   const replacements = Array.from(tracking.clickTokens.entries())
     .sort(([a], [b]) => b.length - a.length);
@@ -318,7 +328,7 @@ export function trackedTelegramButtonUrl(
 ): string | undefined {
   if (!originalUrl) return undefined;
   const token = tracking.clickTokens.get(originalUrl);
-  return token ? `${trackingBaseUrl()}/c/${token}` : originalUrl;
+  return token ? `${publicTrackingBaseUrl()}/c/${token}` : originalUrl;
 }
 
 export async function applyAnalyticsOutcomes(
