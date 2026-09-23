@@ -14,6 +14,17 @@ const bankStatementScenario: ChatScenario = {
   code: "bank_statement_analysis",
 };
 
+const actReconciliationScenario: ChatScenario = {
+  id: "act-reconciliation",
+  launcher_title: "Сверка актов",
+  launcher_description: null,
+  type: "file_analysis",
+  input_hint: null,
+  icon: null,
+  launcher_order: 2,
+  code: "act_reconciliation",
+};
+
 describe("PromptRunFlow bank statement guidance", () => {
   it("shows practical preparation requirements before a file is selected", () => {
     render(
@@ -90,5 +101,68 @@ describe("PromptRunFlow bank statement guidance", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("не более 5 файлов");
     expect(screen.getByRole("button", { name: "Анализировать" })).toBeDisabled();
+  });
+});
+
+describe("PromptRunFlow act reconciliation guidance", () => {
+  it("explains the required order and enables analysis only for two acts", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <PromptRunFlow
+        scenario={actReconciliationScenario}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        isLoading={false}
+      />,
+    );
+
+    expect(screen.getByText("Как подготовить акты")).toBeInTheDocument();
+    expect(screen.getByText(/Сначала загрузите акт вашей организации/)).toBeInTheDocument();
+    expect(screen.getByText(/ровно два файла за одинаковый период/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Анализировать" })).toBeDisabled();
+
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["ours"], "ours.csv", { type: "text/csv" })] },
+    });
+
+    expect(screen.getByText(/1\. Ваш акт: ours\.csv/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Анализировать" })).toBeDisabled();
+
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["theirs"], "theirs.csv", { type: "text/csv" })] },
+    });
+
+    expect(screen.getByText(/2\. Акт контрагента: theirs\.csv/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Анализировать" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Анализировать" }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a third act without removing the selected pair", () => {
+    const { container } = render(
+      <PromptRunFlow
+        scenario={actReconciliationScenario}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+        isLoading={false}
+      />,
+    );
+    const input = container.querySelector('input[type="file"]')!;
+
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(["ours"], "ours.csv", { type: "text/csv" }),
+          new File(["theirs"], "theirs.csv", { type: "text/csv" }),
+        ],
+      },
+    });
+    fireEvent.change(input, {
+      target: { files: [new File(["extra"], "extra.csv", { type: "text/csv" })] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("ровно два файла");
+    expect(screen.getByText(/1\. Ваш акт: ours\.csv/)).toBeInTheDocument();
+    expect(screen.getByText(/2\. Акт контрагента: theirs\.csv/)).toBeInTheDocument();
   });
 });
