@@ -89,7 +89,7 @@ export function parseActReconciliationExtraction(content: string): ActReconcilia
   const parsed = parseJsonPayload(content);
   const recognized = parsed.acts_recognized === true;
   const rawDocuments = Array.isArray(parsed.documents) ? parsed.documents : [];
-  const documents = recognized && rawDocuments.length === 2
+  const documents: ActReconciliationExtraction["documents"] = recognized && rawDocuments.length === 2
     ? [documentSummary(rawDocuments[0]), documentSummary(rawDocuments[1])] as [ActDocumentSummary, ActDocumentSummary]
     : [];
   const rawDifferences = Array.isArray(parsed.differences) ? parsed.differences : [];
