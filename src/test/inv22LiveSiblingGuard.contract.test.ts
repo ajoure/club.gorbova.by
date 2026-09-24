@@ -35,6 +35,8 @@ describe("INV-22 live-provider sibling safety contract", () => {
     expect(resolver).toContain('eq("subscription_v2_id", subId)');
     expect(resolver).toContain('outcome = "skipped_live_sibling"');
     expect(resolver).toContain("A single live sibling protects the local subscription");
+    expect(resolver).toContain('.eq("status", "active")');
+    expect(resolver).toContain('.eq("auto_renew", true)');
   });
 
   it("unsafe user-only fallback refuses terminal records and a live sibling", () => {

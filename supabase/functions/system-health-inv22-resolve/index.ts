@@ -210,7 +210,22 @@ Deno.serve(async (req) => {
       let pullPayload: any = null;
       let pullError: string | null = null;
 
-      const providerSubIds = Array.from(new Set(
+      // Safety preflight before any provider pull: an older RPC deployment may
+      // still surface dead rows from a subscription that also has a live row.
+      const { data: initialSiblings, error: initialSiblingsError } = await supabase
+        .from("provider_subscriptions")
+        .select("id, provider_subscription_id, state, last_charge_at, next_charge_at")
+        .eq("provider", "bepaid")
+        .eq("subscription_v2_id", subId);
+      const initialLiveSibling = (initialSiblings ?? []).find((ps: any) =>
+        ps.state === "active" && (ps.next_charge_at !== null || ps.last_charge_at !== null)
+      );
+      if (initialSiblingsError) {
+        pullResult = "failed";
+        pullError = `provider sibling preflight failed: ${initialSiblingsError.message}`;
+      }
+
+      const providerSubIds = initialLiveSibling ? [] : Array.from(new Set(
         snapshotRows.flatMap((row) => [
           row.provider_subscription_id,
           ...(Array.isArray(row.dead_provider_subscriptions)
@@ -220,10 +235,10 @@ Deno.serve(async (req) => {
       ));
 
       // --- 2. Pull every dead candidate before deciding about the local subscription ---
-      if (providerSubIds.length > 0) {
+      if (providerSubIds.length > 0 && !initialSiblingsError) {
         pullResult = "succeeded";
       }
-      for (const pullProviderSubId of providerSubIds) {
+      for (const pullProviderSubId of initialSiblingsError ? [] : providerSubIds) {
         try {
           const pullResp = await fetch(
             `${supabaseUrl}/functions/v1/bepaid-get-subscription-details`,
@@ -262,7 +277,7 @@ Deno.serve(async (req) => {
         pullError = `provider sibling read failed: ${siblingsError.message}`;
       }
 
-      const liveSibling = (providerSiblings ?? []).find((ps: any) =>
+      const liveSibling = initialLiveSibling ?? (providerSiblings ?? []).find((ps: any) =>
         ps.state === "active" && (ps.next_charge_at !== null || ps.last_charge_at !== null)
       );
       const psAfter = (providerSiblings ?? []).find((ps: any) => ps.id === snapshotRow.provider_subscription_row_id);
@@ -302,7 +317,7 @@ Deno.serve(async (req) => {
       } else {
         // Закрываем локально
         const nowIso = new Date().toISOString();
-        const { error: updErr } = await supabase
+        const { data: updatedSub, error: updErr } = await supabase
           .from("subscriptions_v2")
           .update({
             auto_renew: false,
@@ -311,11 +326,18 @@ Deno.serve(async (req) => {
             cancel_reason: "inv22_provider_dead_local_active",
             updated_at: nowIso,
           })
-          .eq("id", subId);
+          .eq("id", subId)
+          .eq("status", "active")
+          .eq("auto_renew", true)
+          .select("id")
+          .maybeSingle();
 
         if (updErr) {
           outcome = "pull_failed";
           notes = `Локальное закрытие subscriptions_v2 провалилось: ${updErr.message}`;
+        } else if (!updatedSub) {
+          outcome = "kept_provider_alive";
+          notes = "Подписка изменилась параллельно после snapshot; условное закрытие не выполнено.";
         } else {
           after = {
             status: "canceled",
