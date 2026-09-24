@@ -28,6 +28,7 @@ function pickFirst(...vals: unknown[]): string | null {
 // UUID regex for parsing tracking_id
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SUBV2_RE = /subv2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+const TERMINAL_AUTOLINK_STATES = new Set(['expired', 'redirecting', 'failed', 'canceled', 'terminated']);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -324,8 +325,42 @@ Deno.serve(async (req) => {
                 meta: { subscription_id, priority: 5, autolink_source: 'user_only_single_sub', error: userSubsError.message },
               });
             } else if (userSubs && userSubs.length === 1) {
-              linkedSubV2Id = userSubs[0].id;
-              autolinkSource = 'user_only_single_sub';
+              const fallbackSubId = userSubs[0].id;
+              const { data: liveSibling, error: liveSiblingError } = await supabase
+                .from('provider_subscriptions')
+                .select('id')
+                .eq('provider', 'bepaid')
+                .eq('subscription_v2_id', fallbackSubId)
+                .eq('state', 'active')
+                .or('next_charge_at.not.is.null,last_charge_at.not.is.null')
+                .limit(1)
+                .maybeSingle();
+
+              if (liveSiblingError) {
+                await supabase.from('audit_logs').insert({
+                  action: 'bepaid.sync.autolink_query_error',
+                  actor_type: 'system',
+                  actor_label: 'bepaid-get-subscription-details',
+                  meta: { subscription_id, priority: 5, autolink_source: 'user_only_single_sub', error: liveSiblingError.message },
+                });
+              } else if (TERMINAL_AUTOLINK_STATES.has(normalizedState)) {
+                await supabase.from('audit_logs').insert({
+                  action: 'bepaid.sync.autolink_skipped_terminal_state',
+                  actor_type: 'system',
+                  actor_label: 'bepaid-get-subscription-details',
+                  meta: { subscription_id, subscription_v2_id: fallbackSubId, state: normalizedState, source: 'user_only_single_sub' },
+                });
+              } else if (liveSibling) {
+                await supabase.from('audit_logs').insert({
+                  action: 'bepaid.sync.autolink_skipped_live_sibling',
+                  actor_type: 'system',
+                  actor_label: 'bepaid-get-subscription-details',
+                  meta: { subscription_id, subscription_v2_id: fallbackSubId, state: normalizedState, source: 'user_only_single_sub' },
+                });
+              } else {
+                linkedSubV2Id = fallbackSubId;
+                autolinkSource = 'user_only_single_sub';
+              }
             } else if (userSubs && userSubs.length !== 1) {
               await supabase.from('audit_logs').insert({
                 action: 'bepaid.sync.autolink_ambiguous_or_none',
