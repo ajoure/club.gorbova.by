@@ -116,7 +116,8 @@ export function Inv22ResolverPanel() {
     if (!plan) return;
     const targets = plan.plan
       .filter((p) => p.planned_action !== "skip_too_fresh")
-      .map((p) => p.subscription_id);
+      .map((p) => p.subscription_id)
+      .filter((id, index, all) => all.indexOf(id) === index);
     if (targets.length === 0) {
       toast.info("Нет подписок для разбора (все пропущены по 48-часовому grace).");
       setConfirmOpen(false);
@@ -238,7 +239,7 @@ export function Inv22ResolverPanel() {
                           {plan.plan.map((row) => {
                             const action = ACTION_LABEL[row.planned_action];
                             return (
-                              <tr key={row.subscription_id} className="border-t">
+                              <tr key={`${row.subscription_id}:${row.provider_subscription_id ?? "none"}`} className="border-t">
                                 <td className="p-2 font-mono">{row.subscription_id.slice(0, 8)}…</td>
                                 <td className="p-2 font-mono">
                                   {row.provider_subscription_id?.slice(0, 16) ?? "—"}
