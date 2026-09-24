@@ -31,6 +31,7 @@ catalogue AS (
     rule.access_opens_at,
     parent.tariff_id AS parent_tariff_id,
     parent.is_active AS parent_offer_active,
+    addon_product.name AS addon_product_name,
     addon_offer.is_active AS addon_offer_active,
     addon_offer.amount AS addon_offer_amount,
     addon_product.is_active AS addon_product_active,
@@ -102,6 +103,21 @@ paid_product_delivery AS (
    )
   GROUP BY addon.addon_product_id
 ),
+paid_product_details AS (
+  SELECT
+    delivery.addon_product_id AS product_id,
+    coalesce(max(catalogue.addon_product_name), '') AS product_name,
+    delivery.active_root_training_modules,
+    delivery.full_product_delivery_rules,
+    count(DISTINCT catalogue.addon_rule_id)::int AS active_addon_rows,
+    (delivery.active_root_training_modules > 0 AND delivery.full_product_delivery_rules > 0) AS deliverable
+  FROM paid_product_delivery delivery
+  LEFT JOIN catalogue ON catalogue.addon_product_id = delivery.addon_product_id
+  GROUP BY
+    delivery.addon_product_id,
+    delivery.active_root_training_modules,
+    delivery.full_product_delivery_rules
+),
 base_tariff_module_access_leaks AS (
   SELECT module_access.module_id, module_access.tariff_id
   FROM public.module_access module_access
@@ -126,6 +142,7 @@ per_parent AS (
   SELECT
     expected_parent_offer_id,
     audience,
+    bool_or(parent_offer_active) AS parent_offer_active,
     count(addon_rule_id)::int AS active_addon_rows
   FROM catalogue
   GROUP BY expected_parent_offer_id, audience
@@ -159,6 +176,26 @@ catalogue_summary AS (
     'business_active_addon_rows', (SELECT count(*) FROM catalogue WHERE addon_rule_id IS NOT NULL AND audience = 'business'),
     'alumni_active_addon_rows', (SELECT count(*) FROM catalogue WHERE addon_rule_id IS NOT NULL AND audience = 'alumni'),
     'parent_offers_with_exactly_nine_addons', (SELECT count(*) FROM per_parent WHERE active_addon_rows = 9),
+    'parent_details', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'parent_offer_id', expected_parent_offer_id,
+        'audience', audience,
+        'parent_offer_active', coalesce(parent_offer_active, false),
+        'active_addon_rows', active_addon_rows
+      ) ORDER BY audience, expected_parent_offer_id), '[]'::jsonb)
+      FROM per_parent
+    ),
+    'paid_product_details', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'product_id', product_id,
+        'product_name', product_name,
+        'active_root_training_modules', active_root_training_modules,
+        'full_product_delivery_rules', full_product_delivery_rules,
+        'active_addon_rows', active_addon_rows,
+        'deliverable', deliverable
+      ) ORDER BY product_id), '[]'::jsonb)
+      FROM paid_product_details
+    ),
     'paid_product_training_modules', (SELECT count(*) FROM paid_training_modules),
     'paid_products_without_active_root_training_module', (
       SELECT count(*) FROM paid_product_delivery WHERE active_root_training_modules = 0
