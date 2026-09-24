@@ -40,4 +40,38 @@ describe("entitlement Telegram link resend contract", () => {
     expect(grantFunction).toContain("valid_until: boundedValidUntil");
     expect(contactSheet).toContain("await normalizeEdgeFunctionErrorAsync(error)");
   });
+
+  it("does not reference delivery locals in the Telegram-not-linked queue branch", () => {
+    const queueBranch = grantFunction.slice(
+      grantFunction.indexOf("if (!profile.telegram_user_id)"),
+      grantFunction.indexOf("PATCH TG-REVOKE-FALSE-REGRANT"),
+    );
+    expect(queueBranch).not.toContain("dmSent");
+    expect(queueBranch).not.toContain("result?.ok");
+    expect(queueBranch).toContain("TG_NOT_LINKED_QUEUED");
+  });
+
+  it("gives each explicit resend a mirror key tied to the Telegram message", () => {
+    expect(grantFunction).toContain("access_granted_dm:resend:");
+    expect(grantFunction).toContain("result.result.message_id");
+    expect(grantFunction).toContain("resend: force_resend === true");
+  });
+
+  it("reports delivery and Contact Center mirroring independently", () => {
+    expect(grantFunction).toContain("mirror.ok && mirror.inserted");
+    expect(grantFunction).toContain("dm_error: dmError || null");
+    expect(grantFunction).toContain("mirrored_to_telegram_messages: wasMirroredToMessages");
+    expect(grantFunction).toContain("success: deliverySucceeded");
+    expect(grantFunction).toContain("partial: deliverySucceeded && !mirrorSucceeded");
+  });
+
+  it("shows success only for confirmed delivery plus a visible Contact Center mirror", () => {
+    expect(contactSheet).toContain("failedResult?.dm_error");
+    expect(contactSheet).toContain("data?.partial || unmirroredResult");
+    expect(contactSheet).toContain("if (data?.queued)");
+    expect(contactSheet).toContain("Ссылки поставлены в очередь");
+    expect(contactSheet).toContain("отправлены клиенту и отображены в переписке");
+    expect(contactSheet).toContain('["telegram-messages", targetUserId]');
+    expect(contactSheet).toContain('["telegram-messages-lean", targetUserId]');
+  });
 });
