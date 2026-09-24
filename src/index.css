@@ -630,8 +630,10 @@ body.impersonation-active .impersonation-offset {
   border: 1px dashed hsl(20 90% 50% / 0.6);
 }
 
-/* Shared mobile geometry: browser tabs and installed standalone apps. */
-@media (max-width: 767px), (any-pointer: coarse) {
+/* The admin shell follows the visual viewport only on actual phone widths.
+   A coarse pointer alone also matches touch-enabled desktop computers, where
+   fixing the entire shell would incorrectly replace the desktop layout. */
+@media (max-width: 767px) {
   .app-viewport-shell {
     /*
      * iOS pans the visual viewport to keep a focused editor visible. Merely
@@ -649,6 +651,15 @@ body.impersonation-active .impersonation-offset {
     height: var(--app-height);
     max-height: var(--app-height);
   }
+  body.impersonation-active .app-viewport-shell {
+    top: calc(var(--visual-viewport-top, 0px) + var(--impersonation-bar-height, 0px));
+    height: calc(var(--app-height) - var(--impersonation-bar-height, 0px));
+    max-height: calc(var(--app-height) - var(--impersonation-bar-height, 0px));
+  }
+}
+
+/* Shared mobile geometry: browser tabs and installed standalone apps. */
+@media (max-width: 767px), (any-pointer: coarse) {
   [data-viewport-dialog] {
     top: calc(var(--visual-viewport-top, 0px) + var(--app-height) / 2);
     left: calc(50% + (env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) / 2);
