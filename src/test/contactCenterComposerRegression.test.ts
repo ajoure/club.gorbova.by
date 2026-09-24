@@ -52,7 +52,13 @@ describe("contact center composer regressions", () => {
     expect(globalCss).toContain(".contact-unanswered-banner");
     expect(globalCss).toContain(".message-primary-actions");
     expect(globalCss).toMatch(
-      /\.app-viewport-shell\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?top:\s*var\(--visual-viewport-top,[\s\S]*?height:\s*var\(--app-height\);/,
+      /@media \(max-width: 767px\)\s*\{[\s\S]*?\.app-viewport-shell\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?top:\s*var\(--visual-viewport-top,[\s\S]*?height:\s*var\(--app-height\);/,
+    );
+    expect(globalCss).toMatch(
+      /body\.impersonation-active \.app-viewport-shell\s*\{[\s\S]*?top:\s*calc\(var\(--visual-viewport-top,[\s\S]*?var\(--impersonation-bar-height,[\s\S]*?height:\s*calc\(var\(--app-height\) - var\(--impersonation-bar-height,/,
+    );
+    expect(globalCss).not.toMatch(
+      /@media \(max-width: 767px\), \(any-pointer: coarse\)\s*\{\s*\.app-viewport-shell/,
     );
     expect(globalCss).not.toMatch(
       /@media \(max-width: 767px\)[\s\S]*?\.message-primary-actions\s*\{[\s\S]*?position:\s*absolute/,
