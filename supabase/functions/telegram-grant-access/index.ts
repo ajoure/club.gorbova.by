@@ -506,8 +506,6 @@ Deno.serve(async (req) => {
         }, { onConflict: 'user_id,club_id' });
       }
 
-      const wasMirroredToMessages = !!(dmSent && result?.ok && result?.result?.message_id);
-
       await supabase.from('telegram_logs').insert({
         user_id, action: 'GRANT_QUEUED', status: 'ok', 
         error_message: 'Telegram not linked - notification queued',
@@ -1200,6 +1198,7 @@ Deno.serve(async (req) => {
       // с ReferenceError: wasMirroredToMessages is not defined).
       let wasMirroredToMessages = false;
       let mirroredTelegramMessageId: number | null = null;
+      let mirrorError: string | null = null;
 
       if (chatInviteLink || channelInviteLink) {
         const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = { inline_keyboard: [] };
@@ -1234,7 +1233,12 @@ Deno.serve(async (req) => {
 
         // Mirror to admin chat (Contact Center)
         if (result?.ok && result?.result?.message_id) {
-          await logAutomatedTelegramMessage({
+          const mirrorIdempotencyKey = force_resend === true
+            ? `access_granted_dm:resend:${user_id}:${club.id}:${canonicalBusinessRef || source_id || 'manual'}:${result.result.message_id}`
+            : canonicalBusinessRef
+              ? `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`
+              : undefined;
+          const mirror = await logAutomatedTelegramMessage({
             supabase,
             user_id,
             telegram_user_id: telegramUserId,
@@ -1248,13 +1252,13 @@ Deno.serve(async (req) => {
               source_id: source_id ?? null,
               event: 'access_granted_dm',
               canonical_order_id: canonicalOrderId,
-              idempotency_key: canonicalBusinessRef
-                ? `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`
-                : undefined,
+              idempotency_key: mirrorIdempotencyKey,
+              resend: force_resend === true,
             },
           });
-          mirroredTelegramMessageId = result.result.message_id;
-          wasMirroredToMessages = true;
+          wasMirroredToMessages = mirror.ok && mirror.inserted;
+          mirroredTelegramMessageId = wasMirroredToMessages ? result.result.message_id : null;
+          mirrorError = wasMirroredToMessages ? null : (mirror.reason || 'mirror_not_inserted');
         }
 
         // Update can_dm status
@@ -1474,10 +1478,15 @@ Deno.serve(async (req) => {
           channel_skipped_by_policy: Boolean(club.channel_id && !channelGrantEnabled),
           mirrored_to_telegram_messages: wasMirroredToMessages,
           telegram_message_id: mirroredTelegramMessageId,
+          mirror_error: mirrorError,
         },
         // If the same outgoing DM is mirrored as a blue telegram_messages bubble,
         // do not duplicate it as a grey event-card in Contact Center.
-        message_text: wasMirroredToMessages ? null : `[DM не отправлен] ${dmError || 'unknown error'}\n---\n${logMessage}`,
+        message_text: wasMirroredToMessages
+          ? null
+          : dmSent
+            ? `[DM отправлен, но не отражён в переписке] ${mirrorError || 'unknown mirror error'}\n---\n${logMessage}`
+            : `[DM не отправлен] ${dmError || 'unknown error'}\n---\n${logMessage}`,
       });
 
       results.push({
@@ -1487,6 +1496,10 @@ Deno.serve(async (req) => {
         channel_grant_enabled: channelGrantEnabled,
         channel_skipped_by_policy: Boolean(club.channel_id && !channelGrantEnabled),
         dm_sent: dmSent,
+        dm_error: dmError || null,
+        mirrored_to_telegram_messages: wasMirroredToMessages,
+        mirror_error: mirrorError,
+        telegram_message_id: mirroredTelegramMessageId,
       });
     }
 
@@ -1546,7 +1559,18 @@ Deno.serve(async (req) => {
       console.error('[telegram-grant-access] Ledger write error (non-blocking):', ledgerErr);
     }
 
-    return new Response(JSON.stringify({ success: true, results }), {
+    const deliverySucceeded = force_resend !== true || results.every((result: any) =>
+      !result.error && result.dm_sent === true
+    );
+    const mirrorSucceeded = force_resend !== true || results.every((result: any) =>
+      result.mirrored_to_telegram_messages === true
+    );
+
+    return new Response(JSON.stringify({
+      success: deliverySucceeded,
+      partial: deliverySucceeded && !mirrorSucceeded,
+      results,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

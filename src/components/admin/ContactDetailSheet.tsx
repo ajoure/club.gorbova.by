@@ -1879,12 +1879,41 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         },
       });
       if (error) throw error;
+      const resendResults = Array.isArray(data?.results)
+        ? data.results as Array<{
+            dm_sent?: boolean;
+            dm_error?: string | null;
+            mirrored_to_telegram_messages?: boolean;
+          }>
+        : [];
       if (data?.blocked || data?.success === false) {
-        throw new Error(data?.reason || data?.error || "Повторная отправка заблокирована");
+        const failedResult = resendResults.find((result) => result.dm_sent !== true);
+        throw new Error(
+          failedResult?.dm_error || data?.reason || data?.error || "Telegram не подтвердил отправку ссылок",
+        );
       }
-      toast.success("Новые ссылки на канал и чат отправлены клиенту");
+      if (data?.queued) {
+        toast.info(
+          "Telegram клиента ещё не привязан. Ссылки поставлены в очередь и будут отправлены после привязки.",
+        );
+        queryClient.invalidateQueries({ queryKey: ["telegram-access", targetUserId] });
+        queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+        return;
+      }
+      const unmirroredResult = resendResults.find(
+        (result) => result.mirrored_to_telegram_messages !== true,
+      );
+      if (data?.partial || unmirroredResult) {
+        toast.warning(
+          "Ссылки отправлены клиенту, но сообщение не отобразилось в переписке. Обновите карточку и проверьте журнал Telegram.",
+        );
+      } else {
+        toast.success("Новые ссылки на канал и чат отправлены клиенту и отображены в переписке");
+      }
       queryClient.invalidateQueries({ queryKey: ["telegram-access", targetUserId] });
       queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["telegram-messages", targetUserId] });
+      queryClient.invalidateQueries({ queryKey: ["telegram-messages-lean", targetUserId] });
     } catch (error) {
       toast.error(`Не удалось отправить ссылки: ${await normalizeEdgeFunctionErrorAsync(error)}`);
     } finally {
