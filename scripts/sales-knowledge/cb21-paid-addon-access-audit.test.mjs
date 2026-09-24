@@ -22,7 +22,7 @@ async function fixture() {
   const db = new PGlite();
   await db.exec(`
     CREATE TABLE tariff_offers(id uuid PRIMARY KEY, is_active boolean NOT NULL, amount numeric NOT NULL, tariff_id uuid);
-    CREATE TABLE products_v2(id uuid PRIMARY KEY, is_active boolean NOT NULL);
+    CREATE TABLE products_v2(id uuid PRIMARY KEY, name text NOT NULL DEFAULT '', is_active boolean NOT NULL);
     CREATE TABLE tariffs(id uuid PRIMARY KEY, is_active boolean NOT NULL, product_id uuid);
     CREATE TABLE training_modules(id uuid PRIMARY KEY, product_id uuid, parent_module_id uuid, is_active boolean NOT NULL);
     CREATE TABLE module_access(module_id uuid, tariff_id uuid);
@@ -43,7 +43,7 @@ async function fixture() {
   const parents = [...businessParents, ...alumniParents];
   const courseProduct = randomUUID();
   const courseTariffs = [];
-  await db.query('INSERT INTO products_v2 VALUES($1,true)', [courseProduct]);
+  await db.query('INSERT INTO products_v2 VALUES($1,$2,true)', [courseProduct, 'ЦБ21']);
   for (const parent of parents) {
     const courseTariff = randomUUID();
     courseTariffs.push(courseTariff);
@@ -57,7 +57,7 @@ async function fixture() {
     const tariff = randomUUID();
     const offer = randomUUID();
     products.push(product);
-    await db.query('INSERT INTO products_v2 VALUES($1,true)', [product]);
+    await db.query('INSERT INTO products_v2 VALUES($1,$2,true)', [product, `Модуль ${index + 1}`]);
     await db.query('INSERT INTO tariffs VALUES($1,true,$2)', [tariff, product]);
     await db.query('INSERT INTO tariff_offers VALUES($1,true,400,$2)', [offer, tariff]);
     for (const parent of parents) {
@@ -98,6 +98,10 @@ test('read-only paid add-on audit accepts only the configured paid catalogue', a
     assert.equal(audit.catalogue.expected_active_addon_rows, 72);
     assert.equal(audit.catalogue.active_addon_rows, 72);
     assert.equal(audit.catalogue.parent_offers_with_exactly_nine_addons, 8);
+    assert.equal(audit.catalogue.parent_details.length, 8);
+    assert.ok(audit.catalogue.parent_details.every(parent => parent.parent_offer_active && parent.active_addon_rows === 9));
+    assert.equal(audit.catalogue.paid_product_details.length, 9);
+    assert.ok(audit.catalogue.paid_product_details.every(product => product.deliverable && product.active_addon_rows === 8));
     assert.equal(audit.catalogue.cardinality_mismatches, 0);
     assert.equal(audit.catalogue.invalid_active_addon_rules, 0);
     assert.equal(audit.catalogue.paid_products_without_active_root_training_module, 0);
@@ -146,12 +150,14 @@ test('read-only paid add-on audit flags a paid product that cannot grant its tra
     assert.equal(missingRule.catalogue.paid_products_without_active_root_training_module, 0);
     assert.equal(missingRule.catalogue.paid_products_without_full_product_delivery_rule, 1);
     assert.equal(missingRule.catalogue.undeliverable_paid_products, 1);
+    assert.equal(missingRule.catalogue.paid_product_details.find(product => product.product_id === products[3]).deliverable, false);
 
     await db.query('DELETE FROM training_modules WHERE product_id=$1', [products[4]]);
     const missingTraining = await runAudit(db);
     assert.equal(missingTraining.catalogue.paid_products_without_active_root_training_module, 1);
     assert.equal(missingTraining.catalogue.paid_products_without_full_product_delivery_rule, 2);
     assert.equal(missingTraining.catalogue.undeliverable_paid_products, 2);
+    assert.equal(missingTraining.catalogue.paid_product_details.find(product => product.product_id === products[4]).active_root_training_modules, 0);
   } finally {
     await db.close();
   }
