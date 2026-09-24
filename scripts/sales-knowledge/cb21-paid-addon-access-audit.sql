@@ -1,7 +1,9 @@
--- READ-ONLY production audit for CB21 paid industry modules.
+-- READ-ONLY legacy continuity audit for the former fixed CB21 add-on scope.
 -- Run only through the canonical managed Lovable read path.
 -- It returns aggregate configuration and entitlement anomalies: no personal data,
 -- no payment URLs, and no writes.
+-- It is not the CB20 -> CB21 catalogue source of truth: run
+-- cb20-cb21-source-catalogue-audit.sql before deciding what CB21 may sell.
 
 WITH policy AS (
   SELECT '2026-12-09T21:00:00Z'::timestamptz AS paid_addons_open_at
