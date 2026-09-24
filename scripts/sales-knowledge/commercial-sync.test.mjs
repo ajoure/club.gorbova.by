@@ -19,7 +19,8 @@ async function fixture(){
   await db.exec(`CREATE TABLE ${table}(${columns.join(',')})`);
  }
  await db.exec(`CREATE UNIQUE INDEX ON tariff_offers(tariff_id) WHERE is_primary=true AND offer_type='pay_now'; CREATE UNIQUE INDEX ON tariff_offers(tariff_id,((meta->>'slot_role'))) WHERE nullif(meta->>'slot_role','') IS NOT NULL; CREATE UNIQUE INDEX ON offer_addons(parent_offer_id,addon_offer_id);`);
- await db.exec(`CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,product_id uuid,parent_module_id uuid,title text,is_active boolean NOT NULL); CREATE TABLE flows(id uuid PRIMARY KEY,product_id uuid,start_date date,end_date date);`);
+ await db.exec(`CREATE TABLE products_v2(id uuid PRIMARY KEY,is_active boolean NOT NULL); CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,product_id uuid,parent_module_id uuid,title text,is_active boolean NOT NULL); CREATE TABLE flows(id uuid PRIMARY KEY,product_id uuid,start_date date,end_date date);`);
+ await db.exec(`INSERT INTO products_v2(id,is_active) VALUES('${p20}',true),('${p21}',true);`);
  await db.query("INSERT INTO flows(id,product_id,start_date,end_date) VALUES($1,$2,'2026-10-23','2026-12-10')",[flow21,p21]);
  const insert=async(table,row)=>db.query(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map((_,i)=>'$'+(i+1)).join(',')})`,Object.values(row));
  const pairs=[...sql.matchAll(/\('(accountant|chief|business|alumni|gift)','([^']+)','([^']+)',(\d+),(\d+|NULL),(\d+)\)/g)].map(([,role,source,target,price,old,days])=>({role,source,target,price:+price,old:old==='NULL'?null:+old,days:+days}));
@@ -44,6 +45,8 @@ async function fixture(){
  for(let k=0;k<4;k++)for(let a=0;a<9;a++){
  const product=randomUUID(),tariff=randomUUID(),offer=randomUUID();
   const addonRoot=randomUUID();
+  await insert('products_v2',{id:product,is_active:true});
+  await insert('tariffs',{id:tariff,product_id:product,is_active:true});
   await insert('training_modules',{id:addonRoot,product_id:product,parent_module_id:null,title:`Платный модуль ${k}-${a}`,is_active:true});
   await insert('access_rules',{id:randomUUID(),product_id:product,tariff_id:null,is_active:true,grant_target_type:'training_content',target_ref:addonRoot,conditions:{access_mode:'full'},duration_days:null});
   await insert('tariff_offers',{id:offer,tariff_id:tariff,amount:400,is_active:true,is_primary:false,button_label:'Модуль',offer_type:'pay_now',meta:{slot_role:`addon_${a}`}});
@@ -110,16 +113,54 @@ test('a paid add-on cannot be copied when an administrator makes it automatic or
 test('a paid add-on with its own full product access rule is a valid delivery configuration',async()=>{
  const {db}=await fixture();try{
   const addon=(await db.query("SELECT addon_product_id FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' LIMIT 1")).rows[0].addon_product_id;
+  await db.query('DELETE FROM training_modules WHERE product_id=$1',[addon]);
   await db.query("DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",[addon]);
   await db.query("INSERT INTO access_rules(product_id,tariff_id,is_active,grant_target_type,target_ref,conditions) VALUES($1,NULL,true,'product_access',$2,'{\"access_mode\":\"full\"}')",[addon,addon]);
   const result=await run(db,options);assert.ok(result.flatMap(r=>r.rows??[]).some(r=>r.fingerprint));await db.exec('ROLLBACK');
  }finally{await db.close();}
 });
 
-test('a paid add-on without an active full product-level delivery rule aborts before public writes',async()=>{
- const {db}=await fixture();try{
+test('a verified CB20 add-on on Accountant is copied to the matching CB21 offer',async()=>{
+ const {db,pairs}=await fixture();try{
+  const accountant=pairs.find(pair=>pair.role==='accountant');const business=pairs.find(pair=>pair.role==='business');
+  const sourceParent=(await db.query("SELECT id FROM tariff_offers WHERE tariff_id=$1 AND meta->>'slot_role'='button_1'",[accountant.source])).rows[0].id;
+  const targetParent=(await db.query("SELECT id FROM tariff_offers WHERE tariff_id=$1 AND meta->>'slot_role'='button_1'",[accountant.target])).rows[0].id;
+  const businessParent=(await db.query("SELECT id FROM tariff_offers WHERE tariff_id=$1 AND meta->>'slot_role'='button_1'",[business.source])).rows[0].id;
+  const sourceAddon=(await db.query('SELECT * FROM offer_addons WHERE parent_offer_id=$1 LIMIT 1',[businessParent])).rows[0];
+  await db.query(`INSERT INTO offer_addons(id,parent_offer_id,addon_product_id,addon_tariff_id,addon_offer_id,is_active,pricing_mode,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,access_delivery_mode,access_opens_at,meta,sort_order)
+    VALUES($1,$2,$3,$4,$5,true,$6,$7,false,false,true,'fixed_date',$8,'{}',$9)`,[randomUUID(),sourceParent,sourceAddon.addon_product_id,sourceAddon.addon_tariff_id,sourceAddon.addon_offer_id,sourceAddon.pricing_mode,sourceAddon.discount_percent,sourceAddon.access_opens_at,sourceAddon.sort_order]);
+  const dry=await run(db,options);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);
+  await run(db,{...options,apply:true,expected_fingerprint:plan.fingerprint});
+  const copied=(await db.query('SELECT count(*)::int n FROM offer_addons WHERE parent_offer_id=$1 AND addon_offer_id=$2 AND is_active',[targetParent,sourceAddon.addon_offer_id])).rows[0].n;
+  assert.equal(copied,1);
+ }finally{await db.close();}
+});
+
+test('a previously disabled matching CB21 add-on is reactivated instead of duplicated',async()=>{
+ const {db,pairs}=await fixture();try{
+  const business=pairs.find(pair=>pair.role==='business');
+  const targetAddon=(await db.query("SELECT ad.id FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=$1 AND parent_offer.meta->>'slot_role'='button_1' LIMIT 1",[business.target])).rows[0].id;
+  await db.query('UPDATE offer_addons SET is_active=false WHERE id=$1',[targetAddon]);
+  const dry=await run(db,options);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);
+  await run(db,{...options,apply:true,expected_fingerprint:plan.fingerprint});
+  const restored=(await db.query('SELECT is_active FROM offer_addons WHERE id=$1',[targetAddon])).rows[0];
+  assert.equal(restored.is_active,true);
+  assert.equal((await db.query('SELECT count(*)::int n FROM offer_addons')).rows[0].n,108);
+ }finally{await db.close();}
+});
+
+test('an incomplete CB20 paid add-on is excluded from the reviewed CB21 catalogue',async()=>{
+ const {db,pairs}=await fixture();try{
   const addon=(await db.query("SELECT addon_product_id FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' LIMIT 1")).rows[0].addon_product_id;
   await db.query("DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",[addon]);
-  await assert.rejects(run(db,options),/paid_addon_delivery_unconfigured/);await db.exec('ROLLBACK');
+  const dry=await run(db,options);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);
+  await run(db,{...options,apply:true,expected_fingerprint:plan.fingerprint});
+  const targetTariffs=pairs.filter(pair=>['business','alumni'].includes(pair.role)).map(pair=>pair.target);
+  const active=(await db.query('SELECT count(*)::int n FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=ANY($1::uuid[]) AND ad.is_active',[targetTariffs])).rows[0].n;
+  assert.equal(active,70);
+  const remaining=(await db.query('SELECT count(*)::int n FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=ANY($1::uuid[]) AND ad.addon_product_id=$2 AND ad.is_active',[targetTariffs,addon])).rows[0].n;
+  assert.equal(remaining,0);
+  const deactivated=(await db.query("SELECT count(*)::int n FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=$1 AND ad.addon_product_id=$2 AND NOT ad.is_active",[pairs.find(pair=>pair.role==='business').target,addon])).rows[0].n;
+  assert.equal(deactivated,1);
  }finally{await db.close();}
 });

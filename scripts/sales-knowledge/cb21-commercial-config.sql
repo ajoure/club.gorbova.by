@@ -43,6 +43,59 @@ CREATE TEMP TABLE _cb21_addons (LIKE public.offer_addons INCLUDING DEFAULTS) ON 
 CREATE TEMP TABLE _cb21_rules (LIKE public.access_rules INCLUDING DEFAULTS) ON COMMIT DROP;
 CREATE TEMP TABLE _cb21_diff(table_name text,id uuid,before_row jsonb,after_row jsonb) ON COMMIT DROP;
 
+-- CB20 is the authoritative paid-module catalogue.  A row is transferable
+-- only when it is an active, explicit optional add-on and the module can
+-- actually be delivered through its own full content or product-access rule.
+-- Legacy or
+-- incomplete rows are deliberately not sold in CB21.
+CREATE TEMP TABLE _cb21_source_addons (LIKE public.offer_addons INCLUDING DEFAULTS) ON COMMIT DROP;
+INSERT INTO _cb21_source_addons
+SELECT addon.*
+FROM public.offer_addons addon
+JOIN public.tariff_offers parent_offer ON parent_offer.id = addon.parent_offer_id
+JOIN public.products_v2 addon_product
+  ON addon_product.id = addon.addon_product_id
+ AND addon_product.is_active
+JOIN public.tariffs addon_tariff
+  ON addon_tariff.id = addon.addon_tariff_id
+ AND addon_tariff.is_active
+JOIN public.tariff_offers addon_offer
+  ON addon_offer.id = addon.addon_offer_id
+ AND addon_offer.is_active
+ AND addon_offer.amount > 0
+WHERE parent_offer.tariff_id IN (
+    '38ee08c4-21db-4a97-86e6-303bd96c48db',
+    'a18df7a7-9c8b-4e63-9ea9-b6887c23927f',
+    '767bb895-30fa-49c9-8f31-d0794590020a'
+  )
+  AND parent_offer.is_active
+  AND addon.is_active
+  AND EXISTS (
+    SELECT 1
+    FROM public.access_rules delivery_rule
+    WHERE delivery_rule.product_id = addon.addon_product_id
+      AND delivery_rule.is_active
+      AND delivery_rule.tariff_id IS NULL
+      AND coalesce(delivery_rule.conditions->>'access_mode', 'full') = 'full'
+      AND (
+        (
+          delivery_rule.grant_target_type = 'training_content'
+          AND EXISTS (
+            SELECT 1
+            FROM public.training_modules root_module
+            WHERE root_module.id::text = delivery_rule.target_ref
+              AND root_module.product_id = addon.addon_product_id
+              AND root_module.is_active
+              AND root_module.parent_module_id IS NULL
+          )
+        )
+        OR (
+          delivery_rule.grant_target_type = 'product_access'
+          AND delivery_rule.target_ref = addon.addon_product_id::text
+        )
+      )
+  );
+
 -- Existing mapped rules are already equal, except accountant's three VIP modules.
 -- Translation is checked by title plus exact course-root parent, never array order.
 CREATE TEMP TABLE _cb21_modules ON COMMIT DROP AS
@@ -76,76 +129,24 @@ BEGIN
   PERFORM 1 FROM public.access_rules WHERE tariff_id IN(SELECT source FROM _cb21_pairs UNION SELECT target FROM _cb21_pairs) ORDER BY id FOR UPDATE;
  END IF;
  IF (SELECT count(*) FROM public.tariff_offers WHERE tariff_id IN(SELECT source FROM _cb21_pairs) AND is_active)<>20 THEN RAISE EXCEPTION 'source_offer_catalog_changed'; END IF;
- -- The nine industry modules are optional paid add-ons.  They must never be
- -- bundled, preselected, or made free merely because a client bought CB21.
- -- Check the live CB20 source before it can be copied to either Business or
- -- alumni offers.  The target is derived only after this gate passes.
+ -- Paid modules are optional.  Their count is derived from the actually
+ -- deliverable CB20 rows above; no historical expectation count is a rule.
  IF (SELECT count(*) FROM public.tariff_offers
      WHERE tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' AND is_active)<>4
-    OR (SELECT count(*) FROM public.offer_addons ad
-        JOIN public.tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id
-        WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a'
-          AND parent_offer.is_active AND ad.is_active)<>36
- THEN RAISE EXCEPTION 'paid_addon_catalog_changed'; END IF;
+ THEN RAISE EXCEPTION 'business_offer_catalog_changed'; END IF;
  IF EXISTS(
    SELECT 1
-   FROM public.offer_addons ad
+   FROM _cb21_source_addons ad
    JOIN public.tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id
-   LEFT JOIN public.tariff_offers addon_offer ON addon_offer.id=ad.addon_offer_id
-   WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a'
+   JOIN public.tariff_offers addon_offer ON addon_offer.id=ad.addon_offer_id
+   WHERE parent_offer.tariff_id IN ('38ee08c4-21db-4a97-86e6-303bd96c48db','a18df7a7-9c8b-4e63-9ea9-b6887c23927f','767bb895-30fa-49c9-8f31-d0794590020a')
      AND parent_offer.is_active AND ad.is_active
      AND (
        ad.pricing_mode<>'percent_discount' OR ad.discount_percent<>50
        OR ad.is_required OR ad.is_default_selected
-       OR addon_offer.id IS NULL OR NOT addon_offer.is_active OR addon_offer.amount<=0
+       OR NOT addon_offer.is_active OR addon_offer.amount<=0
      )
  ) THEN RAISE EXCEPTION 'paid_addon_not_explicit'; END IF;
- -- A paid add-on must have its own active root training module and a full,
- -- product-level delivery rule.  Delivery may target that root directly or the
- -- add-on product itself; inheriting a CB21 tariff rule would make it free.
- IF EXISTS(
-   SELECT 1
-   FROM (
-     SELECT DISTINCT ad.addon_product_id
-     FROM public.offer_addons ad
-     JOIN public.tariff_offers parent_offer ON parent_offer.id = ad.parent_offer_id
-     WHERE parent_offer.tariff_id = '767bb895-30fa-49c9-8f31-d0794590020a'
-       AND parent_offer.is_active
-       AND ad.is_active
-   ) addon
-   WHERE NOT EXISTS(
-     SELECT 1
-     FROM public.training_modules module
-     WHERE module.product_id = addon.addon_product_id
-       AND module.is_active
-       AND module.parent_module_id IS NULL
-   )
-   OR NOT EXISTS(
-     SELECT 1
-     FROM public.access_rules access_rule
-     WHERE access_rule.product_id = addon.addon_product_id
-       AND access_rule.is_active
-       AND access_rule.tariff_id IS NULL
-       AND coalesce(access_rule.conditions->>'access_mode', 'full') = 'full'
-       AND (
-         (
-           access_rule.grant_target_type = 'training_content'
-           AND EXISTS(
-             SELECT 1
-             FROM public.training_modules module
-             WHERE module.id::text = access_rule.target_ref
-               AND module.product_id = addon.addon_product_id
-               AND module.is_active
-               AND module.parent_module_id IS NULL
-           )
-         )
-         OR (
-           access_rule.grant_target_type = 'product_access'
-           AND access_rule.target_ref = addon.addon_product_id::text
-         )
-       )
-   )
- ) THEN RAISE EXCEPTION 'paid_addon_delivery_unconfigured'; END IF;
  IF EXISTS(SELECT 1 FROM public.sales_jobs j JOIN public.sales_conversations c ON c.id=j.conversation_id JOIN public.sales_campaigns sc ON sc.id=c.campaign_id WHERE sc.code='cb21-owner-test' AND j.status IN('claimed','sending')) THEN RAISE EXCEPTION 'inflight_sales_job'; END IF;
  IF (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT source FROM _cb21_pairs) AND product_id='3e43fb28-8322-41bc-bfee-714731bdc630')<>5
  OR (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT target FROM _cb21_pairs) AND product_id='2b7bf6d4-ad8d-46ad-9399-7f96c307c596')<>5 THEN RAISE EXCEPTION 'tariff_scope_changed'; END IF;
@@ -197,17 +198,32 @@ BEGIN
    END IF;
    j:=j||coalesce((SELECT jsonb_build_object('created_at',created_at,'updated_at',updated_at) FROM public.tariff_offers WHERE id=op.target),jsonb_build_object('created_at',null,'updated_at',null));
    INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,j);
-   -- Alumni gets the owner's explicit addon exception: same nine discounted
-   -- modules as BusinessLady, matched by button role, WITHOUT adding club rules.
-   IF p.role IN('business','alumni') THEN
-    FOR src_addon IN SELECT ad.* FROM public.offer_addons ad JOIN public.tariff_offers bo ON bo.id=ad.parent_offer_id
-     WHERE bo.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' AND bo.is_active AND ad.is_active
+   -- Each public CB21 tariff receives its exact CB20 add-on catalogue. Alumni
+   -- is the owner's explicit exception: it receives the verified Business Lady
+   -- catalogue, matched by button role, without club rules.
+   IF p.role IN('accountant','chief','business') THEN
+    FOR src_addon IN SELECT ad.* FROM _cb21_source_addons ad JOIN public.tariff_offers bo ON bo.id=ad.parent_offer_id
+     WHERE bo.tariff_id=p.source AND bo.is_active
       AND bo.meta->>'slot_role'=o.meta->>'slot_role' LOOP
      IF src_addon.pricing_mode<>'percent_discount' OR src_addon.discount_percent<>50
         OR src_addon.is_required OR src_addon.is_default_selected
      THEN RAISE EXCEPTION 'paid_addon_not_explicit'; END IF;
-     SELECT * INTO aa FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id AND is_active;
-     IF (SELECT count(*) FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id AND is_active)>1 THEN RAISE EXCEPTION 'duplicate_target_addon'; END IF;
+     SELECT * INTO aa FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id;
+     IF (SELECT count(*) FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id)>1 THEN RAISE EXCEPTION 'duplicate_target_addon'; END IF;
+     j:=to_jsonb(src_addon)||jsonb_build_object('id',coalesce(aa.id,md5('cb21-full-sync-v2:'||op.target||':'||src_addon.id)::uuid),'parent_offer_id',op.target,
+      'access_delivery_mode','fixed_date','access_opens_at',cfg->>'addon_opens_at','created_at',coalesce(aa.created_at,now()),'updated_at',coalesce(aa.updated_at,now()),
+      'meta',src_addon.meta||jsonb_build_object('sales_generation','cb21-full-sync-v2','source_addon_id',src_addon.id));
+     INSERT INTO _cb21_addons SELECT * FROM jsonb_populate_record(null::public.offer_addons,j);
+    END LOOP;
+   ELSIF p.role='alumni' THEN
+    FOR src_addon IN SELECT ad.* FROM _cb21_source_addons ad JOIN public.tariff_offers bo ON bo.id=ad.parent_offer_id
+     WHERE bo.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' AND bo.is_active
+      AND bo.meta->>'slot_role'=o.meta->>'slot_role' LOOP
+     IF src_addon.pricing_mode<>'percent_discount' OR src_addon.discount_percent<>50
+        OR src_addon.is_required OR src_addon.is_default_selected
+     THEN RAISE EXCEPTION 'paid_addon_not_explicit'; END IF;
+     SELECT * INTO aa FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id;
+     IF (SELECT count(*) FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id)>1 THEN RAISE EXCEPTION 'duplicate_target_addon'; END IF;
      j:=to_jsonb(src_addon)||jsonb_build_object('id',coalesce(aa.id,md5('cb21-full-sync-v2:'||op.target||':'||src_addon.id)::uuid),'parent_offer_id',op.target,
       'access_delivery_mode','fixed_date','access_opens_at',cfg->>'addon_opens_at','created_at',coalesce(aa.created_at,now()),'updated_at',coalesce(aa.updated_at,now()),
       'meta',src_addon.meta||jsonb_build_object('sales_generation','cb21-full-sync-v2','source_addon_id',src_addon.id));
@@ -216,15 +232,42 @@ BEGIN
    END IF;
   END LOOP;
  END LOOP;
+ -- Deactivate active CB21 paid add-ons absent from the verified CB20 source.
+ -- Existing purchase/access records remain untouched; this affects only new
+ -- sale selection after the reviewed apply operation.
+ FOR aa IN
+   SELECT target_addon.*
+   FROM public.offer_addons target_addon
+   JOIN public.tariff_offers target_parent ON target_parent.id=target_addon.parent_offer_id
+   WHERE target_addon.is_active
+     AND target_parent.id IN (
+       SELECT offer_pair.target
+       FROM _cb21_offer_pairs offer_pair
+       JOIN public.tariff_offers source_offer ON source_offer.id=offer_pair.source
+       WHERE source_offer.tariff_id IN (SELECT source FROM _cb21_pairs)
+     )
+     AND NOT EXISTS (SELECT 1 FROM _cb21_addons desired WHERE desired.id=target_addon.id)
+ LOOP
+   j:=to_jsonb(aa)||jsonb_build_object(
+     'is_active',false,
+     'meta',coalesce(aa.meta,'{}')||jsonb_build_object('sales_generation','cb21-full-sync-v2','excluded_from_cb21_source_catalogue',true)
+   );
+   INSERT INTO _cb21_addons SELECT * FROM jsonb_populate_record(null::public.offer_addons,j);
+ END LOOP;
  FOR o IN SELECT * FROM public.tariff_offers WHERE id IN('4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170') LOOP
   -- Keep all historical offers resolvable for existing links/obligations. Only
   -- remove them from new-sale selection; never rewrite their amounts/settings.
   INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,to_jsonb(o)||jsonb_build_object('meta',coalesce(o.meta,'{}')||'{"sales_legacy_only":true}'::jsonb));
  END LOOP;
- IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24 OR (SELECT count(*) FROM _cb21_addons)<>72 OR (SELECT count(*) FROM _cb21_rules)<>12 THEN RAISE EXCEPTION 'configuration_rowcounts_changed'; END IF;
+ IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24 OR (SELECT count(*) FROM _cb21_rules)<>12
+    OR (SELECT count(*) FROM _cb21_addons WHERE is_active)<>(
+      (SELECT count(*) FROM _cb21_source_addons)
+      + (SELECT count(*) FROM _cb21_source_addons ad JOIN public.tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a')
+    )
+ THEN RAISE EXCEPTION 'configuration_rowcounts_changed'; END IF;
  IF EXISTS(
    SELECT 1 FROM _cb21_addons ad
-   WHERE ad.pricing_mode<>'percent_discount' OR ad.discount_percent<>50
+   WHERE ad.is_active AND (ad.pricing_mode<>'percent_discount' OR ad.discount_percent<>50
       OR ad.is_required OR ad.is_default_selected
       OR ad.access_delivery_mode<>'fixed_date'
       OR ((cfg->>'addon_opens_at') IS NOT NULL AND ad.access_opens_at IS NULL)
@@ -232,11 +275,9 @@ BEGIN
         SELECT offer_pair.target
         FROM _cb21_offer_pairs offer_pair
         JOIN public.tariff_offers source_offer ON source_offer.id=offer_pair.source
-        WHERE source_offer.tariff_id IN (
-          '767bb895-30fa-49c9-8f31-d0794590020a',
-          '98539e5d-cd29-4e5b-96cd-cb1e18579e2e'
-        )
+        WHERE source_offer.tariff_id IN (SELECT source FROM _cb21_pairs)
       )
+    )
  ) THEN RAISE EXCEPTION 'target_paid_addon_not_explicit'; END IF;
  IF EXISTS(SELECT 1 FROM _cb21_rules WHERE tariff_id='dbdb839e-84a0-4c00-8b8c-e60e4c558d94' AND grant_target_type='club') THEN RAISE EXCEPTION 'alumni_club_forbidden'; END IF;
  -- TEMP LIKE does not copy live unique indexes. Check the resulting catalog,
