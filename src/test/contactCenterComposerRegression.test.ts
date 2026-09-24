@@ -44,8 +44,15 @@ describe("contact center composer regressions", () => {
     expect(telegramChat).toContain("scrollToMessage(id)");
     expect(messageBubble).toContain('data-testid="telegram-message-actions"');
     expect(messageBubble).toContain('aria-label="Ответить на сообщение"');
-    expect(globalCss).toContain("html[data-viewport-keyboard] [data-testid=\"contact-source-picker\"]");
-    expect(globalCss).toContain('main:has([data-testid="telegram-chat-panel"]) > header');
+    expect(globalCss).not.toContain(
+      'html[data-viewport-keyboard] [data-testid="contact-source-picker"]',
+    );
+    expect(globalCss).not.toContain(
+      'html[data-viewport-keyboard] [data-testid="telegram-channel-sender"]',
+    );
+    expect(globalCss).not.toContain(
+      'html[data-viewport-keyboard] main:has([data-testid="telegram-chat-panel"]) > header',
+    );
     expect(globalCss).toContain(".contact-center-top-tabs");
     expect(globalCss).toContain('.contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus)');
     expect(globalCss).toContain(".contact-chat-photo-control");

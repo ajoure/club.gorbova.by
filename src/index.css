@@ -802,16 +802,11 @@ body.impersonation-active .impersonation-offset {
     height: 2.75rem;
     width: 2.75rem;
   }
-  html[data-viewport-keyboard] [data-testid="contact-source-picker"],
-  html[data-viewport-keyboard] [data-testid="telegram-channel-sender"],
   html[data-viewport-keyboard] .composer-token-hint,
   html[data-viewport-keyboard] .contact-chat-optional-controls,
-  html[data-viewport-keyboard] main:has([data-testid="telegram-chat-panel"]) > header,
   html[data-viewport-keyboard] .contact-center-top-tabs {
     display: none;
   }
-  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) [data-testid="contact-source-picker"],
-  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) [data-testid="telegram-channel-sender"],
   .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .composer-token-hint,
   .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .contact-chat-optional-controls,
   .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .contact-unanswered-banner {
