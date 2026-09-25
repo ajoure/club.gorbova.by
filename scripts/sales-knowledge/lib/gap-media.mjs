@@ -67,9 +67,13 @@ export function parseAudioPlaylist(text,url,duration){
   if(!init||!segments.length||segments.length>10000||seconds!==null||range||Math.abs(at-duration)>1000)throw Error('hls_duration_mismatch');
   return {init,segments,duration_ms:at};
 }
-export function gapRange(playlist,gap){
+export function gapRange(playlist,gap,{decoderTail=false}={}){
   const selected=playlist.segments.filter(s=>s.end_ms>gap.start_ms&&s.start_ms<gap.end_ms);
   if(!selected.length||selected[0].start_ms>gap.start_ms||selected.at(-1).end_ms<gap.end_ms)throw Error('hls_gap_uncovered');
+  // AAC edit lists can put the last samples in the following nominal segment.
+  // Include real input only; atrim still emits exactly the requested window.
+  // Opt-in preserves media hashes of previously reviewed gap manifests.
+  if(decoderTail){const next=playlist.segments[playlist.segments.indexOf(selected.at(-1))+1];if(next)selected.push(next);}
   for(let i=1;i<selected.length;i++)if(selected[i].url!==selected[0].url||selected[i].offset!==selected[i-1].offset+selected[i-1].bytes)throw Error('hls_range_not_contiguous');
   const first=selected[0],last=selected.at(-1),bytes=last.offset+last.bytes-first.offset;
   if(bytes>10000000)throw Error('hls_gap_size_limit');
