@@ -138,6 +138,18 @@ test('a verified CB20 add-on on Accountant is copied to the matching CB21 offer'
  }finally{await db.close();}
 });
 
+test('new source section access rules are included without a stale fixed count',async()=>{
+ const {db,pairs}=await fixture();try{
+  const pair=pairs.find(p=>p.role==='business');const targetRef=randomUUID();
+  for(const source of [true,false])await db.query(
+   "INSERT INTO access_rules(product_id,tariff_id,is_active,grant_target_type,target_ref,conditions) VALUES($1,$2,true,'section_access',$3,$4)",
+   [source?p20:p21,source?pair.source:pair.target,targetRef,{rule_purpose:'ai_tools'}]);
+  const dry=await run(db,options);
+  assert.ok(dry.flatMap(r=>r.rows??[]).some(r=>r.fingerprint));
+  await db.exec('ROLLBACK');
+ }finally{await db.close();}
+});
+
 test('a previously disabled matching CB21 add-on is reactivated instead of duplicated',async()=>{
  const {db,pairs}=await fixture();try{
   const business=pairs.find(pair=>pair.role==='business');

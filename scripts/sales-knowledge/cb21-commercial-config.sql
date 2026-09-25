@@ -268,7 +268,10 @@ BEGIN
   -- remove them from new-sale selection; never rewrite their amounts/settings.
   INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,to_jsonb(o)||jsonb_build_object('meta',coalesce(o.meta,'{}')||'{"sales_legacy_only":true}'::jsonb));
  END LOOP;
- IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24 OR (SELECT count(*) FROM _cb21_rules)<>12
+ IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24
+    OR (SELECT count(*) FROM _cb21_rules)<>(
+      SELECT count(*) FROM public.access_rules WHERE tariff_id IN(SELECT source FROM _cb21_pairs) AND is_active
+    )
     OR (SELECT count(*) FROM _cb21_addons WHERE is_active)<>(
       (SELECT count(*) FROM _cb21_source_addons)
       + (SELECT count(*) FROM _cb21_source_addons ad JOIN public.tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a')
