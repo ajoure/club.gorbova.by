@@ -2,7 +2,9 @@ import {sha} from './course-stt.mjs';
 import {captionGaps} from './gap-media.mjs';
 import {inspectSubtitles} from './subtitles.mjs';
 
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)
+  ?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
+const same=(a,b)=>canonical(a)===canonical(b);
 const hash=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const stamp=s=>{const m=s.match(/^(?:(\d{1,3}):)?(\d{2}):(\d{2})[.,](\d{3})$/);
   if(!m||Number(m[2])>59||Number(m[3])>59)throw Error('cue_time_invalid');
@@ -64,5 +66,5 @@ export function assembleReviewedGaps({raw_vtt,duration_ms,source,parts,decisions
   return {text,content_sha256:sha(text),char_count:[...text].length,
     metadata:{...base.metadata,gap_review_status:'reviewed',
       reviewed_gap_parts:parts.length,reviewed_speech_parts:inserts.length,
-      review_decisions_sha256:sha(JSON.stringify(decisions)),reviewer_id}};
+      review_decisions_sha256:sha(canonical(decisions)),reviewer_id}};
 }

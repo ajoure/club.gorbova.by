@@ -38,18 +38,32 @@ export async function prepareReviewedGapPublication(io,publicIo,actor,original,r
   const annotations=await io.rows('course_gap_evidence_annotations','*',{audit_id:`eq.${a.id}`,order:'part_index.asc'});
   if(annotations.length!==parts.length-1||annotations.some((x,i)=>x.continuation_id!==c.id
     ||x.part_index!==i+1||x.text_sha256!==parts[i+1].text_sha256))throw Error('review_annotations_changed');
-  if((await io.rows('course_transcripts','source_id',{source_id:`eq.${s.id}`})).length
-    ||(await io.rows('course_transcription_jobs','source_id',{source_id:`eq.${s.id}`})).length)
+  if((await io.rows('course_transcription_jobs','source_id',{source_id:`eq.${s.id}`})).length)
     throw Error('review_existing_transcript_or_job');
   const assembled=assembleReviewedGaps({raw_vtt:a.raw_vtt,duration_ms:s.duration_ms,
     source:original.source,parts,decisions:review.decisions,reviewer_id:actor});
+  const existing=await io.rows('course_transcripts','*',{source_id:`eq.${s.id}`});
+  const reviews=await io.rows('course_gap_reviews','*',{audit_id:`eq.${a.id}`});
+  if(existing.length!==reviews.length||existing.length>1)throw Error('review_publication_conflict');
+  if(existing.length===1&&(existing[0].transcript_text!==assembled.text
+    ||existing[0].content_sha256!==assembled.content_sha256
+    ||existing[0].source_revision!==s.source_revision
+    ||existing[0].classification!=='paid_private'||existing[0].quality_status!=='unreviewed'
+    ||!same(existing[0].subtitle_metadata,assembled.metadata)
+    ||!same(reviews[0].decisions,review.decisions)
+    ||reviews[0].transcript_sha256!==assembled.content_sha256
+    ||reviews[0].reviewed_by!==actor))throw Error('review_publication_conflict');
+  if(existing.length===1&&(!same(existing[0].caption_provenance,{
+    schema_version:1,revision_basis:'provider_api',gap_audit_id:a.id,
+    review_manifest_sha256:reviews[0].manifest_sha256,source_caption_sha256:a.caption_sha256})
+    ||!hex(reviews[0].manifest_sha256)))throw Error('review_publication_conflict');
   const manifest={schema_version:1,mode:'reviewed_gap_publication_dry_run',audit_id:a.id,
     source_revision:s.source_revision,caption_sha256:a.caption_sha256,
     source_manifest_sha256:a.manifest_sha256,review_file_sha256:reviewFileHash,
     parts_snapshot_sha256:sha(canonical(parts)),decisions_sha256:sha(canonical(review.decisions)),
     transcript_sha256:assembled.content_sha256,transcript_chars:assembled.char_count,
     metadata_sha256:sha(canonical(assembled.metadata)),stt_calls:0};
-  return {manifest,assembled};
+  return {manifest,assembled,alreadyPublished:existing.length===1};
 }
 
 export async function publishReviewedGap(io,actor,approved,prepared,review,approvedFileHash){
@@ -61,14 +75,18 @@ export async function publishReviewedGap(io,actor,approved,prepared,review,appro
   const args={_audit_id:approved.audit_id,_actor:actor,_manifest_sha256:approvedFileHash,
     _decisions:review.decisions,_transcript_text:assembled.text,_metadata:assembled.metadata};
   const result=await io.rpc('course_gap_publish_reviewed',args);
-  if(result?.sha256!==approved.transcript_sha256||result.reused!==false)throw Error('review_publication_readback_failed');
+  if(result?.sha256!==approved.transcript_sha256||result.reused!==prepared.alreadyPublished)
+    throw Error('review_publication_readback_failed');
   const rows=await io.rows('course_transcripts','*',{source_id:`eq.${result.source_id}`}),row=rows[0];
   if(rows.length!==1||row.classification!=='paid_private'||row.quality_status!=='unreviewed'
     ||row.origin!=='provider_subtitles'||row.transcript_text!==assembled.text
-    ||row.content_sha256!==approved.transcript_sha256||!same(row.subtitle_metadata,assembled.metadata))
+    ||row.content_sha256!==approved.transcript_sha256||!same(row.subtitle_metadata,assembled.metadata)
+    ||!same(row.caption_provenance,{schema_version:1,revision_basis:'provider_api',
+      gap_audit_id:approved.audit_id,review_manifest_sha256:approvedFileHash,
+      source_caption_sha256:approved.caption_sha256}))
     throw Error('review_publication_readback_failed');
   const again=await io.rpc('course_gap_publish_reviewed',args);
   if(again?.reused!==true||again.sha256!==result.sha256)throw Error('review_replay_failed');
-  return {published:true,transcript_sha256:result.sha256,chars:approved.transcript_chars,
+  return {published:true,cached:result.reused,transcript_sha256:result.sha256,chars:approved.transcript_chars,
     quality_status:'unreviewed',classification:'paid_private',stt_calls:0,replay_changes:0};
 }

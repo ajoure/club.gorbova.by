@@ -97,8 +97,11 @@ BEGIN
     THEN RAISE EXCEPTION 'review_existing_transcript_or_job'; END IF;
   INSERT INTO public.course_gap_reviews(audit_id,reviewed_by,manifest_sha256,decisions,transcript_sha256)
     VALUES(a.id,_actor,_manifest_sha256,_decisions,digest);
-  INSERT INTO public.course_transcripts(source_id,origin,source_revision,transcript_text,content_sha256,char_count,duration_ms,subtitle_metadata)
-    VALUES(s.id,'provider_subtitles',s.source_revision,clean,digest,length(clean),s.duration_ms,_metadata);
+  INSERT INTO public.course_transcripts(source_id,origin,source_revision,transcript_text,content_sha256,char_count,duration_ms,subtitle_metadata,caption_provenance)
+    VALUES(s.id,'provider_subtitles',s.source_revision,clean,digest,length(clean),s.duration_ms,_metadata,
+      jsonb_build_object('schema_version',1,'revision_basis','provider_api',
+        'gap_audit_id',a.id,'review_manifest_sha256',_manifest_sha256,
+        'source_caption_sha256',a.caption_sha256));
   RETURN jsonb_build_object('source_id',s.id,'sha256',digest,'reused',false);
 END $$;
 

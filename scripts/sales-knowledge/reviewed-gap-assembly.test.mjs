@@ -24,7 +24,9 @@ test('reviewed assembly keeps caption order, inserts only reviewed speech and re
   assert.equal(result.metadata.reviewed_speech_parts,1);
   assert.deepEqual(result.metadata.quality_flags,['long_gap']);
   assert.equal(result.metadata.subtitle_sha256,sha(raw));
-  assert.equal(result.metadata.review_decisions_sha256,sha(JSON.stringify(decisions)));
+  const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)
+    ?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
+  assert.equal(result.metadata.review_decisions_sha256,sha(canonical(decisions)));
 });
 
 test('missing review, changed evidence and incomplete gap coverage fail closed',()=>{
