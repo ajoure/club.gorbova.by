@@ -20,6 +20,16 @@ GRANT ALL ON public.course_historical_gap_silence_proofs TO service_role;
 CREATE POLICY owner_read ON public.course_historical_gap_silence_proofs
   FOR SELECT TO authenticated
   USING (public.has_role_v2((SELECT auth.uid()), 'super_admin'));
+CREATE FUNCTION public.course_historical_gap_silence_proof_immutable()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
+BEGIN
+  RAISE EXCEPTION 'historical_silence_proof_immutable';
+END $$;
+CREATE TRIGGER course_historical_gap_silence_proof_immutable
+  BEFORE UPDATE OR DELETE ON public.course_historical_gap_silence_proofs
+  FOR EACH ROW EXECUTE FUNCTION public.course_historical_gap_silence_proof_immutable();
+REVOKE ALL ON FUNCTION public.course_historical_gap_silence_proof_immutable()
+  FROM PUBLIC,anon,authenticated;
 
 CREATE FUNCTION public.course_historical_gap_accept_digital_silence(
   _audit_id uuid, _actor uuid, _part_index integer,

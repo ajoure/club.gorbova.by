@@ -77,11 +77,9 @@ test('historical silence RPC preserves held ASR, records proof and resumes witho
     try{await assert.rejects(db.query(`SELECT public.course_historical_gap_accept_digital_silence($1,$2,2,$3,$4,$5)`,
       [audit,owner,manifest,'e'.repeat(64),2880000]),/historical_silence_part_invalid/);}
     finally{await db.exec('RESET ROLE');}
-    await db.exec(`DELETE FROM course_historical_gap_silence_proofs;
-      UPDATE course_caption_gap_parts SET status='pending',attempts=0,
-        asr_text=null,text_sha256=null,error_code=null WHERE part_index IN (0,1);`);
-    assert.deepEqual(await call(0),{status:'evidence',reused:false});
-    assert.deepEqual(await call(1),{status:'evidence',reused:false});
-    assert.equal((await db.query('SELECT count(*)::integer n FROM course_historical_gap_silence_proofs')).rows[0].n,2);
+    await assert.rejects(db.query('DELETE FROM course_historical_gap_silence_proofs WHERE audit_id=$1',[audit]),
+      /historical_silence_proof_immutable/);
+    await assert.rejects(db.query(`UPDATE course_historical_gap_silence_proofs SET pcm_bytes=2
+      WHERE audit_id=$1`,[audit]),/historical_silence_proof_immutable/);
   }finally{await db.close();}
 });
