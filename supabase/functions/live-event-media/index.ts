@@ -420,7 +420,7 @@ Deno.serve(async (req): Promise<Response> => {
     if (!action || !eventId) return json({ error: "missing_action_or_live_event_id" }, 400);
 
     const auth = await authenticate(req, service);
-    if ("error" in auth) return auth.error;
+    if ("error" in auth) return auth.error ?? json({ error: "unauthorized" }, 401);
     if (!(await canManageEvent(service, auth.user.id, eventId))) return json({ error: "forbidden" }, 403);
 
     if (action === "status") {
