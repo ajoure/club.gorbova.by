@@ -123,7 +123,7 @@ function resolveRelatedString(
 }
 
 async function buildAutomationTemplateValues(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   deal: Record<string, unknown>,
 ): Promise<Record<string, string>> {
   const responsibleUserId =
