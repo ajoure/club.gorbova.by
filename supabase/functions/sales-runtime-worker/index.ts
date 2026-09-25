@@ -155,7 +155,7 @@ Deno.serve(async (request) => {
         context.checkoutOptions.push(...catalogue.options);
         context.checkoutAddons.push(...catalogue.addons);
         context.client.verified_cb_purchase=true;
-        context.client.alumni_eligibility={eligible:true,offers:catalogue.options.map(o=>({offer_id:o.id,eligible:true,source:'synthetic_fixture_only'}))};
+        context.client.alumni_eligibility={eligible:true,offers:catalogue.options.map((o:any)=>({offer_id:o.id,eligible:true,source:'synthetic_fixture_only'}))};
       }
       const steps = [];
       let finalCheckout:any=null;
@@ -193,6 +193,7 @@ Deno.serve(async (request) => {
           const addon=quote.items.find((i:any)=>i.role==='addon');
           commercialCheck={pass:quote.items.length===2 && primary?.final_amount===syntheticGraduate.fact.price &&
             addon?.final_amount===Math.round(Number(syntheticGraduate.sampleAddon.addon_offer.amount)*50)/100 &&
+            primary!=null && addon!=null &&
             quote.total===primary.final_amount+addon.final_amount && quote.adjustment_amount===0,
             has_quote:true,link_created:false};
         } else commercialCheck={pass:false,reason:'graduate_checkout_selection_mismatch'};
