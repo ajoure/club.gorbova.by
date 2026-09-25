@@ -38,7 +38,8 @@ function IndustryModules({ onCta }: { onCta: () => void }) {
       included: text[129] ?? "",
     },
     industryCard(text, 7, 19),
-    industryCard(text, 19, 31),
+    // The next legacy manifest slice advertises an add-on without lessons or
+    // an access rule. Leave it out until the product can actually be delivered.
     industryCard(text, 31, 47),
     industryCard(text, 47, 59),
     industryCard(text, 59, 71),
