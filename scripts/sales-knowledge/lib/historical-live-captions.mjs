@@ -15,7 +15,7 @@ const list=value=>{
   throw new Error('provider_live_videos_invalid');
 };
 
-async function inspectEvent(io,actor,eventId){
+export async function inspectEvent(io,actor,eventId){
   if(!uuid(eventId))throw new Error('historical_event_id_invalid');
   const token=await tokenAndOwner(io,actor);
   const events=await io.rows('live_events',

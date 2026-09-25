@@ -33,7 +33,8 @@ export function assembleReviewedGaps({raw_vtt,duration_ms,source,parts,decisions
     ||!Array.isArray(parts)||!Array.isArray(decisions)||parts.length<1||parts.length>7
     ||parts.length!==decisions.length||!reviewer_id)throw Error('review_input_invalid');
   const base=inspectSubtitles(raw_vtt,duration_ms,'ru');
-  const gap=captionGaps(raw_vtt,duration_ms);
+  const historical=source?.source_scope==='historical_live_event';
+  const gap=captionGaps(raw_vtt,duration_ms,{historicalLeadingGap:historical});
   if(!same(gap.gaps,source?.gaps)||gap.caption_sha256!==source.caption_sha256
     ||source.duration_ms!==duration_ms||!base.quality_flags.includes('long_gap'))throw Error('review_source_changed');
   const rows=cues(raw_vtt);

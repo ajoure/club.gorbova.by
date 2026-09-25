@@ -9,9 +9,10 @@ import {pcmParts,sha} from './course-stt.mjs';
 const run=promisify(execFile);
 
 /** Union coverage, including leading/trailing gaps. Strict parser validates first. */
-export function captionGaps(raw,duration){
+export function captionGaps(raw,duration,{historicalLeadingGap=false}={}){
   const parsed=inspectSubtitles(raw,duration,'ru');
-  if(parsed.quality_flags.some(x=>x!=='long_gap'))throw Error('other_caption_quality_flags');
+  const allowed=historicalLeadingGap?new Set(['long_gap','late_start']):new Set(['long_gap']);
+  if(parsed.quality_flags.some(x=>!allowed.has(x)))throw Error('other_caption_quality_flags');
   const stamp=s=>{const n=s.replace(',','.').split(':').map(Number);return Math.round(n.reduce((a,b)=>a*60+b,0)*1000);};
   let until=0;const gaps=[];
   const add=end=>{if(end-until>120000)gaps.push({gap_index:gaps.length,start_ms:until,end_ms:end});};
@@ -27,6 +28,8 @@ export function captionGaps(raw,duration){
   add(duration);
   if(!gaps.length||gaps.length>3||gaps.reduce((n,g)=>n+g.end_ms-g.start_ms,0)>600000
     ||gaps.reduce((n,g)=>n+Math.ceil((g.end_ms-g.start_ms)/90000),0)>7)throw Error('gap_budget');
+  if(historicalLeadingGap&&(gaps.length!==1||gaps[0].start_ms!==0
+    ||!parsed.quality_flags.includes('late_start')))throw Error('historical_initial_gap_required');
   return {gaps,caption_sha256:sha(raw),content_sha256:parsed.content_sha256,chars:parsed.chars,quality_flags:parsed.quality_flags};
 }
 

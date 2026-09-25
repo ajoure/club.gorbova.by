@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 import {COURSE_PRODUCT_IDS} from './lib/course-provider-import.mjs';
 import {dryRunHistoricalEvent,importHistoricalEvent} from './lib/historical-live-captions.mjs';
+import {inspectHistoricalGap} from './lib/historical-gap-audit.mjs';
 
 const owner='00000000-0000-4000-8000-000000000001';
 const outsider='00000000-0000-4000-8000-000000000002';
@@ -120,6 +121,24 @@ test('historical recording uses matching v2 revision date when v1 omits it',asyn
     updated_at:'2026-09-13T12:15:00Z'}]});
   await assert.rejects(importHistoricalEvent(f.io,owner,manifest),/provider_revision_fallback_mismatch/);
   assert.equal(f.stats().writes,0);
+});
+
+test('historical opening is the sole gap and remains separate from lessons',async()=>{
+  const f=fixture();f.video.duration=3600;
+  const openingVtt='WEBVTT\n\n00:03:03.360 --> 01:00:00.000\nПродолжение конференции после отсутствующего начала.\n';
+  f.io.subtitle=async()=>openingVtt;
+  const publicIo={
+    page:async()=>`playerOptions = ${JSON.stringify({playlist:[{id:videoId,meta:{duration:3600},
+      vtt:[{srcLang:'ru',src:'https://kinescopecdn.net/opening.vtt'}],
+      sources:{hls:{src:'https://kinescopecdn.net/master.m3u8'}}}]})};`,
+    caption:async()=>openingVtt,
+  };
+  const inspected=await inspectHistoricalGap(f.io,publicIo,owner,eventId);
+  assert.deepEqual(inspected.identity.gaps,[{gap_index:0,start_ms:0,end_ms:183360}]);
+  assert.equal(f.stats().writes,0);assert.equal(f.lesson.length,0);
+  await assert.rejects(inspectHistoricalGap(f.io,publicIo,outsider,eventId),/owner_required/);
+  publicIo.caption=async()=>openingVtt.replace('Продолжение','Иное продолжение');
+  await assert.rejects(inspectHistoricalGap(f.io,publicIo,owner,eventId),/historical_caption_changed/);
 });
 
 test('historical binding schema blocks course lessons and browser writes',async()=>{
