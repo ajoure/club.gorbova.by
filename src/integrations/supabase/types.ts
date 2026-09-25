@@ -5776,6 +5776,41 @@ export type Database = {
           },
         ]
       }
+      course_gap_reviews: {
+        Row: {
+          audit_id: string
+          created_at: string
+          decisions: Json
+          manifest_sha256: string
+          reviewed_by: string
+          transcript_sha256: string
+        }
+        Insert: {
+          audit_id: string
+          created_at?: string
+          decisions: Json
+          manifest_sha256: string
+          reviewed_by: string
+          transcript_sha256: string
+        }
+        Update: {
+          audit_id?: string
+          created_at?: string
+          decisions?: Json
+          manifest_sha256?: string
+          reviewed_by?: string
+          transcript_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_gap_reviews_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -24700,6 +24735,17 @@ export type Database = {
           _error_code?: string
           _part_index: number
           _text: string
+        }
+        Returns: Json
+      }
+      course_gap_publish_reviewed: {
+        Args: {
+          _actor: string
+          _audit_id: string
+          _decisions: Json
+          _manifest_sha256: string
+          _metadata: Json
+          _transcript_text: string
         }
         Returns: Json
       }
