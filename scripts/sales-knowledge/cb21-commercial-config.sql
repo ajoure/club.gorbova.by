@@ -96,7 +96,7 @@ WHERE parent_offer.tariff_id IN (
       )
   );
 
--- Existing mapped rules are already equal, except accountant's three VIP modules.
+-- Every mapped course rule follows the corresponding CB20 tariff.
 -- Translation is checked by title plus exact course-root parent, never array order.
 CREATE TEMP TABLE _cb21_modules ON COMMIT DROP AS
  SELECT a.id AS source,b.id AS target FROM public.training_modules a JOIN public.training_modules b
@@ -183,10 +183,6 @@ BEGIN
    j:=pg_temp.cb21_map_config(to_jsonb(r));
    SELECT id INTO dest FROM public.access_rules WHERE tariff_id=p.target AND is_active AND grant_target_type=r.grant_target_type AND target_ref=j->>'target_ref';
    IF dest IS NULL OR (SELECT count(*) FROM public.access_rules WHERE tariff_id=p.target AND is_active AND grant_target_type=r.grant_target_type AND target_ref=j->>'target_ref')<>1 THEN RAISE EXCEPTION 'access_rule_mapping_changed'; END IF;
-   IF p.role='accountant' AND r.target_ref='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e' AND r.conditions->>'access_mode'='partial' THEN
-    j:=jsonb_set(j,'{conditions}',(SELECT conditions FROM public.access_rules WHERE id=dest));
-    IF jsonb_array_length(j#>'{conditions,allowed_module_ids}')<>21 THEN RAISE EXCEPTION 'accountant_target_matrix_changed'; END IF;
-   END IF;
    IF r.target_ref='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e' AND r.conditions->>'access_mode'='partial' AND EXISTS(
     SELECT 1 FROM jsonb_array_elements_text(j->'conditions'->'allowed_module_ids') x WHERE NOT EXISTS(SELECT 1 FROM public.training_modules m WHERE m.id=x.value::uuid AND m.parent_module_id='4365e913-36f1-432e-ab16-748c3ca6826a')) THEN RAISE EXCEPTION 'unmapped_course_module'; END IF;
    INSERT INTO _cb21_rules SELECT * FROM jsonb_populate_record(null::public.access_rules,j||jsonb_build_object('id',dest,'created_at',(SELECT created_at FROM public.access_rules WHERE id=dest),'updated_at',(SELECT updated_at FROM public.access_rules WHERE id=dest)));
