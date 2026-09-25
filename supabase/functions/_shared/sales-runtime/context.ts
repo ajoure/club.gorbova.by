@@ -5,6 +5,7 @@ import { readFullHistory, describeAttachment } from "./history.mjs";
 import {readAIConfig} from './ai.mjs';
 import {loadRelatedProducts} from './related-products.ts';
 import {loadClientEvidence} from './client-evidence.ts';
+import {freshKnowledgeFacts} from './knowledge-freshness.mjs';
 export type Fact = {
   id: string;
   text: string;
@@ -150,7 +151,6 @@ export async function loadContext(db: DB, p: any, c: any) {
     knowledgeFacts=checked.facts;
     knowledgeFingerprint=checked.facts_sha256;
   }
-  const referenceTopics=knowledgeFacts.filter((f:any)=>f.scope==='background').map((f:any)=>({title:f.title,text:f.text}));
   const sourceIds = [
     ...new Set<string>(
       knowledgeFacts.map((f: any) => String(f.source_id)),
@@ -164,15 +164,10 @@ export async function loadContext(db: DB, p: any, c: any) {
     )
     : [];
   // Metadata only: no transcript_text is loaded, logged or submitted to the model.
-  for (const f of knowledgeFacts) {
+  const freshFacts=freshKnowledgeFacts(knowledgeFacts,transcriptMetadata);
+  const referenceTopics=freshFacts.filter((f:any)=>f.scope==='background').map((f:any)=>({title:f.title,text:f.text}));
+  for (const f of freshFacts) {
     if(f.scope==='background') continue;
-    if (
-      !transcriptMetadata.some((t: any) =>
-        t.source_id === f.source_id &&
-        t.source_revision === f.source_revision &&
-        t.content_sha256 === f.source_sha256
-      )
-    ) continue;
     if (
       f.classification === "sales_safe" && typeof f.text === "string" &&
       f.source && f.module_id && modules.some((m: any) => m.id === f.module_id)
