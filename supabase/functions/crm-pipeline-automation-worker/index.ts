@@ -110,20 +110,20 @@ function resolveRelatedString(
   relation: string,
   field: string,
 ): string {
-  const value = deal[relation];
+  const value = deal[relation] as Record<string, unknown> | null | undefined;
   if (
     value &&
     typeof value === "object" &&
     field in value &&
     typeof value[field] === "string"
   ) {
-    return value[field];
+    return value[field] as string;
   }
   return "";
 }
 
 async function buildAutomationTemplateValues(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   deal: Record<string, unknown>,
 ): Promise<Record<string, string>> {
   const responsibleUserId =
