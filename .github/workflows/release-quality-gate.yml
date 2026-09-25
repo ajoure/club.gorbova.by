@@ -33,7 +33,12 @@ jobs:
       - name: Unit and integration contracts
         run: npx vitest run
       - name: Sales knowledge and dialogue contracts (offline)
-        run: node --test scripts/sales-knowledge/*.test.mjs
+        # The AAC regression uses a real decoder, never a mocked PCM buffer.
+        # Install explicitly: GitHub's Ubuntu runner does not bundle ffmpeg.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          node --test scripts/sales-knowledge/*.test.mjs
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build
