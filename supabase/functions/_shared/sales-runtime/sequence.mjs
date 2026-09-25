@@ -188,7 +188,11 @@ export function planDialogueReply(context, raw) {
     return compose(context.lastQuestionId === q ? 'none' : q, a.facts,
       {stage:context.lastQuestionId === q ? context.stage : q});
   }
-  if (a.intent === 'payment' && q === 'payment') return {action:/** @type {const} */ ('checkout'), selection:a.checkout??null};
+  // A purchase decision can be classified as payment intent. Show the verified
+  // offer first; checkout starts only after the customer answers that offer.
+  if (a.intent === 'payment' && q === 'payment' &&
+      ['payment','payment_kind','invoice_payer','checkout_confirm'].includes(context.lastQuestionId))
+    return {action:/** @type {const} */ ('checkout'), selection:a.checkout??null};
   if (a.intent === 'product_question' && q === 'payment') {
     const allowed = f => a.question_type === 'program' ? f.id === 'program'
       : a.question_type === 'price' ? f.id === 'prices'

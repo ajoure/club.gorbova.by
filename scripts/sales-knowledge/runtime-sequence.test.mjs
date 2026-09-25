@@ -86,7 +86,7 @@ test('new customer: activation -> experience -> goal -> relevant topic -> readin
  exchange(c,r,'Да, хочу рассмотреть участие.');
  r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'decision');assert.deepEqual(r.fact_ids,[]);assert.doesNotMatch(r.text,/BYN|2000/);
  exchange(c,r,'Да, готова оформить участие.');
- r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'payment');assert.deepEqual(r.fact_ids,['offer_fit']);assert.doesNotMatch(r.text,/Не включает|Дорогой/);
+ r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{intent:'payment',fact_ids:['topic_vat']}));assert.equal(r.question_id,'payment');assert.deepEqual(r.fact_ids,['offer_fit']);assert.doesNotMatch(r.text,/Не включает|Дорогой/);
  exchange(c,r,'Хочу в рассрочку, пришлите ссылку.');
  const checkoutAssessment=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'}, {intent:'payment'});
  checkoutAssessment.slots.purchase_ready.evidence=[c.history.findIndex(m=>m.text==='Да, готова оформить участие.')];
@@ -142,6 +142,19 @@ test('considering participation is not purchase readiness or permission to discl
  const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'}));assert.deepEqual(r.fact_ids,[]);assert.equal(r.question_id,'decision');assert.doesNotMatch(r.text,/BYN|2000/);
  const mistaken=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'}));
  assert.equal(mistaken.question_id,'decision');assert.deepEqual(mistaken.fact_ids,[]);
+});
+test('checkout follow-up questions return to checkout without repeating the tariff',()=>{
+ for (const questionId of ['payment','payment_kind','invoice_payer','checkout_confirm']) {
+  const c=setup();c.firstReply=false;c.stage=questionId;c.lastQuestionId=questionId;c.relevantFactIds=['topic_vat'];
+  c.history.push({role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
+    {role:'customer',text:'Да, готова оформить участие.'},
+    {role:'seller',text:'Подтверждаете оформление?',question_id:questionId},
+    {role:'customer',text:questionId==='checkout_confirm'?'Да, подтверждаю.':'Хочу оплатить.'});
+  const raw=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{intent:'payment'});
+  raw.slots.purchase_ready.evidence=[2];
+  const r=planDialogueReply(c,raw);
+  assert.equal(r.action,'checkout',questionId);assert.equal(r.text,undefined);
+ }
 });
 test('negated or conditional purchase language cannot unlock price, even when model marks it accepted',()=>{
  for (const incoming of ['Не готова оплатить.','Не хочу купить.','Хочу оплатить, но сначала цену.','Если цена подойдёт, готова оформить.']) {
