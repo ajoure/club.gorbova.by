@@ -6068,6 +6068,7 @@ export type Database = {
           job_id: string
           lease_until: string | null
           part_index: number
+          silence_evidence: Json | null
           start_ms: number
           status: string
           transcript_text: string | null
@@ -6082,6 +6083,7 @@ export type Database = {
           job_id: string
           lease_until?: string | null
           part_index: number
+          silence_evidence?: Json | null
           start_ms: number
           status?: string
           transcript_text?: string | null
@@ -6096,6 +6098,7 @@ export type Database = {
           job_id?: string
           lease_until?: string | null
           part_index?: number
+          silence_evidence?: Json | null
           start_ms?: number
           status?: string
           transcript_text?: string | null
@@ -24925,6 +24928,17 @@ export type Database = {
           _source_id: string
           _source_revision: string
           _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_mark_verified_silence: {
+        Args: {
+          _actor: string
+          _audio_sha256: string
+          _job_id: string
+          _long_manifest: string
+          _part_index: number
+          _source_revision: string
         }
         Returns: Json
       }
