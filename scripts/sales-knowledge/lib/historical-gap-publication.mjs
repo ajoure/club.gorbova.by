@@ -24,7 +24,8 @@ export async function prepareHistoricalGapPublication(io,publicIo,actor,original
     chars:original.chars,quality_flags:original.quality_flags})
     ||sha(fresh.raw)!==original.caption_sha256)throw Error('historical_review_source_changed');
   const audits=await io.rows('course_caption_gap_audits','*',{id:`eq.${review.audit_id}`}),a=audits[0];
-  if(audits.length!==1||a.requested_by!==actor||a.status!=='evidence'
+  if(audits.length!==1||a.requested_by!==actor
+    ||!['evidence','review_required'].includes(a.status)
     ||a.expected_parts!==3||a.classification!=='paid_private'
     ||a.quality_status!=='unreviewed'||a.source_revision!==original.source.source_revision
     ||a.caption_sha256!==original.caption_sha256||a.raw_vtt!==fresh.raw
@@ -41,9 +42,15 @@ export async function prepareHistoricalGapPublication(io,publicIo,actor,original
     ||(await io.rows('course_transcription_jobs','source_id',{source_id:`eq.${s.id}`})).length)
     throw Error('historical_review_binding_changed');
   const parts=await io.rows('course_caption_gap_parts','*',{audit_id:`eq.${a.id}`,order:'part_index.asc'});
-  if(parts.length!==3||parts.some((p,i)=>!same(partMeta(p),partMeta(original.parts[i]))
-    ||p.status!=='evidence'||p.attempts!==1||typeof p.asr_text!=='string'
-    ||p.text_sha256!==sha(p.asr_text)))throw Error('historical_review_parts_changed');
+  const held=parts.filter(p=>p.status==='uncertain');
+  if(parts.length!==3||((a.status==='review_required')!== (held.length===1))
+    ||held.some(p=>p.part_index!==2||p.error_code!=='asr_outcome_uncertain'
+      ||!p.asr_text?.trim()||/[А-Яа-яЁё]/.test(p.asr_text)
+      ||review.decisions[2]?.kind!=='non_speech'||review.decisions[2]?.text!==null)
+    ||parts.some((p,i)=>!same(partMeta(p),partMeta(original.parts[i]))
+      ||(p.status!=='evidence'&&p.status!=='uncertain')||p.attempts!==1
+      ||typeof p.asr_text!=='string'||p.text_sha256!==sha(p.asr_text)))
+    throw Error('historical_review_parts_changed');
   const silence=await io.rows('course_historical_gap_silence_proofs','*',
     {audit_id:`eq.${a.id}`,order:'part_index.asc'});
   if(silence.some(proof=>!Number.isInteger(proof.part_index)||proof.part_index<0
