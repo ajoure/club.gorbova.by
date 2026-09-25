@@ -24837,6 +24837,18 @@ export type Database = {
         }
         Returns: Json
       }
+      course_gap_publish_evidence: {
+        Args: {
+          _actor: string
+          _audit_id: string
+          _capture_manifest: string
+          _decisions: Json
+          _manifest_sha256: string
+          _metadata: Json
+          _transcript_text: string
+        }
+        Returns: Json
+      }
       course_gap_publish_reviewed: {
         Args: {
           _actor: string
