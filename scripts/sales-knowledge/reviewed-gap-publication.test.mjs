@@ -29,7 +29,7 @@ before(async()=>{
     '20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql',
     '20260911200704_62084073-0485-4613-8b9f-38c2cdf67e1b.sql',
     '20260911202441_course_gap_continuation.sql',
-    '20260925123647_course_gap_reviewed_assembly.sql'])
+    '20260925130513_8838204f-2a91-406e-90c5-d7a510a87ca9.sql'])
     await db.exec(await readFile(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 });
 after(async()=>await db?.close());
