@@ -1,6 +1,7 @@
 -- Exact PR564 operation; transaction is owned by the managed migration runner.
 -- Reviewed production fingerprint: drift aborts before any persistent write.
 SET LOCAL cb21.legacy_copy_options = '{"apply":true,"expected_fingerprint":"48cacee66e4c315631073cdb7925f455"}';
+DO $$ BEGIN IF current_setting('cb21.legacy_copy_options',true) IS DISTINCT FROM '{"apply":true,"expected_fingerprint":"48cacee66e4c315631073cdb7925f455"}' THEN RAISE EXCEPTION 'cb21_not_single_transaction'; END IF; END $$;
 -- One-time managed configuration repair, not runtime business logic.
 -- The administrator's existing "only previously created links" setting.
 -- Default dry-run writes TEMP tables only. Set cb21.legacy_copy_options in the

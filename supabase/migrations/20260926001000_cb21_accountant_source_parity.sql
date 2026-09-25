@@ -1,6 +1,7 @@
 -- Exact PR564 operation; transaction is owned by the managed migration runner.
 -- Reviewed production fingerprint: drift aborts before any persistent write.
 SET LOCAL cb21.sync_options = '{"apply":true,"expected_fingerprint":"5c246095ac866697f2ed2985b8519e46","addon_opens_at":"2026-12-09T21:00:00Z","course_start_date":"2026-10-23","course_end_date":"2026-12-10"}';
+DO $$ BEGIN IF current_setting('cb21.sync_options',true) IS DISTINCT FROM '{"apply":true,"expected_fingerprint":"5c246095ac866697f2ed2985b8519e46","addon_opens_at":"2026-12-09T21:00:00Z","course_start_date":"2026-10-23","course_end_date":"2026-12-10"}' THEN RAISE EXCEPTION 'cb21_not_single_transaction'; END IF; END $$;
 -- Managed, parameterized data operation. GitHub is the sole code source.
 -- Default is DRY RUN: only transaction-local tables are written.
 -- Managed runner sets cb21.sync_options JSON in the SAME SQL session before BEGIN:
