@@ -40,7 +40,7 @@ export function createPublicCaptionTransport({fetchImpl=fetch}={}){
 }
 
 /** Extract one JSON literal; never execute the surrounding player JavaScript. */
-export function parsePublicPlayer(html,{includeHls=false}={}){
+export function parsePublicPlayer(html,{includeHls=false,requireRussianCaption=true}={}){
   if(typeof html!=='string'||html.length>MAX_BYTES)throw new Error('public_player_invalid');
   const matches=[...html.matchAll(/\bplayerOptions\s*=\s*/g)];
   if(matches.length!==1)throw new Error('public_player_ambiguous');
@@ -58,10 +58,10 @@ export function parsePublicPlayer(html,{includeHls=false}={}){
   if(!Array.isArray(data.playlist)||data.playlist.length!==1)throw new Error('public_playlist_ambiguous');
   const video=data.playlist[0],duration=Math.round(video?.meta?.duration*1000);
   if(!isUuid(video?.id)||typeof video?.meta?.duration!=='number'||!Number.isSafeInteger(duration)||duration<1000||duration>21600000)throw new Error('public_video_metadata_invalid');
-  if(!Array.isArray(video.vtt))throw new Error('public_caption_tracks_missing');
-  const tracks=video.vtt.filter(track=>track.srcLang==='ru');
-  if(tracks.length!==1)throw new Error('public_russian_track_ambiguous');
-  return {video_id:video.id.toLowerCase(),duration_ms:duration,subtitle_url:safeSubtitleUrl(tracks[0].src).href,
+  if(!Array.isArray(video.vtt)&&!(requireRussianCaption===false&&video.vtt==null))throw new Error('public_caption_tracks_missing');
+  const tracks=(video.vtt??[]).filter(track=>track.srcLang==='ru');
+  if(tracks.length>1||(requireRussianCaption&&tracks.length!==1))throw new Error('public_russian_track_ambiguous');
+  return {video_id:video.id.toLowerCase(),duration_ms:duration,...(tracks.length?{subtitle_url:safeSubtitleUrl(tracks[0].src).href}:{}),
     ...(includeHls?{hls_url:safeSubtitleUrl(video.sources?.hls?.src).href}:{})};
 }
 
