@@ -142,3 +142,20 @@ it("settings open outside the composer and close without changing campaign state
  await waitFor(()=>expect(document.activeElement).toBe(trigger));
  expect(mock.invoke.mock.calls.every(([,args])=>args.body.action==='status')).toBe(true);
 });
+
+it("runs a synthetic owner preview only while the campaign is off and held", async () => {
+ mock.invoke.mockImplementation(async (name: string) => name === 'sales-runtime-worker'
+   ? {data:{ok:true,steps:[{incoming:'Хочу программу курса ЦБ',expected:'qualification',actual:'qualification',pass:true,candidate:{text:'Здравствуйте!'}}]},error:null}
+   : {data:{...base,campaign:{...base.campaign,mode:'off'},conversation:{state:'HUMAN_HOLD'},job:null},error:null});
+ mount();
+ fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
+ fireEvent.click(screen.getByRole('button',{name:'Новый клиент'}));
+ await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-worker',{body:{action:'preview_scenario',scenario:'new_client'}}));
+ expect(await screen.findByText('Ответ: Здравствуйте!')).toBeTruthy();
+});
+
+it("does not show synthetic preview while sales are enabled", async () => {
+ mount();
+ fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
+ expect(screen.queryByRole('button',{name:'Новый клиент'})).toBeNull();
+});

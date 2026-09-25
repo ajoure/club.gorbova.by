@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Pause, Play, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import {SalesKnowledgeEditor} from './SalesKnowledgeEditor';
+import { SalesScenarioPreview } from './SalesScenarioPreview';
 
 type Status = {
   scope?: { user_id: string; business_account_id: string };
@@ -308,6 +309,7 @@ export function SalesRuntimeControls(
             <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||productIds.length>20}
               onClick={()=>mutation.mutate({action:'knowledge_products',product_ids:productIds,expected_product_ids:campaign.consultation_product_ids??[]})}>Сохранить продукты</Button>
           </div>}
+          {query.data.can_configure && !enabled && conversation?.state === "HUMAN_HOLD" && <SalesScenarioPreview />}
           {settings&&query.data.can_configure&&<SalesKnowledgeEditor key={userId+businessAccountId} userId={userId} businessAccountId={businessAccountId} editable={!enabled&&!sending&&!blocked&&conversation?.state==='HUMAN_HOLD'}/>}
         </div>
     </DialogContent>
