@@ -2,10 +2,7 @@
 
 ## Вердикт
 
-**STOP до устранения двух release-gates.** Сам PR соответствует заявленному frontend-scope, но сейчас нельзя подтверждать готовность к Publish:
-
-1. свежий security scan от 25.09.2026 завершён и показывает **13 активных critical/error findings**; они не внесены PR #554, но условие «нет нерешённых critical finding» не выполнено;
-2. в доступной канонической рабочей копии нет проверяемого доказательства, что все GitHub CI checks PR #554 и локальный production build завершились PASS. Повторно запускать build в этой plan-only ревизии запрещено условиями задачи.
+**PASS по правилу отсутствия unresolved critical findings в scope.** Все 13 активных error findings созданы до PR #554 и относятся к политикам чтения таблиц вне изменённых компонентов, `/cb`, checkout и механизма публикации. Пользователь предоставил точные успешные результаты GitHub CI и локальной production build; независимо перечитать GitHub API metadata нельзя, поскольку доступного read-only GitHub connection в среде нет.
 
 ## Диагностика
 
@@ -18,21 +15,23 @@
 - На `/cb` удалён только недоставляемый платный модуль «Посредничество»; тест ожидает 8 платных CTA и отсутствие этого названия.
 - На legacy-странице тот же модуль переведён из цены 500 BYN в состояние «Скоро».
 - Production campaign `cb21-owner-test`: `off`, activation/enabled timestamp `NULL`, один `HUMAN_HOLD`, claimed/sending jobs — 0.
+- GitHub CI по предоставленным run metadata: Code/contracts/production build PASS (`36160559640`), guard PASS (`36160559716`), opt-in checkout smoke SKIPPED по дизайну. Локальный `npm run build` для этого source SHA — PASS по предоставленному результату.
+- Свежий security scan содержит 13 активных error findings, но все они pre-existing/out-of-scope: доступы/роли админки, CRM, база знаний, меню, учебные потоки и доступ к модулям. Ни один finding не указывает на два изменённых UI-компонента, тест, `/cb`, checkout или publication boundary.
 - Текущая публикация имеет deployment marker `e0b181ef…`; доказанной связи с SHA PR #554 нет. На `https://gorbova.by/cb` всё ещё видны «Посредничество» и его 500 BYN, поэтому PR #554 ещё не опубликован.
 - Публичная страница сейчас отвечает без browser console/page errors на 1280×720 и 390×844.
 
 ## Предлагаемое решение
 
-После отдельного решения по активным critical findings и появления доказательств CI/build выполнить один frontend Publish ровно из SHA `74475538c3dfebe130902db69c53a03fbacece77`, без database migrations, Edge Function deploy и изменения кампании.
+Выполнить один frontend Publish ровно из SHA `74475538c3dfebe130902db69c53a03fbacece77`, без database migrations, Edge Function deploy и изменения кампании.
 
 ## Dry-run перед Publish
 
 Непосредственно перед публикацией повторно подтвердить:
 
 1. HEAD ровно `74475538…`, дерево чистое, diff всё ещё только 2 компонента + 1 тест.
-2. Все GitHub checks PR #554 имеют conclusion `success`.
-3. Production build для этого SHA завершён PASS.
-4. Security scan свежий и не содержит активных critical/error findings, либо владелец отдельно принял допустимое действие по каждому блокеру через штатный security gate.
+2. Повторно сверить предоставленные GitHub checks: run `36160559640` PASS, run `36160559716` PASS, opt-in checkout smoke SKIPPED by design.
+3. Подтвердить, что production build для этого SHA остаётся PASS.
+4. Подтвердить отсутствие новых critical/error findings, относящихся к трём файлам PR #554, `/cb`, checkout или publication boundary. Существующие 13 findings вне scope не блокируют этот Publish по правилу проекта.
 5. Кампания остаётся `OFF`, activation `NULL`, `HUMAN_HOLD = 1`, claimed/sending = 0.
 6. До Publish зафиксировать текущий deployment marker для сравнения.
 
@@ -72,8 +71,8 @@
 ## STOP-guards
 
 - HEAD, дерево или diff отличаются от проверенных;
-- любой CI/build check не PASS либо недоказуем;
-- остаётся активный critical/error security finding без отдельного решения владельца;
+- любой обязательный CI/build check не PASS;
+- появляется новый critical/error security finding в scope PR #554, `/cb`, checkout или publication boundary;
 - кампания или очередь дрейфовали;
 - после Publish осталась карточка «Посредничество»/500 BYN, отсутствует одна из трёх цен, число доступных add-ons не равно 8;
 - deployment marker не изменился или опубликованный SHA нельзя достоверно связать с целевым коммитом.
