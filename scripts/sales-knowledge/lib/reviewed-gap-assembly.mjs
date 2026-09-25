@@ -1,5 +1,6 @@
 import {sha} from './course-stt.mjs';
 import {captionGaps} from './gap-media.mjs';
+import {normalizeReviewedCaption} from './reviewed-captions.mjs';
 import {inspectSubtitles} from './subtitles.mjs';
 
 const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)
@@ -32,12 +33,20 @@ export function assembleReviewedGaps({raw_vtt,duration_ms,source,parts,decisions
   if(typeof raw_vtt!=='string'||!Number.isSafeInteger(duration_ms)||duration_ms<1000
     ||!Array.isArray(parts)||!Array.isArray(decisions)||parts.length<1||parts.length>7
     ||parts.length!==decisions.length||!reviewer_id)throw Error('review_input_invalid');
-  const base=inspectSubtitles(raw_vtt,duration_ms,'ru');
+  let effectiveRaw=raw_vtt,normalization;
+  if(source?.caption_provenance){
+    const checked=normalizeReviewedCaption(raw_vtt,duration_ms,{allowCueOrderReview:source.reviewed_selection?.allow_cue_order_review===true});
+    normalization={...checked.reviewed.provenance,revision_basis:'provider_api'};
+    if(!same(normalization,source.caption_provenance)||sha(raw_vtt)!==source.caption_sha256)throw Error('review_normalization_changed');
+    effectiveRaw=checked.normalized;
+  }
+  const base=inspectSubtitles(effectiveRaw,duration_ms,'ru');
+  base.metadata.subtitle_sha256=sha(raw_vtt);
   const historical=source?.source_scope==='historical_live_event';
-  const gap=captionGaps(raw_vtt,duration_ms,{historicalLeadingGap:historical});
-  if(!same(gap.gaps,source?.gaps)||gap.caption_sha256!==source.caption_sha256
+  const gap=captionGaps(effectiveRaw,duration_ms,{historicalLeadingGap:historical});
+  if(!same(gap.gaps,source?.gaps)||sha(raw_vtt)!==source.caption_sha256
     ||source.duration_ms!==duration_ms||!base.quality_flags.includes('long_gap'))throw Error('review_source_changed');
-  const rows=cues(raw_vtt);
+  const rows=cues(effectiveRaw);
   if(rows.map(x=>x.text).join('\n')!==base.text)throw Error('review_cue_mismatch');
   const inserts=[];
   for(let i=0;i<parts.length;i++){
@@ -65,7 +74,7 @@ export function assembleReviewedGaps({raw_vtt,duration_ms,source,parts,decisions
     .sort((a,b)=>a.start_ms-b.start_ms||a.end_ms-b.end_ms);
   const text=merged.map(x=>x.text).join('\n');
   return {text,content_sha256:sha(text),char_count:[...text].length,
-    metadata:{...base.metadata,gap_review_status:'reviewed',
+    metadata:{...base.metadata,...(normalization?{normalized_caption_sha256:normalization.normalized_sha256}:{}),gap_review_status:'reviewed',
       reviewed_gap_parts:parts.length,reviewed_speech_parts:inserts.length,
       review_decisions_sha256:sha(canonical(decisions)),reviewer_id}};
 }
