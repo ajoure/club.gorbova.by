@@ -77,6 +77,11 @@ test('historical reviewed publication is service-only, private and idempotent',a
     assert.equal((await heldCall()).rows[0].result.reused,false);
     assert.equal((await heldCall()).rows[0].result.reused,true);
     assert.equal((await db.query("SELECT status FROM course_caption_gap_parts WHERE audit_id=$1 AND part_index=2",[audit])).rows[0].status,'uncertain');
+    await db.query('UPDATE course_caption_gap_parts SET end_ms=176000 WHERE audit_id=$1 AND part_index=1',[audit]);
+    await db.query('UPDATE course_caption_gap_parts SET start_ms=176000 WHERE audit_id=$1 AND part_index=2',[audit]);
+    await assert.rejects(heldCall(),/historical_review_decision_invalid/);
+    await db.query('UPDATE course_caption_gap_parts SET end_ms=180000 WHERE audit_id=$1 AND part_index=1',[audit]);
+    await db.query('UPDATE course_caption_gap_parts SET start_ms=180000 WHERE audit_id=$1 AND part_index=2',[audit]);
     await db.query("UPDATE course_transcription_sources SET source_scope='course' WHERE id=$1",[source]);
     await assert.rejects(call(),/historical_review_source_changed/);
     await db.exec(`SET ROLE authenticated`);

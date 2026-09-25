@@ -45,6 +45,7 @@ export async function prepareHistoricalGapPublication(io,publicIo,actor,original
   const held=parts.filter(p=>p.status==='uncertain');
   if(parts.length!==3||((a.status==='review_required')!== (held.length===1))
     ||held.some(p=>p.part_index!==2||p.error_code!=='asr_outcome_uncertain'
+      ||p.end_ms-p.start_ms<1||p.end_ms-p.start_ms>5000
       ||!p.asr_text?.trim()||/[А-Яа-яЁё]/.test(p.asr_text)
       ||review.decisions[2]?.kind!=='non_speech'||review.decisions[2]?.text!==null)
     ||parts.some((p,i)=>!same(partMeta(p),partMeta(original.parts[i]))

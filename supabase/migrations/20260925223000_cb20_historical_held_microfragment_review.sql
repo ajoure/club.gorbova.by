@@ -49,6 +49,7 @@ BEGIN
     IF NOT FOUND OR p.attempts<>1
       OR (p.status<>'evidence' AND NOT (
         idx=2 AND a.status='review_required' AND p.status='uncertain'
+        AND p.end_ms-p.start_ms BETWEEN 1 AND 5000
         AND p.error_code='asr_outcome_uncertain'
         AND p.asr_text IS NOT NULL AND length(btrim(p.asr_text)) BETWEEN 1 AND 100000
         AND p.asr_text !~ '[А-Яа-яЁё]'
