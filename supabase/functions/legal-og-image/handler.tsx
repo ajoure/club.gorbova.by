@@ -1,4 +1,3 @@
-/** @jsxImportSource npm:react@19.1.1 */
 import { ImageResponse } from "npm:@vercel/og@0.6.8";
 import React from "npm:react@19.1.1";
 import { createClient } from "npm:@supabase/supabase-js@2.108.2";
