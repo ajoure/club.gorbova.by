@@ -92,6 +92,19 @@ test('new customer: activation -> experience -> goal -> relevant topic -> readin
  checkoutAssessment.slots.purchase_ready.evidence=[c.history.findIndex(m=>m.text==='Да, готова оформить участие.')];
  r=planDialogueReply(c,checkoutAssessment);assert.equal(r.action,'checkout');assert.equal(r.text,undefined);
 });
+test('a factual answer without a question does not erase the pending purchase decision',()=>{
+ const c=setup();c.firstReply=false;c.stage='decision';c.lastQuestionId='none';c.relevantFactIds=['topic_vat'];
+ c.history.push({role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
+   {role:'customer',text:'Какие темы по НДС входят в обучение?'},
+   {role:'seller',text:'На курсе есть тема НДС.',question_id:'none'},
+   {role:'customer',text:'Да, готова оформить участие.'});
+ const values={experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'};
+ const r=planDialogueReply(c,assess(c,values,{intent:'payment',fact_ids:['topic_vat']}));
+ assert.equal(r.question_id,'payment');assert.deepEqual(r.fact_ids,['offer_fit']);
+ c.history.splice(-2,0,{role:'seller',text:DIALOGUE_QUESTIONS.goals,question_id:'goals'});
+ const blocked=planDialogueReply(c,assess(c,values,{intent:'payment',fact_ids:['topic_vat']}));
+ assert.equal(blocked.question_id,'decision');assert.deepEqual(blocked.fact_ids,[]);
+});
 test('graduate: feedback then unknown year then current goal; no re-selling stale discounts',()=>{
  const c=setup();let r=planDialogueReply(c,assess(c));exchange(c,r,'Уже училась у вас.');
  r=planDialogueReply(c,assess(c,{experience:'graduate'}));assert.equal(r.question_id,'feedback');
