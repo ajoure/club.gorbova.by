@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {readCourseBindings,COURSE_PRODUCT_IDS,safeSubtitleUrl} from './course-provider-import.mjs';
 import {providerRevision} from './subtitles.mjs';
 import {parsePublicPlayer} from './reviewed-captions.mjs';
-import {audioPlaylist,parseAudioPlaylist,gapRange} from './gap-media.mjs';
+import {audioPlaylist,parseAudioPlaylist,longAudioRanges} from './gap-media.mjs';
 import {audioWindows} from './transcript.mjs';
 import {pcmParts,STT_MODEL,sha} from './course-stt.mjs';
 const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
@@ -45,9 +45,9 @@ export async function openLongAudio(publicIo,media,source){
  const playlist=parseAudioPlaylist(await publicIo.caption(url),url,source.identity.duration_ms);
  const init=await media.range(playlist.init.url,playlist.init.offset,playlist.init.bytes);
  return async window=>{
-  const range=gapRange(playlist,window,{decoderTail:true});
-  const fragment=await media.range(range.url,range.offset,range.bytes);
-  const pcm=await media.decode(Buffer.concat([init,fragment]),range.trim_ms,window.end_ms-window.start_ms);
+  const capture=longAudioRanges(playlist,window),fragments=[init];
+  for(const range of capture.ranges)fragments.push(await media.range(range.url,range.offset,range.bytes));
+  const pcm=await media.decode(Buffer.concat(fragments),capture.trim_ms,window.end_ms-window.start_ms);
   const parts=pcmParts(pcm,window.end_ms-window.start_ms).parts;
   if(parts.length!==1)throw Error('long_window_invalid');
   const wav=parts[0].wav;

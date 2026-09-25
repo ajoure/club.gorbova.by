@@ -80,6 +80,25 @@ export function gapRange(playlist,gap,{decoderTail=false}={}){
   return {url:first.url,offset:first.offset,bytes,trim_ms:gap.start_ms-first.start_ms};
 }
 
+/** Ordered fMP4 files sharing the playlist's one init; old gapRange stays strict. */
+export function longAudioRanges(playlist,window){
+  const selected=playlist.segments.filter(s=>s.end_ms>window.start_ms&&s.start_ms<window.end_ms);
+  if(!selected.length||selected[0].start_ms>window.start_ms||selected.at(-1).end_ms<window.end_ms)throw Error('hls_gap_uncovered');
+  const next=playlist.segments[playlist.segments.indexOf(selected.at(-1))+1];if(next)selected.push(next);
+  const ranges=[],seen=new Set();let previous,total=0;
+  for(const s of selected){
+    if(previous&&previous.end_ms!==s.start_ms)throw Error('hls_timeline_gap');
+    let current=ranges.at(-1);
+    if(!current||current.url!==s.url){
+      if(previous&&(s.offset!==0||seen.has(s.url)))throw Error('hls_file_transition_invalid');
+      current={url:s.url,offset:s.offset,bytes:0};ranges.push(current);seen.add(s.url);
+    }else if(s.offset!==current.offset+current.bytes)throw Error('hls_range_not_contiguous');
+    current.bytes+=s.bytes;total+=s.bytes;previous=s;
+  }
+  if(total>10000000||ranges.length>16)throw Error('hls_gap_size_limit');
+  return {ranges,trim_ms:window.start_ms-selected[0].start_ms};
+}
+
 export function createGapMedia(fetchImpl=fetch){
   return {
     async range(url,offset,bytes){
