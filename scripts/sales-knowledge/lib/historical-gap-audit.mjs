@@ -9,6 +9,20 @@ const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArra
 const same=(a,b)=>canonical(a)===canonical(b);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 
+/** Exact digital zero at 16 kHz mono PCM. A quiet signal is not silence evidence. */
+export function isDigitalSilenceWav(wav){
+  if(!Buffer.isBuffer(wav)||wav.length<=44||wav.toString('ascii',0,4)!=='RIFF'
+    ||wav.toString('ascii',8,12)!=='WAVE'||wav.toString('ascii',12,16)!=='fmt '
+    ||wav.toString('ascii',36,40)!=='data'||wav.readUInt32LE(16)!==16
+    ||wav.readUInt16LE(20)!==1||wav.readUInt16LE(22)!==1
+    ||wav.readUInt32LE(24)!==16000||wav.readUInt32LE(28)!==32000
+    ||wav.readUInt16LE(32)!==2||wav.readUInt16LE(34)!==16
+    ||wav.readUInt32LE(40)!==wav.length-44||wav.readUInt32LE(4)!==wav.length-8)
+    return false;
+  for(let i=44;i<wav.length;i++)if(wav[i]!==0)return false;
+  return true;
+}
+
 /** Historical live events have no lesson binding. The source identity is checked
  * against the existing event importer, then against the public player and VTT. */
 export async function inspectHistoricalGap(io,publicIo,actor,eventId){
@@ -133,9 +147,20 @@ export async function executeHistoricalGapAudit(io,publicIo,actor,approved,captu
     ||a.manifest_sha256!==manifestHash||a.expected_parts!==3
     ||a.classification!=='paid_private'||a.quality_status!=='unreviewed')
     throw Error('historical_audit_readback_failed');
-  let calls=0;
+  let calls=0;const silenceParts=[];
   for(const p of captured.parts){
     await fresh();
+    if(p.part_index<2&&isDigitalSilenceWav(p.wav)){
+      const params={_audit_id:a.id,_actor:actor,_part_index:p.part_index,
+        _manifest_sha256:manifestHash,_audio_sha256:p.audio_sha256,_pcm_bytes:p.wav.length-44};
+      const accepted=await io.rpc('course_historical_gap_accept_digital_silence',params);
+      const replay=await io.rpc('course_historical_gap_accept_digital_silence',params);
+      if(accepted?.status!=='evidence'||replay?.status!=='evidence'||replay.reused!==true)
+        throw Error('historical_silence_readback_failed');
+      silenceParts.push(p.part_index);
+      await onProgress({audit_id:a.id,stt_calls:calls,silence_parts:silenceParts});
+      continue;
+    }
     const claim=await io.rpc('course_gap_claim',{_audit_id:a.id,_part_index:p.part_index,
       _audio_sha256:p.audio_sha256,_manifest_sha256:manifestHash});
     if(claim.action==='cached')continue;
@@ -165,6 +190,12 @@ export async function executeHistoricalGapAudit(io,publicIo,actor,approved,captu
   }
   await fresh();
   const saved=await io.rows('course_caption_gap_parts','*',{audit_id:`eq.${a.id}`,order:'part_index.asc'});
+  const proofs=await io.rows('course_historical_gap_silence_proofs','part_index,audio_sha256,pcm_bytes,verified_by',
+    {audit_id:`eq.${a.id}`,order:'part_index.asc'});
+  if(proofs.length!==silenceParts.length||proofs.some((x,i)=>x.part_index!==silenceParts[i]
+    ||x.audio_sha256!==captured.parts[x.part_index].audio_sha256
+    ||x.pcm_bytes!==captured.parts[x.part_index].wav.length-44||x.verified_by!==actor))
+    throw Error('historical_silence_readback_failed');
   if(saved.length!==3||saved.some((p,i)=>!same(parts[i],Object.fromEntries(
     Object.keys(parts[i]).map(k=>[k,p[k]])))||p.status!=='evidence'||p.attempts!==1
     ||typeof p.asr_text!=='string'||p.text_sha256!==sha(p.asr_text)))
@@ -173,6 +204,7 @@ export async function executeHistoricalGapAudit(io,publicIo,actor,approved,captu
   if(final.length!==1||final[0].status!=='evidence'||final[0].quality_status!=='unreviewed')
     throw Error('historical_status_readback_failed');
   return {audit_id:a.id,source_id:s.id,stt_calls:calls,cached:calls===0,
+    digital_silence_parts:silenceParts,
     parts:saved.map(p=>({part_index:p.part_index,start_ms:p.start_ms,end_ms:p.end_ms,
       chars:[...p.asr_text].length,text_sha256:p.text_sha256})),
     quality_status:'unreviewed',classification:'paid_private',lesson_bindings_created:0,

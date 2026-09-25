@@ -44,6 +44,14 @@ export async function prepareHistoricalGapPublication(io,publicIo,actor,original
   if(parts.length!==3||parts.some((p,i)=>!same(partMeta(p),partMeta(original.parts[i]))
     ||p.status!=='evidence'||p.attempts!==1||typeof p.asr_text!=='string'
     ||p.text_sha256!==sha(p.asr_text)))throw Error('historical_review_parts_changed');
+  const silence=await io.rows('course_historical_gap_silence_proofs','*',
+    {audit_id:`eq.${a.id}`,order:'part_index.asc'});
+  if(silence.some(proof=>!Number.isInteger(proof.part_index)||proof.part_index<0
+    ||proof.part_index>1||proof.verified_by!==actor
+    ||proof.audio_sha256!==parts[proof.part_index]?.audio_sha256
+    ||review.decisions[proof.part_index]?.kind!=='non_speech'
+    ||review.decisions[proof.part_index]?.text!==null))
+    throw Error('historical_silence_review_required');
   const assembled=assembleReviewedGaps({raw_vtt:a.raw_vtt,duration_ms:s.duration_ms,
     source:{...original,duration_ms:s.duration_ms,source_scope:'historical_live_event'},parts,
     decisions:review.decisions,reviewer_id:actor});

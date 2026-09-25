@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {COURSE_PRODUCT_IDS} from './lib/course-provider-import.mjs';
-import {prepareHistoricalGapAudit,executeHistoricalGapAudit} from './lib/historical-gap-audit.mjs';
-import {sha} from './lib/course-stt.mjs';
+import {prepareHistoricalGapAudit,executeHistoricalGapAudit,isDigitalSilenceWav} from './lib/historical-gap-audit.mjs';
+import {sha,pcmParts} from './lib/course-stt.mjs';
 
 const owner='00000000-0000-4000-8000-000000000001';
 const eventId='00000000-0000-4000-8000-000000000002';
@@ -17,8 +17,8 @@ const playlist='#EXTM3U\n#EXT-X-MAP:URI="audio.m4a",BYTERANGE="4@0"\n'
   +'\n#EXT-X-ENDLIST';
 
 function fixture(){
-  const state={vtt,version:1,calls:0,writes:0};
-  const sources=[],bindings=[],audits=[],parts=[];
+  const state={vtt,version:1,calls:0,writes:0,silentOpening:false,heldFirst:false};
+  const sources=[],bindings=[],audits=[],parts=[],proofs=[];
   const event={id:eventId,title:'Конференция 5',product_id:COURSE_PRODUCT_IDS[1],
     scheduled_at:'2026-09-13T07:20:00Z',live_started_at:'2026-09-13T07:26:00Z',
     webinar_completed_at:'2026-09-13T12:18:00Z',kinescope_live_event_id:liveId,
@@ -35,6 +35,7 @@ function fixture(){
       if(table==='course_transcription_bindings'||table==='course_transcripts'||table==='course_transcription_jobs')return [];
       if(table==='course_caption_gap_audits')return audits;
       if(table==='course_caption_gap_parts')return parts;
+      if(table==='course_historical_gap_silence_proofs')return proofs;
       throw Error(`unexpected_table_${table}`);
     },
     async liveVideos(){return {data:[{id:videoId}]};},
@@ -59,11 +60,27 @@ function fixture(){
         if(!reused){audits.push({id:auditId,source_id:args._source_id,
           source_revision:args._source_revision,caption_sha256:args._caption_sha256,
           raw_vtt:args._raw_vtt,manifest_sha256:args._manifest_sha256,
-          expected_parts:3,classification:'paid_private',quality_status:'unreviewed',status:'pending'});
-          parts.push(...args._parts.map(p=>({...p,status:'pending',attempts:0})));}
+          expected_parts:3,classification:'paid_private',quality_status:'unreviewed',
+          status:state.heldFirst?'review_required':'pending'});
+          parts.push(...args._parts.map((p,i)=>({...p,
+            status:state.heldFirst&&i===0?'uncertain':'pending',
+            attempts:state.heldFirst&&i===0?1:0,
+            asr_text:state.heldFirst&&i===0?'·········':null,
+            text_sha256:state.heldFirst&&i===0?sha('·········'):null,
+            error_code:state.heldFirst&&i===0?'asr_outcome_uncertain':null})));}
         return {audit_id:auditId,reused};
       }
       const p=parts[args._part_index];
+      if(name==='course_historical_gap_accept_digital_silence'){
+        if(proofs.some(x=>x.part_index===args._part_index))return {status:'evidence',reused:true};
+        proofs.push({part_index:args._part_index,audio_sha256:args._audio_sha256,
+          pcm_bytes:args._pcm_bytes,verified_by:args._actor});
+        const wasPending=p.status==='pending';
+        p.status='evidence';
+        if(args._part_index===0)audits[0].status='pending';
+        if(wasPending){p.attempts=1;p.asr_text='[цифровая тишина]';p.text_sha256=sha(p.asr_text);}
+        return {status:'evidence',reused:false};
+      }
       if(name==='course_gap_claim'){
         if(p.status==='evidence')return {action:'cached'};
         if(p.status!=='pending')return {action:'hold'};
@@ -85,10 +102,23 @@ function fixture(){
     sources:{hls:{src:'https://kinescopecdn.net/master.m3u8'}}}]})};`,
     caption:async url=>url.endsWith('sub.vtt')?state.vtt:url.endsWith('master.m3u8')?master:playlist};
   const media={range:async(_url,_offset,bytes)=>Buffer.alloc(bytes,1),
-    decode:async(_bytes,_trim,duration)=>Buffer.alloc(duration*32,1)};
+    decode:async(_bytes,_trim,duration)=>{
+      const pcm=Buffer.alloc(duration*32,1);
+      if(state.silentOpening)pcm.fill(0,0,180000*32);
+      return pcm;
+    }};
   const transcribe=async()=>{state.calls++;return 'Проверяемая реплика из аудио.';};
-  return {io,publicIo,media,state,sources,bindings,audits,parts,transcribe};
+  return {io,publicIo,media,state,sources,bindings,audits,parts,proofs,transcribe};
 }
+
+test('digital-silence verifier rejects near-silence and malformed WAV',()=>{
+  const wav=pcmParts(Buffer.alloc(90000*32),90000).parts[0].wav;
+  assert.equal(isDigitalSilenceWav(wav),true);
+  const almost=Buffer.from(wav);almost[44]=1;
+  assert.equal(isDigitalSilenceWav(almost),false);
+  const malformed=Buffer.from(wav);malformed.writeUInt32LE(0,24);
+  assert.equal(isDigitalSilenceWav(malformed),false);
+});
 
 test('historical dry-run captures exactly three opening parts without writes or STT',async()=>{
   const f=fixture(),captured=await prepareHistoricalGapAudit(f.io,f.publicIo,owner,eventId,f.media);
@@ -106,6 +136,27 @@ test('historical evidence is private and replay makes zero additional paid calls
   assert.equal(f.audits[0].raw_vtt,vtt);
   const replay=await executeHistoricalGapAudit(f.io,f.publicIo,owner,captured.manifest,captured,f.transcribe);
   assert.equal(replay.stt_calls,0);assert.equal(f.state.calls,3);
+});
+
+test('verified zero PCM settles held first part and skips paid calls for both silent parts',async()=>{
+  const f=fixture();f.state.silentOpening=true;f.state.heldFirst=true;
+  const captured=await prepareHistoricalGapAudit(f.io,f.publicIo,owner,eventId,f.media);
+  assert.equal(isDigitalSilenceWav(captured.parts[0].wav),true);
+  const first=await executeHistoricalGapAudit(f.io,f.publicIo,owner,captured.manifest,captured,f.transcribe);
+  assert.equal(first.stt_calls,1);assert.deepEqual(first.digital_silence_parts,[0,1]);
+  assert.equal(f.proofs.length,2);assert.equal(f.state.calls,1);
+  assert.equal(f.parts[0].asr_text,'·········');
+  const replay=await executeHistoricalGapAudit(f.io,f.publicIo,owner,captured.manifest,captured,f.transcribe);
+  assert.equal(replay.stt_calls,0);assert.equal(f.state.calls,1);
+});
+
+test('fresh digital-zero opening avoids the first two paid calls',async()=>{
+  const f=fixture();f.state.silentOpening=true;
+  const captured=await prepareHistoricalGapAudit(f.io,f.publicIo,owner,eventId,f.media);
+  const result=await executeHistoricalGapAudit(f.io,f.publicIo,owner,captured.manifest,captured,f.transcribe);
+  assert.deepEqual(result.digital_silence_parts,[0,1]);
+  assert.equal(result.stt_calls,1);assert.equal(f.state.calls,1);
+  assert.equal(f.parts[0].asr_text,'[цифровая тишина]');
 });
 
 test('source drift and uncertain STT stop without silent retry',async()=>{
