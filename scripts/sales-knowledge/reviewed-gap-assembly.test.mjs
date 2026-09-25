@@ -22,6 +22,7 @@ test('reviewed assembly keeps caption order, inserts only reviewed speech and re
   assert.equal(result.text,'Начало занятия по бухгалтерии\nРучная правка речи\nЗавершение занятия по бухгалтерии');
   assert.equal(result.metadata.reviewed_gap_parts,2);
   assert.equal(result.metadata.reviewed_speech_parts,1);
+  assert.deepEqual(result.metadata.quality_flags,['long_gap']);
   assert.equal(result.metadata.subtitle_sha256,sha(raw));
   assert.equal(result.metadata.review_decisions_sha256,sha(JSON.stringify(decisions)));
 });

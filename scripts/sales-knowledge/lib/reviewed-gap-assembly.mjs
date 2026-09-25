@@ -62,7 +62,7 @@ export function assembleReviewedGaps({raw_vtt,duration_ms,source,parts,decisions
     .sort((a,b)=>a.start_ms-b.start_ms||a.end_ms-b.end_ms);
   const text=merged.map(x=>x.text).join('\n');
   return {text,content_sha256:sha(text),char_count:[...text].length,
-    metadata:{...base.metadata,quality_flags:[],
+    metadata:{...base.metadata,gap_review_status:'reviewed',
       reviewed_gap_parts:parts.length,reviewed_speech_parts:inserts.length,
       review_decisions_sha256:sha(JSON.stringify(decisions)),reviewer_id}};
 }
