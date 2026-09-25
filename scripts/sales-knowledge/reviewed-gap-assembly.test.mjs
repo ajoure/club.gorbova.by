@@ -35,3 +35,26 @@ test('missing review, changed evidence and incomplete gap coverage fail closed',
   assert.throws(()=>assembleReviewedGaps({...input,parts:[parts[0],{...parts[1],start_ms:110000}]}),/review_gap_uncovered/);
   assert.throws(()=>assembleReviewedGaps({...input,decisions:[{...decisions[0],kind:'speech',text:'hello'},decisions[1]]}),/review_speech_invalid/);
 });
+
+test('historical leading gap accepts three reviewed parts only in historical scope',()=>{
+  const historicalRaw='WEBVTT\n\n00:03:03.360 --> 01:00:00.000\nПродолжение конференции после отсутствующего начала.\n';
+  const durationMs=3600000;
+  const historicalSource={...captionGaps(historicalRaw,durationMs,{historicalLeadingGap:true}),
+    duration_ms:durationMs,source_scope:'historical_live_event'};
+  const boundaries=[[0,90000],[90000,180000],[180000,183360]];
+  const evidence=boundaries.map(([start_ms,end_ms],part_index)=>({part_index,gap_index:0,
+    start_ms,end_ms,attempts:1,status:'evidence',audio_sha256:String(part_index+1).repeat(64),
+    asr_text:'Начало конференции',text_sha256:sha('Начало конференции')}));
+  const review=evidence.map(p=>({part_index:p.part_index,kind:'speech',text:'Проверенная речь в начале',
+    evidence_sha256:p.text_sha256,audio_sha256:p.audio_sha256,reviewer_id:'owner',
+    note:'Сверено с исходным аудио'}));
+  assert.throws(()=>captionGaps(historicalRaw,durationMs),/other_caption_quality_flags/);
+  const result=assembleReviewedGaps({raw_vtt:historicalRaw,duration_ms:durationMs,
+    source:historicalSource,parts:evidence,decisions:review,reviewer_id:'owner'});
+  assert.equal(result.metadata.reviewed_gap_parts,3);
+  assert.equal(result.metadata.reviewed_speech_parts,3);
+  assert.match(result.text,/Проверенная речь в начале/);
+  assert.throws(()=>assembleReviewedGaps({raw_vtt:historicalRaw,duration_ms:durationMs,
+    source:{...historicalSource,source_scope:'course'},parts:evidence,decisions:review,reviewer_id:'owner'}),
+  /other_caption_quality_flags/);
+});
