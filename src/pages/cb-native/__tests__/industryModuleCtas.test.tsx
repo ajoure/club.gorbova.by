@@ -13,8 +13,9 @@ describe("CbNative industry module cards", () => {
       "[data-cb-native-module-included-cta]",
     );
 
-    expect(priceCtas).toHaveLength(9);
+    expect(priceCtas).toHaveLength(8);
     expect(includedCtas).toHaveLength(2);
+    expect(container.textContent).not.toContain("Посредничество");
 
     fireEvent.click(priceCtas[0]);
     fireEvent.click(includedCtas[0]);

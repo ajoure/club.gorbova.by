@@ -14,7 +14,7 @@ interface Industry {
 const industries: Industry[] = [
   { name: "Оптовая торговля", icon: ShoppingCart, included: true },
   { name: "Розничная торговля", icon: Store, price: 500 },
-  { name: "Посредничество", icon: Building2, price: 500 },
+  { name: "Посредничество", icon: Building2, comingSoon: true },
   { name: "Маркетплейсы", icon: ShoppingCart, price: 800 },
   { name: "Общественное питание", icon: Utensils, price: 500 },
   { name: "ПВТ", icon: Code, price: 500 },
