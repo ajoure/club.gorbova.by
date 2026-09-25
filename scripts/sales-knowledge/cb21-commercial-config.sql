@@ -115,7 +115,7 @@ BEGIN
 END $$;
 DO $$
 DECLARE p record; a public.tariffs; b public.tariffs; o public.tariff_offers; op record; r public.access_rules;
- cfg jsonb:=(SELECT v FROM _cb21_options); j jsonb; dest uuid; ar record; src_addon public.offer_addons; aa public.offer_addons; offer_price numeric; service_period_to date;
+ cfg jsonb:=(SELECT v FROM _cb21_options); j jsonb; dest uuid; flow_id uuid; ar record; src_addon public.offer_addons; aa public.offer_addons; offer_price numeric; service_period_to date;
 BEGIN
  IF coalesce((cfg->>'apply')::boolean,false) THEN PERFORM 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' FOR UPDATE; END IF;
  IF NOT EXISTS(SELECT 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' AND mode='off') THEN RAISE EXCEPTION 'campaign_must_be_off'; END IF;
@@ -160,17 +160,22 @@ BEGIN
   SELECT * INTO STRICT b FROM public.tariffs WHERE id=p.target;
   IF a.access_days<>p.days OR b.access_days<>p.days OR NOT a.is_active OR NOT b.is_active THEN RAISE EXCEPTION 'tariff_access_changed'; END IF;
   IF p.role IN('accountant','chief','business') AND ((b.meta->'card_config'->>'price_display')::numeric<>p.price OR b.price_monthly<>p.price) THEN RAISE EXCEPTION 'cb21_price_changed'; END IF;
-  IF cfg->>'course_start_date' IS NOT NULL AND cfg->>'course_end_date' IS NOT NULL AND (b.meta->'course_access'->>'flow_id' IS NULL OR NOT EXISTS(
-    SELECT 1 FROM public.flows f
-    WHERE f.id=(b.meta->'course_access'->>'flow_id')::uuid
-      AND f.product_id=b.product_id
-      AND f.start_date=(cfg->>'course_start_date')::date
-      AND f.end_date=(cfg->>'course_end_date')::date
-  )) THEN RAISE EXCEPTION 'course_flow_window_changed'; END IF;
+  flow_id:=NULL;
+  IF cfg->>'course_start_date' IS NOT NULL AND cfg->>'course_end_date' IS NOT NULL THEN
+   SELECT f.id INTO flow_id FROM public.flows f
+   WHERE f.product_id=b.product_id
+     AND f.start_date=(cfg->>'course_start_date')::date
+     AND f.end_date=(cfg->>'course_end_date')::date
+     AND (nullif(b.meta->'course_access'->>'flow_id','') IS NULL OR f.id=(b.meta->'course_access'->>'flow_id')::uuid);
+   IF flow_id IS NULL OR (SELECT count(*) FROM public.flows f WHERE f.product_id=b.product_id
+      AND f.start_date=(cfg->>'course_start_date')::date AND f.end_date=(cfg->>'course_end_date')::date
+      AND (nullif(b.meta->'course_access'->>'flow_id','') IS NULL OR f.id=(b.meta->'course_access'->>'flow_id')::uuid))<>1
+   THEN RAISE EXCEPTION 'course_flow_window_changed'; END IF;
+  END IF;
   -- Preserve identifiers/site wiring/current price. Copy behavior and presentation from20.
   j:=to_jsonb(a)||jsonb_build_object('id',b.id,'product_id',b.product_id,'code',b.code,'public_id',b.public_id,'created_at',b.created_at,'updated_at',b.updated_at,
    'price_monthly',b.price_monthly,'original_price',b.original_price,'getcourse_offer_id',b.getcourse_offer_id,'getcourse_offer_code',b.getcourse_offer_code,
-   'meta',(coalesce(b.meta,'{}')-'course_access')||jsonb_build_object('course_access',jsonb_build_object('kind','course_start_duration_days','flow_id',b.meta->'course_access'->>'flow_id','start_date',cfg->>'course_start_date','days',p.days,'timezone','Europe/Minsk'),'card_config',coalesce(a.meta->'card_config','{}')||jsonb_build_object('price_display',p.price,'old_price',p.old_price)));
+   'meta',(coalesce(b.meta,'{}')-'course_access')||jsonb_build_object('course_access',jsonb_build_object('kind','course_start_duration_days','flow_id',flow_id,'start_date',cfg->>'course_start_date','days',p.days,'timezone','Europe/Minsk'),'card_config',coalesce(a.meta->'card_config','{}')||jsonb_build_object('price_display',p.price,'old_price',p.old_price)));
   -- Do not advertise a club entitlement absent from BOTH source and target rules.
   IF p.role='accountant' THEN j:=jsonb_set(j,'{description}',to_jsonb(replace(coalesce(a.description,''),'Доступ к клубу «Буква закона»'||chr(10),''))); END IF;
   INSERT INTO _cb21_tariffs SELECT * FROM jsonb_populate_record(null::public.tariffs,j);
