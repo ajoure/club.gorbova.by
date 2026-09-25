@@ -45,7 +45,7 @@ export async function openLongAudio(publicIo,media,source){
  const playlist=parseAudioPlaylist(await publicIo.caption(url),url,source.identity.duration_ms);
  const init=await media.range(playlist.init.url,playlist.init.offset,playlist.init.bytes);
  return async window=>{
-  const range=gapRange(playlist,window);
+  const range=gapRange(playlist,window,{decoderTail:true});
   const fragment=await media.range(range.url,range.offset,range.bytes);
   const pcm=await media.decode(Buffer.concat([init,fragment]),range.trim_ms,window.end_ms-window.start_ms);
   const parts=pcmParts(pcm,window.end_ms-window.start_ms).parts;
