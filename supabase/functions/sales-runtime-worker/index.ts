@@ -38,6 +38,14 @@ async function draftReply(
   return candidate;
 }
 Deno.serve(async (request) => {
+  if (request.method === "GET") {
+    // Static deployment probe: no database, model, credentials or customer data.
+    // A live response proves that the preview guard is in the deployed bundle.
+    const response = json({ runtime_revision: "cb21-preview-guard-public-probe-v1" });
+    response.headers.set("Cache-Control", "no-store");
+    response.headers.set("Access-Control-Allow-Methods", "GET");
+    return response;
+  }
   if (request.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405);
   }
