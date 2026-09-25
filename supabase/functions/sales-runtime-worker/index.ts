@@ -1,4 +1,4 @@
-import { database, json, read, rpc } from "../_shared/sales-runtime/db.ts";
+import { cors, database, json, operator, read, rpc } from "../_shared/sales-runtime/db.ts";
 import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
 import { policyInput } from "../_shared/sales-runtime/replies.mjs";
 import {isActivation, hasExplicitTechnicalProblem, planDialogueReply, SEQUENCE_SYSTEM, slotValues, indexedEvidenceHistory, assessmentTrace} from "../_shared/sales-runtime/sequence.mjs";
@@ -38,10 +38,13 @@ async function draftReply(
   return candidate;
 }
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { headers: cors });
+  }
   if (request.method === "GET") {
     // Static deployment probe: no database, model, credentials or customer data.
     // A live response proves that the preview guard is in the deployed bundle.
-    const response = json({ runtime_revision: "cb21-preview-guard-public-probe-v1" });
+    const response = json({ runtime_revision: "cb21-owner-safe-preview-v1" });
     response.headers.set("Cache-Control", "no-store");
     response.headers.set("Access-Control-Allow-Methods", "GET");
     return response;
@@ -52,14 +55,21 @@ Deno.serve(async (request) => {
   const db = database();
   let previewStage:string|undefined;
   try {
-    const secret = request.headers.get("x-sales-runtime-secret") || "";
-    if (
-      !secret ||
-      !await rpc(db, "verify_sales_runtime_cron_secret", {
-        p_candidate: secret,
-      })
-    ) return json({ error: "unauthorized" }, 401);
     const body = await request.json().catch(() => ({}));
+    const secret = request.headers.get("x-sales-runtime-secret") || "";
+    const cronAuthorized = !!secret && await rpc(db, "verify_sales_runtime_cron_secret", {
+        p_candidate: secret,
+      });
+    if (!cronAuthorized) {
+      // The owner's browser can run only the isolated, read-only fixture.
+      // Every operational action still requires the cron secret.
+      if (body.action !== "preview_scenario") return json({ error: "unauthorized" }, 401);
+      const actor = await operator(db, request);
+      if (!actor || !await rpc(db, "has_role_v2", {
+        _user_id: actor.id,
+        _role_code: "super_admin",
+      })) return json({ error: "forbidden" }, 403);
+    }
     // A read-only readiness check does not claim, generate, notify, or send.
     if (body.action === "health") {
       return json({
