@@ -89,7 +89,7 @@ function cueBlocks(raw){
 const cueFingerprint=cues=>hash(JSON.stringify(cues.map(c=>JSON.stringify([c.start,c.end,c.text])).sort()));
 
 /** A review transform, not an automatic relaxation of the strict parser. */
-export function reviewCaption(raw,durationMs,{allowCueOrderReview=false}={}){
+export function normalizeReviewedCaption(raw,durationMs,{allowCueOrderReview=false}={}){
   if(typeof raw!=='string'||raw.length>MAX_BYTES||raw.includes('\0'))throw new Error('review_caption_invalid');
   const cues=cueBlocks(raw),ordered=[...cues].sort((a,b)=>a.start-b.start||a.index-b.index);
   let inversions=0,maxBackstep=0;
@@ -103,10 +103,14 @@ export function reviewCaption(raw,durationMs,{allowCueOrderReview=false}={}){
   const parsed=inspectSubtitles(normalized,durationMs,'ru');
   const rawHash=hash(raw);
   parsed.metadata.subtitle_sha256=rawHash;
-  return {...parsed,provenance:{schema_version:1,revision_basis:'public_caption_snapshot',raw_sha256:rawHash,
+  return {normalized,reviewed:{...parsed,provenance:{schema_version:1,revision_basis:'public_caption_snapshot',raw_sha256:rawHash,
     normalized_sha256:hash(normalized),transform:inversions?'stable_cue_order_v1':'none',cue_count:cues.length,
     inversions,max_backstep_ms:maxBackstep,moved_positions:moved,duplicate_cues:duplicates,
-    original_cue_multiset_sha256:before,normalized_cue_multiset_sha256:after}};
+    original_cue_multiset_sha256:before,normalized_cue_multiset_sha256:after}}};
+}
+
+export function reviewCaption(raw,durationMs,options={}){
+  return normalizeReviewedCaption(raw,durationMs,options).reviewed;
 }
 
 export function captionSnapshotRevision({video_id,duration_ms,raw_sha256}){
