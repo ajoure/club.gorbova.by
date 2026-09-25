@@ -68,7 +68,7 @@ test('full sync dry run, exact fingerprint apply, existing financial terms and i
   const synced=(await db.query('SELECT meta FROM tariffs WHERE id=ANY($1::uuid[]) ORDER BY access_days',[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.meta.course_access);assert.deepEqual(synced.map(x=>[x.kind,x.start_date,x.days,x.timezone]),[['course_start_duration_days','2026-10-23',180,'Europe/Minsk'],['course_start_duration_days','2026-10-23',240,'Europe/Minsk'],['course_start_duration_days','2026-10-23',300,'Europe/Minsk']]);
   const hiddenFlows=(await db.query('SELECT meta FROM tariffs WHERE id=ANY($1::uuid[])',[pairs.slice(3).map(p=>p.target)])).rows.map(r=>r.meta.course_access);assert.equal(hiddenFlows.length,2);assert.ok(hiddenFlows.every(x=>x.flow_id===flow21&&x.start_date==='2026-10-23'&&x.days===300));
   const documentPeriods=(await db.query("SELECT meta->'document_defaults' AS defaults FROM tariff_offers WHERE tariff_id=ANY($1::uuid[]) ORDER BY tariff_id,sort_order",[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.defaults);assert.deepEqual([...new Set(documentPeriods.map(x=>`${x.service_period_from}:${x.service_period_to}`))].sort(),['2026-10-23:2027-04-20','2026-10-23:2027-06-19','2026-10-23:2027-08-18']);
-  const offers=(await db.query("SELECT amount,meta,installment_count FROM tariff_offers WHERE tariff_id=$1",[pairs[3].target])).rows;assert.equal(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').length,4);assert.ok(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').every(o=>Number(o.amount)===1495));assert.equal(offers.filter(o=>o.meta.sales_legacy_only&&Number(o.amount)===1325).length,4);
+  const offers=(await db.query("SELECT amount,meta,installment_count,is_active FROM tariff_offers WHERE tariff_id=$1",[pairs[3].target])).rows;assert.equal(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').length,4);assert.ok(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').every(o=>o.is_active&&Number(o.amount)===1495));assert.equal(offers.filter(o=>o.meta.sales_legacy_only&&!o.is_active&&Number(o.amount)===1325).length,4);assert.equal(offers.filter(o=>o.is_active).length,4);
   assert.equal((await db.query('SELECT count(*)::int n FROM offer_addons')).rows[0].n,108); // 36 source + 72 target.
   const paidAddons=(await db.query('SELECT ad.parent_offer_id,ad.pricing_mode,ad.discount_percent,ad.is_required,ad.is_default_selected,ad.access_delivery_mode,ad.access_opens_at FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=ANY($1::uuid[])',[pairs.filter(p=>['business','alumni'].includes(p.role)).map(p=>p.target)])).rows;
   assert.equal(paidAddons.length,72);
@@ -82,6 +82,15 @@ test('wrong reviewed fingerprint or missing owner dates cannot apply',async()=>{
   const before=await snapshot(db);await assert.rejects(run(db,{...options,apply:true,expected_fingerprint:'wrong'}),/dry_run_fingerprint_changed/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
   const dry=await run(db);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);
   await assert.rejects(run(db,{apply:true,expected_fingerprint:plan.fingerprint}),/course_dates_required/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
+ }finally{await db.close();}
+});
+
+test('an administrator-edited legacy graduate price stops the sync before writes',async()=>{
+ const {db}=await fixture();try{
+  await db.query("UPDATE tariff_offers SET amount=1400 WHERE id='4d01edc1-6189-4017-ba43-922e7e9479ac'");
+  await assert.rejects(run(db,options),/alumni_legacy_offer_changed/);
+  await db.exec('ROLLBACK');
+  assert.equal((await db.query('SELECT count(*)::int n FROM audit_logs')).rows[0].n,0);
  }finally{await db.close();}
 });
 

@@ -263,10 +263,13 @@ BEGIN
    );
    INSERT INTO _cb21_addons SELECT * FROM jsonb_populate_record(null::public.offer_addons,j);
  END LOOP;
+ IF (SELECT count(*) FROM public.tariff_offers WHERE id IN('4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170')
+     AND tariff_id='dbdb839e-84a0-4c00-8b8c-e60e4c558d94' AND amount=1325)<>4
+ THEN RAISE EXCEPTION 'alumni_legacy_offer_changed'; END IF;
  FOR o IN SELECT * FROM public.tariff_offers WHERE id IN('4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170') LOOP
-  -- Keep all historical offers resolvable for existing links/obligations. Only
-  -- remove them from new-sale selection; never rewrite their amounts/settings.
-  INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,to_jsonb(o)||jsonb_build_object('meta',coalesce(o.meta,'{}')||'{"sales_legacy_only":true}'::jsonb));
+  -- Historical orders remain intact. Deactivate the old 1325 BYN checkout
+  -- buttons so a new graduate cannot buy beside the approved 1495 BYN offer.
+  INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,to_jsonb(o)||jsonb_build_object('is_active',false,'meta',coalesce(o.meta,'{}')||'{"sales_legacy_only":true}'::jsonb));
  END LOOP;
  IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24
     OR (SELECT count(*) FROM _cb21_rules)<>(
