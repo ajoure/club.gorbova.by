@@ -133,12 +133,12 @@ export function createGapMedia(fetchImpl=fetch){
   };
 }
 
-export async function captureGaps(publicIo,media,hlsUrl,gaps,duration){
+export async function captureGaps(publicIo,media,hlsUrl,gaps,duration,rangeOptions={}){
   const playlistUrl=audioPlaylist(await publicIo.caption(hlsUrl),hlsUrl);
   const playlist=parseAudioPlaylist(await publicIo.caption(playlistUrl),playlistUrl,duration);
   const init=await media.range(playlist.init.url,playlist.init.offset,playlist.init.bytes),parts=[],captures=[];
   for(const gap of gaps){
-    const range=gapRange(playlist,gap),fragment=await media.range(range.url,range.offset,range.bytes),bytes=Buffer.concat([init,fragment]);
+    const range=gapRange(playlist,gap,rangeOptions),fragment=await media.range(range.url,range.offset,range.bytes),bytes=Buffer.concat([init,fragment]);
     const pcm=await media.decode(bytes,range.trim_ms,gap.end_ms-gap.start_ms);
     if(Math.abs(pcm.length/32-(gap.end_ms-gap.start_ms))>1)throw Error('gap_decoded_duration_mismatch');
     const windows=pcmParts(pcm,gap.end_ms-gap.start_ms);

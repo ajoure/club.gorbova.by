@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {readCourseBindings,COURSE_PRODUCT_IDS,safeSubtitleUrl} from './course-provider-import.mjs';
-import {parsePublicPlayer} from './reviewed-captions.mjs';
+import {parsePublicPlayer,normalizeReviewedCaption} from './reviewed-captions.mjs';
 import {providerRevision} from './subtitles.mjs';
 import {STT_MODEL,sha} from './course-stt.mjs';
 import {captionGaps,captureGaps} from './gap-media.mjs';
@@ -8,11 +8,17 @@ const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArra
 const same=(a,b)=>canonical(a)===canonical(b);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 
-export async function inspectGapSource(io,publicIo,actor,alias){
+export async function inspectGapSource(io,publicIo,actor,alias,selection){
   if(!uuid(actor)||!/^[-a-zA-Z0-9]+$/.test(alias||'')||await io.rpc('has_role_v2',{_user_id:actor,_role_code:'super_admin'})!==true)throw Error('owner_required');
   const snapshot=await readCourseBindings(io);
-  const bindings=snapshot.bindings.filter(b=>b.alias===alias).sort((a,b)=>a.block_id.localeCompare(b.block_id));
-  if(!bindings.length||bindings.some(b=>b.lesson_active!==true||b.module_active!==true))throw Error('active_course_binding_required');
+  if(selection!==undefined&&(!Array.isArray(selection.block_ids)||!selection.block_ids.length
+    ||selection.block_ids.some(x=>!uuid(x))||new Set(selection.block_ids).size!==selection.block_ids.length
+    ||selection.allow_closed!==true||typeof selection.allow_cue_order_review!=='boolean'
+    ||Object.keys(selection).some(k=>!['block_ids','allow_closed','allow_cue_order_review'].includes(k))))throw Error('reviewed_selection_invalid');
+  const bindings=snapshot.bindings.filter(b=>b.alias===alias&&(!selection||selection.block_ids.includes(b.block_id)))
+    .sort((a,b)=>a.block_id.localeCompare(b.block_id));
+  if(selection&&bindings.length!==selection.block_ids.length)throw Error('reviewed_selection_invalid');
+  if(!bindings.length||!selection&&bindings.some(b=>b.lesson_active!==true||b.module_active!==true))throw Error('active_course_binding_required');
   const integrations=await io.rows('integration_instances','id,config',{provider:'eq.kinescope',status:'eq.connected'});
   if(integrations.length!==1||typeof integrations[0].config?.api_token!=='string')throw Error('kinescope_connection_ambiguous');
   const response=await io.provider('/videos/'+alias,integrations[0].config.api_token),video=response?.data??response;
@@ -22,15 +28,20 @@ export async function inspectGapSource(io,publicIo,actor,alias){
   safeSubtitleUrl(audio.download_link); // Validate identity metadata; only sparse public HLS is fetched.
   const player=parsePublicPlayer(await publicIo.page(alias),{includeHls:true});
   if(player.video_id!==video.id||Math.abs(player.duration_ms-duration)>1)throw Error('public_provider_mismatch');
-  const raw=await publicIo.caption(player.subtitle_url),caption=captionGaps(raw,duration);
+  const raw=await publicIo.caption(player.subtitle_url);
+  const reviewed=selection?normalizeReviewedCaption(raw,duration,{allowCueOrderReview:selection.allow_cue_order_review}):null;
+  const caption=captionGaps(reviewed?.normalized??raw,duration);
+  if(reviewed){caption.caption_sha256=sha(raw);caption.caption_provenance={...reviewed.reviewed.provenance,revision_basis:'provider_api'};}
+
   return {identity:{alias,video_id:video.id,source_revision:revision,duration_ms:duration,
-    audio_track_id:audio.id,audio_bytes:audio.file_size,bindings,...caption},raw,hlsUrl:player.hls_url};
+    audio_track_id:audio.id,audio_bytes:audio.file_size,bindings,...caption,
+    ...(selection?{reviewed_selection:selection}:{})},raw,hlsUrl:player.hls_url};
 }
 
-export async function prepareGapAudit(io,publicIo,actor,alias,media){
-  const initial=await inspectGapSource(io,publicIo,actor,alias);
-  const capture=await captureGaps(publicIo,media,initial.hlsUrl,initial.identity.gaps,initial.identity.duration_ms);
-  const final=await inspectGapSource(io,publicIo,actor,alias);
+export async function prepareGapAudit(io,publicIo,actor,alias,media,selection){
+  const initial=await inspectGapSource(io,publicIo,actor,alias,selection);
+  const capture=await captureGaps(publicIo,media,initial.hlsUrl,initial.identity.gaps,initial.identity.duration_ms,{decoderTail:!!selection});
+  const final=await inspectGapSource(io,publicIo,actor,alias,selection);
   if(!same(initial.identity,final.identity)||initial.raw!==final.raw)throw Error('gap_source_changed');
   const manifest={schema_version:1,mode:'caption_gap_dry_run',model:STT_MODEL,product_ids:COURSE_PRODUCT_IDS,
     source:initial.identity,captures:capture.captures,playlist_duration_ms:capture.playlist_duration_ms,
@@ -57,7 +68,7 @@ export async function executeGapAudit(io,publicIo,actor,approved,captured,transc
       ||windows.some((p,i)=>i>0&&p.start_ms!==windows[i-1].end_ms))throw Error('gap_coverage_mismatch');
   }
   const fresh=async()=>{
-    const current=await inspectGapSource(io,publicIo,actor,source.alias);
+    const current=await inspectGapSource(io,publicIo,actor,source.alias,source.reviewed_selection);
     if(!same(current.identity,source)||current.raw!==captured.raw)throw Error('gap_source_changed');
   };
   await fresh();
