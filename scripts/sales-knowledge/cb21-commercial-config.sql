@@ -142,7 +142,9 @@ BEGIN
    WHERE parent_offer.tariff_id IN ('38ee08c4-21db-4a97-86e6-303bd96c48db','a18df7a7-9c8b-4e63-9ea9-b6887c23927f','767bb895-30fa-49c9-8f31-d0794590020a')
      AND parent_offer.is_active AND ad.is_active
      AND (
-       ad.pricing_mode<>'percent_discount' OR ad.discount_percent<>50
+       (CASE WHEN parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a'
+         THEN ad.pricing_mode IS DISTINCT FROM 'percent_discount' OR ad.discount_percent IS DISTINCT FROM 50
+         ELSE ad.pricing_mode IS DISTINCT FROM 'offer_price' OR ad.discount_percent IS NOT NULL END)
        OR ad.is_required OR ad.is_default_selected
        OR NOT addon_offer.is_active OR addon_offer.amount<=0
      )
@@ -205,7 +207,9 @@ BEGIN
     FOR src_addon IN SELECT ad.* FROM _cb21_source_addons ad JOIN public.tariff_offers bo ON bo.id=ad.parent_offer_id
      WHERE bo.tariff_id=p.source AND bo.is_active
       AND bo.meta->>'slot_role'=o.meta->>'slot_role' LOOP
-     IF src_addon.pricing_mode<>'percent_discount' OR src_addon.discount_percent<>50
+     IF (CASE WHEN p.role='business'
+          THEN src_addon.pricing_mode IS DISTINCT FROM 'percent_discount' OR src_addon.discount_percent IS DISTINCT FROM 50
+          ELSE src_addon.pricing_mode IS DISTINCT FROM 'offer_price' OR src_addon.discount_percent IS NOT NULL END)
         OR src_addon.is_required OR src_addon.is_default_selected
      THEN RAISE EXCEPTION 'paid_addon_not_explicit'; END IF;
      SELECT * INTO aa FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id;
@@ -267,7 +271,11 @@ BEGIN
  THEN RAISE EXCEPTION 'configuration_rowcounts_changed'; END IF;
  IF EXISTS(
    SELECT 1 FROM _cb21_addons ad
-   WHERE ad.is_active AND (ad.pricing_mode<>'percent_discount' OR ad.discount_percent<>50
+   JOIN public.tariff_offers target_offer ON target_offer.id=ad.parent_offer_id
+   JOIN _cb21_pairs tariff_pair ON tariff_pair.target=target_offer.tariff_id
+   WHERE ad.is_active AND ((CASE WHEN tariff_pair.role IN ('business','alumni')
+        THEN ad.pricing_mode IS DISTINCT FROM 'percent_discount' OR ad.discount_percent IS DISTINCT FROM 50
+        ELSE ad.pricing_mode IS DISTINCT FROM 'offer_price' OR ad.discount_percent IS NOT NULL END)
       OR ad.is_required OR ad.is_default_selected
       OR ad.access_delivery_mode<>'fixed_date'
       OR ((cfg->>'addon_opens_at') IS NOT NULL AND ad.access_opens_at IS NULL)
