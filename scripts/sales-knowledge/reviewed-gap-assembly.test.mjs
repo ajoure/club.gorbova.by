@@ -54,6 +54,16 @@ test('historical leading gap accepts three reviewed parts only in historical sco
   assert.equal(result.metadata.reviewed_gap_parts,3);
   assert.equal(result.metadata.reviewed_speech_parts,3);
   assert.match(result.text,/Проверенная речь в начале/);
+  const held=evidence.map((p,i)=>({...p,status:i===2?'uncertain':'evidence',
+    asr_text:i===2?'·':i===1?'[цифровая тишина]':'·········',
+    text_sha256:sha(i===2?'·':i===1?'[цифровая тишина]':'·········')}));
+  const noSpeech=held.map(p=>({part_index:p.part_index,kind:'non_speech',text:null,
+    evidence_sha256:p.text_sha256,audio_sha256:p.audio_sha256,reviewer_id:'owner',
+    note:'Нет отдельной разборчивой реплики до первого субтитра'}));
+  const reviewed=assembleReviewedGaps({raw_vtt:historicalRaw,duration_ms:durationMs,
+    source:historicalSource,parts:held,decisions:noSpeech,reviewer_id:'owner'});
+  assert.equal(reviewed.metadata.reviewed_speech_parts,0);
+  assert.equal(reviewed.text,'Продолжение конференции после отсутствующего начала.');
   assert.throws(()=>assembleReviewedGaps({raw_vtt:historicalRaw,duration_ms:durationMs,
     source:{...historicalSource,source_scope:'course'},parts:evidence,decisions:review,reviewer_id:'owner'}),
   /other_caption_quality_flags/);
