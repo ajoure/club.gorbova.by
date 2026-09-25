@@ -5866,6 +5866,47 @@ export type Database = {
           },
         ]
       }
+      course_historical_gap_silence_proofs: {
+        Row: {
+          audio_sha256: string
+          audit_id: string
+          created_at: string
+          part_index: number
+          pcm_bytes: number
+          previous_status: string
+          previous_text_sha256: string | null
+          verified_by: string
+        }
+        Insert: {
+          audio_sha256: string
+          audit_id: string
+          created_at?: string
+          part_index: number
+          pcm_bytes: number
+          previous_status: string
+          previous_text_sha256?: string | null
+          verified_by: string
+        }
+        Update: {
+          audio_sha256?: string
+          audit_id?: string
+          created_at?: string
+          part_index?: number
+          pcm_bytes?: number
+          previous_status?: string
+          previous_text_sha256?: string | null
+          verified_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_historical_gap_silence_proofs_audit_id_part_index_fkey"
+            columns: ["audit_id", "part_index"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_parts"
+            referencedColumns: ["audit_id", "part_index"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -24804,6 +24845,17 @@ export type Database = {
           _manifest_sha256: string
           _metadata: Json
           _transcript_text: string
+        }
+        Returns: Json
+      }
+      course_historical_gap_accept_digital_silence: {
+        Args: {
+          _actor: string
+          _audio_sha256: string
+          _audit_id: string
+          _manifest_sha256: string
+          _part_index: number
+          _pcm_bytes: number
         }
         Returns: Json
       }
