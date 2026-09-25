@@ -6,6 +6,7 @@ import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
 import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
+import {streamSyntheticPreview} from "../_shared/sales-runtime/preview-stream.mjs";
 import {syntheticGraduateCatalogue} from "../_shared/sales-runtime/synthetic-graduate.mjs";
 import {resolveComposableCheckout} from "../_shared/resolve-composable-checkout.ts";
 import {topicReplyText} from "../_shared/sales-runtime/topic-replies.mjs";
@@ -126,6 +127,7 @@ Deno.serve(async (request) => {
       previewStage='context';
       const live = await loadContext(db,p,c);
       previewStage='model';
+      return streamSyntheticPreview(async () => {
       // Only public product facts are reused. Never leak the owner's CRM/profile
       // into the synthetic learner or let their real purchase alter this test.
       const publicTariffs = new Set(live.publicTariffIds);
@@ -199,9 +201,10 @@ Deno.serve(async (request) => {
         } else commercialCheck={pass:false,reason:'graduate_checkout_selection_mismatch'};
       }
       const dialoguePass=steps.length===SEQUENCE_FIXTURES[fixtureName].length&&steps.every(s=>s.pass);
-      return json({ok:dialoguePass&&(!syntheticGraduate||commercialCheck?.pass===true),mode:"synthetic_preview_no_send",scenario:fixtureName,
+      return {ok:dialoguePass&&(!syntheticGraduate||commercialCheck?.pass===true),mode:"synthetic_preview_no_send",scenario:fixtureName,
         commercial_check:commercialCheck,
-        related_fact_count:context.facts.filter((f:any)=>f.kind==='related_product').length,steps});
+        related_fact_count:context.facts.filter((f:any)=>f.kind==='related_product').length,steps};
+      });
     }
     const job = await rpc(db, "sales_claim_job");
     if (!job) {
