@@ -44,7 +44,7 @@ Deno.serve(async (request) => {
   if (request.method === "GET") {
     // Static deployment probe: no database, model, credentials or customer data.
     // A live response proves that the preview guard is in the deployed bundle.
-    const response = json({ runtime_revision: "cb21-owner-safe-preview-v1" });
+    const response = json({ runtime_revision: "cb21-purchase-ready-gate-v1" });
     response.headers.set("Cache-Control", "no-store");
     response.headers.set("Access-Control-Allow-Methods", "GET");
     return response;
