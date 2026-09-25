@@ -5811,6 +5811,61 @@ export type Database = {
           },
         ]
       }
+      course_historical_event_bindings: {
+        Row: {
+          created_at: string
+          created_by: string
+          event_updated_at: string
+          live_event_id: string
+          product_id: string
+          provider_live_event_id: string
+          provider_project_id: string
+          source_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          event_updated_at: string
+          live_event_id: string
+          product_id: string
+          provider_live_event_id: string
+          provider_project_id: string
+          source_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          event_updated_at?: string
+          live_event_id?: string
+          product_id?: string
+          provider_live_event_id?: string
+          provider_project_id?: string
+          source_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_historical_event_bindings_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: true
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_historical_event_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_historical_event_bindings_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -6028,6 +6083,7 @@ export type Database = {
           provider: string
           revision_basis: string
           source_revision: string
+          source_scope: string
           verified_at: string
           video_id: string
         }
@@ -6043,6 +6099,7 @@ export type Database = {
           provider: string
           revision_basis?: string
           source_revision: string
+          source_scope?: string
           verified_at?: string
           video_id: string
         }
@@ -6058,6 +6115,7 @@ export type Database = {
           provider?: string
           revision_basis?: string
           source_revision?: string
+          source_scope?: string
           verified_at?: string
           video_id?: string
         }
