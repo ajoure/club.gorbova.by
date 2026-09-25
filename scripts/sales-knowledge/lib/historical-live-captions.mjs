@@ -4,6 +4,8 @@ import { COURSE_PRODUCT_IDS, inspectAlias, tokenAndOwner } from './course-provid
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const normalize=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/№/g,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+const CONFERENCE_5_TITLE='цб 2 0 20 поток конференция 5';
+const CONFERENCE_5_DATE='2026-09-13';
 const list=value=>{
   for(let n=0;n<4;n++){
     if(Array.isArray(value))return value;
@@ -21,7 +23,12 @@ async function inspectEvent(io,actor,eventId){
     {id:`eq.${eventId}`});
   if(events.length!==1)throw new Error('historical_event_missing');
   const event=events[0];
-  if(event.product_id!==COURSE_PRODUCT_IDS[1]||!uuid(event.kinescope_live_event_id)
+  const historicalNullProduct=event.product_id===null
+    &&normalize(event.title)===CONFERENCE_5_TITLE
+    &&typeof event.scheduled_at==='string'
+    &&event.scheduled_at.slice(0,10)===CONFERENCE_5_DATE;
+  if((event.product_id!==COURSE_PRODUCT_IDS[1]&&!historicalNullProduct)
+    ||!uuid(event.kinescope_live_event_id)
     ||!event.kinescope_project_id||!event.updated_at)throw new Error('historical_event_scope_invalid');
   const videos=list(await io.liveVideos(event.kinescope_live_event_id,token));
   if(videos.length!==1||!uuid(videos[0]?.id))throw new Error('historical_event_video_ambiguous');
@@ -52,7 +59,7 @@ async function inspectEvent(io,actor,eventId){
     {source_id:`in.(${sources.map(s=>s.id).join(',')})`}):[];
   if(bindings.length)throw new Error('historical_video_has_lesson_binding');
   const parsed=candidate.parsed;
-  return {event:{id:event.id,product_id:event.product_id,provider_live_event_id:event.kinescope_live_event_id,
+  return {event:{id:event.id,product_id:COURSE_PRODUCT_IDS[1],provider_live_event_id:event.kinescope_live_event_id,
       provider_project_id:event.kinescope_project_id,event_updated_at:event.updated_at},
     source:{video_id:videoId,source_revision:candidate.source_revision,duration_ms:candidate.duration_ms,
       status:candidate.status,content_sha256:parsed?.content_sha256||null,
