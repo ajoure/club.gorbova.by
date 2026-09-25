@@ -4,7 +4,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {parseAudioPlaylist,gapRange,longAudioRanges,createGapMedia} from './lib/gap-media.mjs';
+import {parseAudioPlaylist,gapRange,longAudioRanges,createGapMedia,captureGaps} from './lib/gap-media.mjs';
 import {openLongAudio} from './lib/long-course-stt.mjs';
 const box=(type,payload)=>{const h=Buffer.alloc(8);h.writeUInt32BE(payload.length+8);h.write(type,4);return Buffer.concat([h,payload]);};
 // Kinescope AAC uses a 2048-sample edit, absent from a plain ffmpeg HLS fixture.
@@ -56,6 +56,13 @@ test('AAC edit-list range ends retain real samples and original timeline',async(
    let error=0,count=0;for(let i=3200;i<pcm.length-3200;i+=2){error+=Math.abs(pcm.readInt16LE(i)-expected.readInt16LE(i));count++;}
    assert.ok(error/count<2,`split-file timeline error ${error/count}`);
   }
+  const gapCapture=await captureGaps(publicIo,splitMedia,'https://kinescope.io/master.m3u8',
+   [{gap_index:0,start_ms:90000,end_ms:220000}],248384,{decoderTail:true});
+  assert.equal(gapCapture.parts.length,2);
+  const gapPcm=Buffer.concat(gapCapture.parts.map(part=>part.wav.subarray(44))),expectedGap=full.subarray(90000*32,220000*32);
+  assert.equal(gapPcm.length,expectedGap.length);
+  let gapError=0,gapSamples=0;for(let i=3200;i<gapPcm.length-3200;i+=2){gapError+=Math.abs(gapPcm.readInt16LE(i)-expectedGap.readInt16LE(i));gapSamples++;}
+  assert.ok(gapError/gapSamples<2);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 test('decoder tail preserves continuity and size guards and stops at EOF',()=>{

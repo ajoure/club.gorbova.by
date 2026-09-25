@@ -138,8 +138,10 @@ export async function captureGaps(publicIo,media,hlsUrl,gaps,duration,rangeOptio
   const playlist=parseAudioPlaylist(await publicIo.caption(playlistUrl),playlistUrl,duration);
   const init=await media.range(playlist.init.url,playlist.init.offset,playlist.init.bytes),parts=[],captures=[];
   for(const gap of gaps){
-    const range=gapRange(playlist,gap,rangeOptions),fragment=await media.range(range.url,range.offset,range.bytes),bytes=Buffer.concat([init,fragment]);
-    const pcm=await media.decode(bytes,range.trim_ms,gap.end_ms-gap.start_ms);
+    const range=rangeOptions.decoderTail?longAudioRanges(playlist,gap):gapRange(playlist,gap);
+    const fragments=[init];
+    for(const piece of range.ranges??[range])fragments.push(await media.range(piece.url,piece.offset,piece.bytes));
+    const bytes=Buffer.concat(fragments),pcm=await media.decode(bytes,range.trim_ms,gap.end_ms-gap.start_ms);
     if(Math.abs(pcm.length/32-(gap.end_ms-gap.start_ms))>1)throw Error('gap_decoded_duration_mismatch');
     const windows=pcmParts(pcm,gap.end_ms-gap.start_ms);
     // Keep every decoded sample in the tail; declared boundaries use source ms.
