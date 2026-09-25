@@ -128,11 +128,11 @@ test('a verified CB20 add-on on Accountant is copied to the matching CB21 offer'
   const businessParent=(await db.query("SELECT id FROM tariff_offers WHERE tariff_id=$1 AND meta->>'slot_role'='button_1'",[business.source])).rows[0].id;
   const sourceAddon=(await db.query('SELECT * FROM offer_addons WHERE parent_offer_id=$1 LIMIT 1',[businessParent])).rows[0];
   await db.query(`INSERT INTO offer_addons(id,parent_offer_id,addon_product_id,addon_tariff_id,addon_offer_id,is_active,pricing_mode,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,access_delivery_mode,access_opens_at,meta,sort_order)
-    VALUES($1,$2,$3,$4,$5,true,$6,$7,false,false,true,'fixed_date',$8,'{}',$9)`,[randomUUID(),sourceParent,sourceAddon.addon_product_id,sourceAddon.addon_tariff_id,sourceAddon.addon_offer_id,sourceAddon.pricing_mode,sourceAddon.discount_percent,sourceAddon.access_opens_at,sourceAddon.sort_order]);
+    VALUES($1,$2,$3,$4,$5,true,'offer_price',NULL,false,false,true,'fixed_date',$6,'{}',$7)`,[randomUUID(),sourceParent,sourceAddon.addon_product_id,sourceAddon.addon_tariff_id,sourceAddon.addon_offer_id,sourceAddon.access_opens_at,sourceAddon.sort_order]);
   const dry=await run(db,options);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);
   await run(db,{...options,apply:true,expected_fingerprint:plan.fingerprint});
-  const copied=(await db.query('SELECT count(*)::int n FROM offer_addons WHERE parent_offer_id=$1 AND addon_offer_id=$2 AND is_active',[targetParent,sourceAddon.addon_offer_id])).rows[0].n;
-  assert.equal(copied,1);
+  const copied=(await db.query('SELECT pricing_mode,discount_percent FROM offer_addons WHERE parent_offer_id=$1 AND addon_offer_id=$2 AND is_active',[targetParent,sourceAddon.addon_offer_id])).rows;
+  assert.equal(copied.length,1);assert.equal(copied[0].pricing_mode,'offer_price');assert.equal(copied[0].discount_percent,null);
  }finally{await db.close();}
 });
 
