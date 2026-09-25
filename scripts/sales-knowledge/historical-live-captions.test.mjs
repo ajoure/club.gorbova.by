@@ -91,6 +91,23 @@ test('changed captions and multiple provider recordings stop before writes',asyn
   await assert.rejects(dryRunHistoricalEvent(f.io,owner,eventId),/historical_event_video_ambiguous/);
 });
 
+test('only the dated CB20 Conference 5 may use an event with no product',async()=>{
+  const f=fixture();
+  f.event.product_id=null;
+  f.event.title='Цб 2.0 20 поток Конференция 5';
+  f.video.title='Цб 2.0 20 поток Конференция 5 13 сентября';
+  const manifest=await dryRunHistoricalEvent(f.io,owner,eventId);
+  assert.equal(manifest.ready,true);
+  assert.equal(manifest.event.product_id,COURSE_PRODUCT_IDS[1]);
+  await importHistoricalEvent(f.io,owner,manifest);
+  assert.equal(f.historical.length,1);
+
+  const other=fixture();other.event.product_id=null;
+  other.event.title='Другой эфир Конференция 5';
+  await assert.rejects(dryRunHistoricalEvent(other.io,owner,eventId),/historical_event_scope_invalid/);
+  assert.equal(other.stats().writes,0);
+});
+
 test('historical binding schema blocks course lessons and browser writes',async()=>{
   const db=new PGlite();
   try{
@@ -105,14 +122,15 @@ test('historical binding schema blocks course lessons and browser writes',async(
       CREATE TABLE public.training_lessons(id uuid PRIMARY KEY);
       CREATE TABLE public.lesson_blocks(id uuid PRIMARY KEY);
       CREATE TABLE public.products_v2(id uuid PRIMARY KEY);
-      CREATE TABLE public.live_events(id uuid PRIMARY KEY,product_id uuid,kinescope_live_event_id text,
+      CREATE TABLE public.live_events(id uuid PRIMARY KEY,title text,scheduled_at timestamptz,product_id uuid,kinescope_live_event_id text,
         kinescope_project_id text,updated_at timestamptz);`);
     const base=new URL('../../supabase/migrations/',import.meta.url);
     await db.exec(await readFile(new URL('20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql',base),'utf8'));
     await db.exec(await readFile(new URL('20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql',base),'utf8'));
     await db.exec(await readFile(new URL('20260925141617_cb20_historical_live_caption_bindings.sql',base),'utf8'));
+    await db.exec(await readFile(new URL('20260925143157_cb20_historical_null_product_guard.sql',base),'utf8'));
     await db.query('INSERT INTO products_v2(id) VALUES($1)',[COURSE_PRODUCT_IDS[1]]);
-    await db.query('INSERT INTO live_events VALUES($1,$2,$3,$4,$5)',
+    await db.query('INSERT INTO live_events(id,product_id,kinescope_live_event_id,kinescope_project_id,updated_at) VALUES($1,$2,$3,$4,$5)',
       [eventId,COURSE_PRODUCT_IDS[1],liveId,'project-one','2026-09-13T12:19:00Z']);
     const source='00000000-0000-4000-8000-000000000006';
     await db.query(`INSERT INTO course_transcription_sources(id,provider,video_id,source_revision,duration_ms,enabled,created_by,source_scope)
@@ -126,10 +144,31 @@ test('historical binding schema blocks course lessons and browser writes',async(
       VALUES($1,$2,$3,$4,now())`,[source,eventId,liveId,COURSE_PRODUCT_IDS[1]]),/historical_source_not_course_lesson/);
     await assert.rejects(db.query("UPDATE course_transcription_sources SET source_scope='course' WHERE id=$1",[source]),
       /source_scope_immutable/);
+    const nullEvent='00000000-0000-4000-8000-000000000008',nullSource='00000000-0000-4000-8000-000000000009';
+    await db.query(`INSERT INTO live_events(id,title,scheduled_at,product_id,kinescope_live_event_id,
+      kinescope_project_id,updated_at) VALUES($1,'Цб 2.0 20 поток Конференция 5','2026-09-13T07:00:00Z',NULL,$2,'project-one','2026-09-13T12:19:00Z')`,
+      [nullEvent,liveId]);
+    await db.query(`INSERT INTO course_transcription_sources(id,provider,video_id,source_revision,duration_ms,enabled,created_by,source_scope)
+      VALUES($1,'kinescope',$2,$3,180000,true,$4,'historical_live_event')`,
+      [nullSource,'00000000-0000-4000-8000-000000000010','b'.repeat(64),owner]);
+    await db.query(`INSERT INTO course_historical_event_bindings(source_id,live_event_id,product_id,
+      provider_live_event_id,provider_project_id,event_updated_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+      [nullSource,nullEvent,COURSE_PRODUCT_IDS[1],liveId,'project-one','2026-09-13T12:19:00Z',owner]);
+    const wrongEvent='00000000-0000-4000-8000-000000000011',wrongSource='00000000-0000-4000-8000-000000000012';
+    await db.query(`INSERT INTO live_events(id,title,scheduled_at,product_id,kinescope_live_event_id,
+      kinescope_project_id,updated_at) VALUES($1,'Другая конференция','2026-09-13T07:00:00Z',NULL,$2,'project-one','2026-09-13T12:19:00Z')`,
+      [wrongEvent,liveId]);
+    await db.query(`INSERT INTO course_transcription_sources(id,provider,video_id,source_revision,duration_ms,enabled,created_by,source_scope)
+      VALUES($1,'kinescope',$2,$3,180000,true,$4,'historical_live_event')`,
+      [wrongSource,'00000000-0000-4000-8000-000000000013','c'.repeat(64),owner]);
+    await assert.rejects(db.query(`INSERT INTO course_historical_event_bindings(source_id,live_event_id,product_id,
+      provider_live_event_id,provider_project_id,event_updated_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+      [wrongSource,wrongEvent,COURSE_PRODUCT_IDS[1],liveId,'project-one','2026-09-13T12:19:00Z',owner]),
+      /historical_event_binding_invalid/);
     await db.exec(`SET ROLE authenticated; SET request.jwt.claim.sub='${outsider}'`);
     assert.equal((await db.query('SELECT * FROM course_historical_event_bindings')).rows.length,0);
     await assert.rejects(db.query('DELETE FROM course_historical_event_bindings WHERE source_id=$1',[source]),/permission denied/);
     await db.exec(`SET request.jwt.claim.sub='${owner}'`);
-    assert.equal((await db.query('SELECT * FROM course_historical_event_bindings')).rows.length,1);
+    assert.equal((await db.query('SELECT * FROM course_historical_event_bindings')).rows.length,2);
   }finally{await db.close();}
 });
