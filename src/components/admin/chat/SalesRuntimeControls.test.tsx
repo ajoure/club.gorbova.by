@@ -145,7 +145,7 @@ it("settings open outside the composer and close without changing campaign state
 
 it("runs a synthetic owner preview only while the campaign is off and held", async () => {
  mock.invoke.mockImplementation(async (name: string) => name === 'sales-runtime-worker'
-   ? {data:{ok:true,steps:[{incoming:'Хочу программу курса ЦБ',expected:'qualification',actual:'qualification',pass:true,candidate:{text:'Здравствуйте!'}}]},error:null}
+   ? {data:{ok:true,steps:[{incoming:'Хочу программу курса ЦБ',expected:'experience',actual:'experience',pass:true,candidate:{text:'Здравствуйте!'}}]},error:null}
    : {data:{...base,campaign:{...base.campaign,mode:'off'},conversation:{state:'HUMAN_HOLD'},job:null},error:null});
  mount();
  fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
