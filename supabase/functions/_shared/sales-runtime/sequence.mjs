@@ -77,7 +77,10 @@ function hasExplicitPurchaseDecision(context, evidence) {
     const message = context.history[index];
     if (message?.role !== 'customer' || normalizeTrigger(message.text) === normalizeTrigger(context.triggerPhrase)) return false;
     const text = String(message.text).trim();
-    const previousSeller = context.history.slice(0, index).reverse().find(turn => turn.role === 'seller');
+    // A factual answer with no question does not replace the purchase decision
+    // that the customer is answering. An intervening actual question still does.
+    const previousSeller = context.history.slice(0, index).reverse()
+      .find(turn => turn.role === 'seller' && turn.question_id !== 'none');
     if (!['interest', 'decision'].includes(previousSeller?.question_id)) return false;
     if (/(?:не\s+(?:готов|хочу|буду|планирую|решил)|пока\s+не|(?:^|\s)(?:но|сначала|если)(?:\s|$)|перед\s+этим|\?)/iu.test(text)) return false;
     if (/(?:готов[аы]?|хочу|решил[аи]?|буду)\s+(?:купить|оформить|оплатить|приобрести)|(?:^|\s)(?:оформляем|покупаю|оплачиваю|беру)(?:\s|[.!?,]|$)/iu.test(text)) return true;
