@@ -6,6 +6,8 @@ import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
 import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
+import {syntheticGraduateCatalogue} from "../_shared/sales-runtime/synthetic-graduate.mjs";
+import {resolveComposableCheckout} from "../_shared/resolve-composable-checkout.ts";
 import {topicReplyText} from "../_shared/sales-runtime/topic-replies.mjs";
 import { loadContext } from "../_shared/sales-runtime/context.ts";
 import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
@@ -135,9 +137,31 @@ Deno.serve(async (request) => {
         legalEntities:[],lastCheckout:null,
         firstReply:true,stage:"qualification",lastQuestionId:null as string|null,relevantFactIds:[] as string[]};
       context.checkoutAddons=live.checkoutAddons.filter((a:any)=>context.checkoutOptions.some((o:any)=>o.id===a.parent_offer_id));
+      let syntheticGraduate:any=null;
+      if (fixtureName === 'graduate_eligible') {
+        // Read current admin catalogue settings, but never use the real test
+        // contact's purchase or eligibility in this synthetic conversation.
+        const tariffs=await read(db.from('tariffs').select('id,name,is_active,is_public,visible_from,visible_to').eq('product_id',p.product_id));
+        const [offers, rules, product] = await Promise.all([
+          read(db.from('tariff_offers').select('id,tariff_id,amount,is_active,visible_from,visible_to,offer_type,payment_method,installment_count,meta').in('tariff_id',tariffs.map((t:any)=>t.id))),
+          read(db.from('access_rules').select('id,tariff_id,is_active,grant_target_type,target_ref,conditions').eq('product_id',p.product_id)),
+          read(db.from('products_v2').select('currency').eq('id',p.product_id).single()),
+        ]);
+        const graduateOfferIds=offers.filter((o:any)=>o.meta?.purchase_eligibility?.kind==='prior_purchase'&&!o.meta?.sales_legacy_only).map((o:any)=>o.id);
+        const addons=graduateOfferIds.length?await read(db.from('offer_addons').select('parent_offer_id,addon_offer_id,is_active,visible_from,visible_to,pricing_mode,discount_percent,fixed_amount,access_delivery_mode,access_opens_at,access_duration_days,addon_product:products_v2!offer_addons_addon_product_id_fkey(name,is_active),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(amount,is_active,visible_from,visible_to)').in('parent_offer_id',graduateOfferIds)):[];
+        const catalogue=syntheticGraduateCatalogue({tariffs,offers,rules,addons,facts:context.facts,rootModuleId:p.knowledge.root_module_id,currency:product.currency});
+        syntheticGraduate=catalogue;
+        context.facts.push(catalogue.fact);
+        context.checkoutOptions.push(...catalogue.options);
+        context.checkoutAddons.push(...catalogue.addons);
+        context.client.verified_cb_purchase=true;
+        context.client.alumni_eligibility={eligible:true,offers:catalogue.options.map(o=>({offer_id:o.id,eligible:true,source:'synthetic_fixture_only'}))};
+      }
       const steps = [];
+      let finalCheckout:any=null;
       for (const [incoming,expected] of SEQUENCE_FIXTURES[fixtureName]) {
-        context.history.push({source_message_id:`synthetic-customer-${steps.length}`,attachment_status:null,role:"customer",text:incoming,at:new Date().toISOString(),question_id:null});
+        const syntheticIncoming=syntheticGraduate?incoming.replace('{{addon_name}}',syntheticGraduate.sampleAddon.addon_product.name):incoming;
+        context.history.push({source_message_id:`synthetic-customer-${steps.length}`,attachment_status:null,role:"customer",text:syntheticIncoming,at:new Date().toISOString(),question_id:null});
         let candidate, assessment;
         try { candidate = await draftReply(context,context.stage,value=>{assessment=value;}); }
         catch(error) {
@@ -148,13 +172,34 @@ Deno.serve(async (request) => {
           break;
         }
         const actual = candidate.action === "reply" ? candidate.question_id : candidate.action;
-        steps.push({incoming,expected,actual,pass:actual===expected,candidate,assessment});
+        steps.push({incoming:syntheticIncoming,expected,actual,pass:actual===expected,candidate,assessment});
+        if (actual==='checkout') finalCheckout=candidate;
         if (actual !== expected || candidate.action !== "reply") break;
         context.history.push({source_message_id:`synthetic-seller-${steps.length}`,attachment_status:null,role:"seller",text:candidate.text,at:new Date().toISOString(),question_id:candidate.question_id});
         context.stage=candidate.stage;context.lastQuestionId=candidate.question_id;context.firstReply=false;
         if(candidate.stage==="format") context.relevantFactIds=candidate.fact_ids;
       }
-      return json({ok:steps.length===SEQUENCE_FIXTURES[fixtureName].length&&steps.every(s=>s.pass),mode:"synthetic_preview_no_send",scenario:fixtureName,
+      let commercialCheck:any=null;
+      if (syntheticGraduate && finalCheckout) {
+        const selection=finalCheckout.selection;
+        const matches=selection?.offer_id===syntheticGraduate.fact.offer_id &&
+          selection?.confirmed===false &&
+          Array.isArray(selection?.addon_offer_ids) &&
+          selection.addon_offer_ids.length===1 &&
+          selection.addon_offer_ids[0]===syntheticGraduate.sampleAddon.addon_offer_id;
+        if (matches) {
+          const quote=await resolveComposableCheckout(db,{parentOfferId:selection.offer_id,addonOfferIds:selection.addon_offer_ids});
+          const primary=quote.items.find((i:any)=>i.role==='primary');
+          const addon=quote.items.find((i:any)=>i.role==='addon');
+          commercialCheck={pass:quote.items.length===2 && primary?.final_amount===syntheticGraduate.fact.price &&
+            addon?.final_amount===Math.round(Number(syntheticGraduate.sampleAddon.addon_offer.amount)*50)/100 &&
+            quote.total===primary.final_amount+addon.final_amount && quote.adjustment_amount===0,
+            has_quote:true,link_created:false};
+        } else commercialCheck={pass:false,reason:'graduate_checkout_selection_mismatch'};
+      }
+      const dialoguePass=steps.length===SEQUENCE_FIXTURES[fixtureName].length&&steps.every(s=>s.pass);
+      return json({ok:dialoguePass&&(!syntheticGraduate||commercialCheck?.pass===true),mode:"synthetic_preview_no_send",scenario:fixtureName,
+        commercial_check:commercialCheck,
         related_fact_count:context.facts.filter((f:any)=>f.kind==='related_product').length,steps});
     }
     const job = await rpc(db, "sales_claim_job");
