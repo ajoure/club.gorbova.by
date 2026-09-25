@@ -85,3 +85,41 @@ for(const result of ['',null,'English',new Error('timeout')])test(`uncertain ASR
  await assert.rejects(executeGapAudit(f.io,f.publicIo,owner,c.manifest,c,call),/gap_asr_uncertain/);
  assert.equal(f.audits[0].status,'review_required');await assert.rejects(executeGapAudit(f.io,f.publicIo,owner,c.manifest,c,call),/gap_part_held/);assert.equal(f.state.paid,1);
 });
+const selectedBlock='55555555-5555-4555-8555-555555555555';
+function selectedFixture(){
+ const f=fixture(),rows=f.io.rows;
+ f.io.rows=async(table,...args)=>{const result=await rows(table,...args);return table==='lesson_blocks'?result.map(b=>({...b,id:selectedBlock})):result;};
+ f.state.active=false;
+ return f;
+}
+const selection={block_ids:[selectedBlock],allow_closed:true,allow_cue_order_review:false};
+test('explicit closed lesson selection records provenance without changing lesson activity or access',async()=>{
+ const f=selectedFixture();
+ await assert.rejects(prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media),/active_course_binding_required/);
+ const c=await prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media,selection);
+ assert.deepEqual(c.manifest.source.reviewed_selection,selection);assert.equal(f.state.writes,0);assert.equal(f.state.paid,0);
+ const write=f.io.write;f.io.write=async(table,...args)=>{assert.ok(['course_transcription_sources','course_transcription_bindings'].includes(table));return write(table,...args);};
+ await executeGapAudit(f.io,f.publicIo,owner,c.manifest,c,f.transcribe);
+ assert.equal(f.state.active,false);assert.equal(f.audits[0].raw_vtt,raw);assert.equal(f.audits[0].quality_status,'unreviewed');
+});
+test('selected cue-order review keeps raw VTT and hashes, only ordering is normalized',async()=>{
+ const f=selectedFixture();f.state.raw=raw.replace('00:02:00.000','00:01:40.000').replace('\n\n00:04:11.000',
+ '\n\n00:01:55.000 --> 00:01:56.000\nПоздняя реплика.\n\n00:01:50.000 --> 00:01:51.000\nРанняя реплика.\n\n00:01:56.000 --> 00:02:00.000\nКонец первой части.\n\n00:04:11.000');
+ await assert.rejects(prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media,selection),/cue_order_requires_manual_review/);
+ const c=await prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media,{...selection,allow_cue_order_review:true});
+ const p=c.manifest.source.caption_provenance;
+ assert.equal(p.transform,'stable_cue_order_v1');assert.equal(p.raw_sha256,sha(f.state.raw));assert.notEqual(p.raw_sha256,p.normalized_sha256);
+ assert.equal(p.original_cue_multiset_sha256,p.normalized_cue_multiset_sha256);assert.equal(c.raw,f.state.raw);
+ await executeGapAudit(f.io,f.publicIo,owner,c.manifest,c,f.transcribe);assert.equal(f.audits[0].raw_vtt,f.state.raw);
+});
+for(const invalid of [{...selection,block_ids:[]},{...selection,block_ids:[selectedBlock,selectedBlock]},
+ {...selection,block_ids:['66666666-6666-4666-8666-666666666666']},{...selection,allow_closed:false}])test('invalid explicit selection stops before writes',async()=>{
+ const f=selectedFixture();await assert.rejects(prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media,invalid),/reviewed_selection_invalid/);
+ assert.equal(f.state.writes,0);assert.equal(f.state.paid,0);
+});
+test('selected source changes still stop before registration or paid calls',async()=>{
+ const f=selectedFixture(),c=await prepareGapAudit(f.io,f.publicIo,owner,'testAlias',f.media,selection);
+ f.state.active=true;
+ await assert.rejects(executeGapAudit(f.io,f.publicIo,owner,c.manifest,c,f.transcribe),/gap_source_changed/);
+ assert.equal(f.state.writes,0);assert.equal(f.state.paid,0);
+});

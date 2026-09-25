@@ -14,11 +14,16 @@ try{
   await writeFile(output,'',{flag:'wx',mode:0o600});reportPath=output;
   const io=createManagedTransport({supabaseUrl:process.env.SUPABASE_URL,serviceKey:process.env.SUPABASE_SERVICE_ROLE_KEY});
   const actor=process.env.COURSE_KB_OWNER_ID,publicIo=createPublicCaptionTransport(),media=createGapMedia();let report;
-  if(mode==='dry-run')report=(await prepareGapAudit(io,publicIo,actor,get('--alias'),media)).manifest;
+  if(mode==='dry-run'){
+    const ids=get('--reviewed-block-ids');
+    if(args.includes('--allow-cue-order-review')&&!ids)throw Error('reviewed_selection_required');
+    const selection=ids?{block_ids:ids.split(','),allow_closed:true,allow_cue_order_review:args.includes('--allow-cue-order-review')}:undefined;
+    report=(await prepareGapAudit(io,publicIo,actor,get('--alias'),media,selection)).manifest;
+  }
   else{
     const path=get('--manifest'),approvedHash=get('--approved-manifest-sha256');if(!path||!approvedHash)throw Error('approved_manifest_required');
     const raw=await readFile(path);if(sha(raw)!==approvedHash)throw Error('manifest_hash_mismatch');const approved=JSON.parse(raw.toString('utf8'));
-    const captured=await prepareGapAudit(io,publicIo,actor,approved.source?.alias,media);
+    const captured=await prepareGapAudit(io,publicIo,actor,approved.source?.alias,media,approved.source?.reviewed_selection);
     report=await executeGapAudit(io,publicIo,actor,approved,captured,createSttGateway(process.env.LOVABLE_API_KEY),async next=>{
       progress=next;await writeFile(output,JSON.stringify(next,null,2)+'\n',{mode:0o600});
     });
