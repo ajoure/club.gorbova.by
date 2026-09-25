@@ -64,7 +64,7 @@ test('208-minute dry-run uses 139 sequential bounded windows, no writes or paid 
 test('batch resume reuses ready parts; finalize only after full coverage; completed replay is free',async()=>{
  const f=fixture(),m=await prep(f),first=await run(f,m,[0,1]);assert.equal(first.status,'partial');assert.equal(f.state.finalized,0);
  const replay=await run(f,m,[0,1]);assert.equal(replay.stt_calls,0);assert.equal(f.state.paid,2);
- const result=await run(f,m,Array.from({length:19},(_,i)=>i+2));assert.equal(result.status,'ready');assert.equal(f.state.paid,21);assert.equal(f.state.finalized,1);
+ const result=await run(f,m,Array.from({length:19},(_,i)=>i+2));assert.equal(result.status,'ready');assert.equal(f.state.paid,21);assert.equal(f.state.finalized,2);
  assert.equal((await run(f,m,[0])).cached,true);assert.equal(f.state.paid,21);
 });
 test('unknown billed result and crash after claim never cause a second paid attempt',async()=>{
@@ -88,4 +88,10 @@ test('Russian captions always require reuse; missing tracks remain rejected in o
  const f=fixture();f.state.ru=true;await assert.rejects(prep(f),/reuse_russian_subtitles_required/);
  assert.throws(()=>parsePublicPlayer(f.html()),/public_russian_track_ambiguous/);
  assert.equal(parsePublicPlayer(f.html(),{includeHls:true,requireRussianCaption:false}).video_id,video);
+});
+
+test('digital silence is reported without paid recognition or database writes',async()=>{
+ const f=fixture();f.media.decode=async(_bytes,_trim,ms)=>Buffer.alloc(ms*32);
+ const m=await prep(f);assert.ok(m.parts.every(p=>p.digital_silence));
+ await assert.rejects(run(f,m,[0]),/audio_silence_review_required/);assert.equal(f.state.writes,0);assert.equal(f.state.paid,0);
 });

@@ -51,7 +51,7 @@ export async function openLongAudio(publicIo,media,source){
   const parts=pcmParts(pcm,window.end_ms-window.start_ms).parts;
   if(parts.length!==1)throw Error('long_window_invalid');
   const wav=parts[0].wav;
-  return {...window,bytes:wav.length,audio_sha256:sha(wav),wav};
+  return {...window,bytes:wav.length,audio_sha256:sha(wav),digital_silence:pcm.every(byte=>byte===0),wav};
  };
 }
 
@@ -63,8 +63,9 @@ export async function prepareLongStt(io,publicIo,actor,alias,blockIds,media){
  }
  const final=await inspectLongSource(io,publicIo,actor,alias,blockIds);
  if(!same(initial.identity,final.identity))throw Error('source_changed_during_capture');
- return {schema_version:1,mode:'long_course_stt_dry_run',model:STT_MODEL,product_ids:COURSE_PRODUCT_IDS,
+ const manifest={schema_version:1,mode:'long_course_stt_dry_run',model:STT_MODEL,product_ids:COURSE_PRODUCT_IDS,
   source:initial.identity,parts,max_batch_parts:20,stt_calls:0};
+ validateLongManifest(manifest);return manifest;
 }
 
 export function validateLongManifest(m){
@@ -74,7 +75,7 @@ export function validateLongManifest(m){
  const windows=audioWindows(m.source.duration_ms);
  if(!Array.isArray(m.parts)||m.parts.length!==windows.length||m.parts.length>240)throw Error('long_manifest_coverage');
  for(const [i,p] of m.parts.entries())if(!same({part_index:p.part_index,start_ms:p.start_ms,end_ms:p.end_ms},windows[i])
-  ||p.bytes!==44+(p.end_ms-p.start_ms)*32||!/^[a-f0-9]{64}$/.test(p.audio_sha256??''))throw Error('long_manifest_part');
+  ||typeof p.digital_silence!=='boolean'||p.bytes!==44+(p.end_ms-p.start_ms)*32||!/^[a-f0-9]{64}$/.test(p.audio_sha256??''))throw Error('long_manifest_part');
  return windows;
 }
 
@@ -83,6 +84,7 @@ export async function executeLongBatch(io,publicIo,actor,approved,indices,media,
  validateLongManifest(approved);
  if(!Array.isArray(indices)||!indices.length||indices.length>20||new Set(indices).size!==indices.length
   ||indices.some(i=>!Number.isSafeInteger(i)||i<0||i>=approved.parts.length))throw Error('long_batch_budget');
+ if(indices.some(i=>approved.parts[i].digital_silence))throw Error('audio_silence_review_required');
  const source=approved.source,blockIds=source.bindings.map(b=>b.block_id);
  const fresh=async()=>{const s=await inspectLongSource(io,publicIo,actor,source.alias,blockIds);if(!same(s.identity,source))throw Error('source_changed');return s;};
  await fresh();
@@ -151,7 +153,9 @@ export async function executeLongBatch(io,publicIo,actor,approved,indices,media,
  if(all.length!==approved.parts.length||all.some((p,i)=>p.part_index!==i||p.start_ms!==approved.parts[i].start_ms||p.end_ms!==approved.parts[i].end_ms))throw Error('job_coverage_mismatch');
  if(all.every(p=>p.status==='ready')){
   if(all.some((p,i)=>p.audio_sha256!==approved.parts[i].audio_sha256))throw Error('part_audio_changed');
-  await io.rpc('course_transcription_finalize',{_job_id:job.job_id,_source_revision:source.source_revision});
+  const args={_job_id:job.job_id,_source_revision:source.source_revision};
+  await io.rpc('course_transcription_finalize',args);
+  if((await io.rpc('course_transcription_finalize',args)).reused!==true)throw Error('finalize_replay_failed');
   const t=await readTranscript();if(!t)throw Error('transcript_readback_failed');return {...t,status:'ready',stt_calls:calls,completed};
  }
  return {source_id:id,job_id:job.job_id,status:'partial',ready_parts:all.filter(p=>p.status==='ready').length,total_parts:all.length,stt_calls:calls,completed};
