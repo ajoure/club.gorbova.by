@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
 import { persistMonitoredTelegramMessage } from '../_shared/telegram-monitoring.ts';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
+import { CB21_RELEASE_DIGEST } from '../_shared/cb21-release.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -519,6 +520,11 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: 'invalid_webhook_secret' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (req.method === 'GET' && new URL(req.url).searchParams.get('health') === 'cb21') {
+      return new Response(JSON.stringify({ release_digest: CB21_RELEASE_DIGEST }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       });
     }
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;

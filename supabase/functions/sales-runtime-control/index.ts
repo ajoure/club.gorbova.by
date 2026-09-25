@@ -8,9 +8,22 @@ import {
 } from "../_shared/sales-runtime/db.ts";
 import {readAIConfig,AI_MODELS} from '../_shared/sales-runtime/ai.mjs';
 import {knowledgeEditor} from '../_shared/sales-runtime/knowledge-editor.ts';
+import {CB21_RELEASE_DIGEST} from '../_shared/cb21-release.ts';
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: cors });
+  }
+  if (request.method === "GET") {
+    try {
+      const db = database(), actor = await operator(db, request);
+      if (!actor || !await rpc(db, "has_role_v2", {_user_id: actor.id, _role_code: "super_admin"}))
+        return json({ error: "forbidden" }, 403);
+      const response = json({release_digest: CB21_RELEASE_DIGEST});
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    } catch {
+      return json({ error: "health_unavailable" }, 503);
+    }
   }
   if (request.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405);
