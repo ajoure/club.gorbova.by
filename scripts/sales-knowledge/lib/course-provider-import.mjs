@@ -38,7 +38,7 @@ export function createManagedTransport({supabaseUrl,serviceKey,fetchImpl=fetch})
       const all=[];
       for(let offset=0;offset<100000;offset+=500){
         const url=new URL(`/rest/v1/${table}`,origin);url.searchParams.set('select',select);
-        url.searchParams.set('order',table==='course_transcripts'?'source_id.asc':table==='course_transcription_bindings'?'source_id.asc,block_id.asc':'id.asc');url.searchParams.set('limit','500');url.searchParams.set('offset',String(offset));
+        url.searchParams.set('order',table==='course_transcripts'||table==='course_historical_event_bindings'?'source_id.asc':table==='course_transcription_bindings'?'source_id.asc,block_id.asc':'id.asc');url.searchParams.set('limit','500');url.searchParams.set('offset',String(offset));
         Object.entries(filters).forEach(([k,v])=>url.searchParams.set(k,v));
         const rows=await jsonRequest(url,{headers},'database_read');
         if(!Array.isArray(rows))throw new Error('database_rows_invalid');
@@ -54,6 +54,11 @@ export function createManagedTransport({supabaseUrl,serviceKey,fetchImpl=fetch})
     async provider(path,token){
       if(!/^\/videos\/[a-zA-Z0-9-]+(?:\/subtitles(?:\/[a-zA-Z0-9-]+)?)?(?:\?page=\d+&per_page=100)?$/.test(path))throw new Error('provider_path_invalid');
       return jsonRequest('https://api.kinescope.io/v1'+path,{headers:{Authorization:`Bearer ${token}`}},'provider');
+    },
+    async liveVideos(liveEventId,token){
+      if(!uuid(liveEventId))throw new Error('provider_live_event_id_invalid');
+      return jsonRequest(`https://api.kinescope.io/v2/live/events/${liveEventId}/videos`,
+        {headers:{Authorization:`Bearer ${token}`}},'provider_live_videos');
     },
     async resolveLegacyAlias(alias){
       if(!/^\d+$/.test(alias))throw new Error('legacy_alias_invalid');
@@ -123,14 +128,14 @@ export async function readCourseBindings(io){
   return {bindings,unresolved,counts:{modules:modules.length,lessons:lessons.length,blocks:blocks.length,video_blocks:bindings.length+unresolved.length}};
 }
 
-async function tokenAndOwner(io,actor){
+export async function tokenAndOwner(io,actor){
   if(!uuid(actor)||await io.rpc('has_role_v2',{_user_id:actor,_role_code:'super_admin'})!==true)throw new Error('owner_required');
   const integrations=await io.rows('integration_instances','id,config',{provider:'eq.kinescope',status:'eq.connected'});
   if(integrations.length!==1||typeof integrations[0].config?.api_token!=='string')throw new Error('kinescope_connection_ambiguous');
   return integrations[0].config.api_token;
 }
 const unwrap=x=>x?.data??x;
-async function inspectAlias(io,token,alias){
+export async function inspectAlias(io,token,alias){
   let video,resolvedAlias=alias;
   try{video=unwrap(await io.provider('/videos/'+alias,token));}
   catch(error){
