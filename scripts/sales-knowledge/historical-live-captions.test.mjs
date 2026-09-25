@@ -108,6 +108,20 @@ test('only the dated CB20 Conference 5 may use an event with no product',async()
   assert.equal(other.stats().writes,0);
 });
 
+test('historical recording uses matching v2 revision date when v1 omits it',async()=>{
+  const f=fixture();
+  f.video.updated_at=null;
+  f.io.liveVideos=async()=>({data:[{id:videoId,version:1,duration:180,
+    updated_at:'2026-09-13T12:15:00Z'}]});
+  const manifest=await dryRunHistoricalEvent(f.io,owner,eventId);
+  assert.equal(manifest.ready,true);
+  assert.equal(f.stats().writes,0);
+  f.io.liveVideos=async()=>({data:[{id:videoId,version:2,duration:180,
+    updated_at:'2026-09-13T12:15:00Z'}]});
+  await assert.rejects(importHistoricalEvent(f.io,owner,manifest),/provider_revision_fallback_mismatch/);
+  assert.equal(f.stats().writes,0);
+});
+
 test('historical binding schema blocks course lessons and browser writes',async()=>{
   const db=new PGlite();
   try{

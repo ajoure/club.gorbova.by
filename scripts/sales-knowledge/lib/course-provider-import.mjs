@@ -135,7 +135,7 @@ export async function tokenAndOwner(io,actor){
   return integrations[0].config.api_token;
 }
 const unwrap=x=>x?.data??x;
-export async function inspectAlias(io,token,alias){
+export async function inspectAlias(io,token,alias,{revisionFallback}={}){
   let video,resolvedAlias=alias;
   try{video=unwrap(await io.provider('/videos/'+alias,token));}
   catch(error){
@@ -146,7 +146,17 @@ export async function inspectAlias(io,token,alias){
     try{video=unwrap(await io.provider('/videos/'+resolvedAlias,token));}
     catch(error){if(error?.message==='provider_http_404')throw new Error('video_http_404');throw error;}
   }
-  const rev=providerRevision(video),duration=Math.round(video.duration*1000);
+  let revisionVideo=video;
+  if(!video.updated_at&&revisionFallback){
+    if(revisionFallback.id?.toLowerCase()!==video.id?.toLowerCase()
+      ||revisionFallback.version!==video.version
+      ||revisionFallback.duration!==video.duration
+      ||!revisionFallback.updated_at
+      ||!Number.isFinite(Date.parse(revisionFallback.updated_at)))
+      throw new Error('provider_revision_fallback_mismatch');
+    revisionVideo={...video,updated_at:revisionFallback.updated_at};
+  }
+  const rev=providerRevision(revisionVideo),duration=Math.round(video.duration*1000);
   const source={video_id:video.id,source_revision:rev,duration_ms:duration,resolved_alias:resolvedAlias};
   const tracks=video.audio_tracks||[];
   const audio=tracks.find(x=>x.language==='ru')||(tracks.length===1?tracks[0]:null);
