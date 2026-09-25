@@ -25,7 +25,7 @@ before(async()=>{
  await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
  await db.exec(`INSERT INTO training_lessons VALUES('77777777-7777-4777-8777-777777777777');INSERT INTO lesson_blocks VALUES('55555555-5555-4555-8555-555555555555');INSERT INTO products_v2 VALUES('${COURSE_PRODUCT_IDS[1]}');`);
  await db.exec("ALTER TABLE course_transcription_sources ADD COLUMN source_scope text NOT NULL DEFAULT 'course'");
- await db.exec(await readFile(new URL('../../supabase/migrations/20260925215112_cb21_evidence_gap_publication.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260925222238_7cf1f79d-6d99-4561-8e95-231d1a9e80e5.sql',import.meta.url),'utf8'));
 });
 after(async()=>db?.close());beforeEach(async()=>db.exec('TRUNCATE course_transcription_sources CASCADE'));
 async function rpc(args,role='service_role'){
