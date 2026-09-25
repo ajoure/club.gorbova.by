@@ -408,7 +408,7 @@ function runInBackground(work: Promise<unknown>) {
   return false;
 }
 
-Deno.serve(async (req) => {
+Deno.serve(async (req): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
     if (!action || !eventId) return json({ error: "missing_action_or_live_event_id" }, 400);
 
     const auth = await authenticate(req, service);
-    if ("error" in auth) return auth.error;
+    if ("error" in auth) return auth.error as Response;
     if (!(await canManageEvent(service, auth.user.id, eventId))) return json({ error: "forbidden" }, 403);
 
     if (action === "status") {
