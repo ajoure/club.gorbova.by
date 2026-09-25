@@ -17,6 +17,28 @@
 - Production campaign `cb21-owner-test`: `off`, activation/enabled timestamp `NULL`, один `HUMAN_HOLD`, claimed/sending jobs — 0.
 - GitHub CI по предоставленным run metadata: Code/contracts/production build PASS (`36160559640`), guard PASS (`36160559716`), opt-in checkout smoke SKIPPED по дизайну. Локальный `npm run build` для этого source SHA — PASS по предоставленному результату.
 - Свежий security scan содержит 13 активных error findings, но все они pre-existing/out-of-scope: доступы/роли админки, CRM, база знаний, меню, учебные потоки и доступ к модулям. Ни один finding не указывает на два изменённых UI-компонента, тест, `/cb`, checkout или publication boundary.
+
+### Классификация 13 active error findings
+
+Все относятся к категории `exposed_data`: scanner считает слишком широким чтение таблицы для любого авторизованного пользователя. Все созданы 02.09.2026, до PR #554, и не затрагивают его diff.
+
+| Область | Затронутая таблица/функция продукта | Пересечение с PR #554 |
+| --- | --- | --- |
+| Роли и разрешения | `role_permissions` | Нет; админская модель разрешений |
+| CRM | `crm_pipelines` | Нет; конфигурация CRM-воронок |
+| База знаний | `kb_questions` | Нет; вопросы учебной базы |
+| Навигация | `user_menu_sections` | Нет; пользовательские разделы меню |
+| CRM | `crm_pipeline_stages` | Нет; этапы CRM-воронок |
+| Доступ к контенту | `access_rules` | Нет; общие правила доступа, PR их не читает и не меняет |
+| Роли и разрешения | `roles` | Нет; справочник ролей |
+| Роли и разрешения | `permissions` | Нет; справочник разрешений |
+| Админка | `admin_resource` | Нет; реестр ресурсов админки |
+| Доступ к обучению | `module_access` | Нет; доступ к учебным модулям, не карточки add-ons на `/cb` |
+| Учебные потоки | `flows` | Нет; даты/сущности потоков, не затронуты frontend PR |
+| Админка | `admin_section` | Нет; разделы админки |
+| CRM | `crm_pipeline_product_bindings` | Нет; связи продуктов с CRM-воронками |
+
+Итого: **0 из 13** пересекаются с двумя изменёнными компонентами или тестом; **0 из 13** относятся к `/cb`, checkout или publication boundary. Отдельный finding по `site_domain_bindings` имеет уровень warning, а не critical/error, и также не изменён PR #554.
 - Текущая публикация имеет deployment marker `e0b181ef…`; доказанной связи с SHA PR #554 нет. На `https://gorbova.by/cb` всё ещё видны «Посредничество» и его 500 BYN, поэтому PR #554 ещё не опубликован.
 - Публичная страница сейчас отвечает без browser console/page errors на 1280×720 и 390×844.
 
