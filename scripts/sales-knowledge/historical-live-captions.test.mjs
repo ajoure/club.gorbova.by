@@ -128,7 +128,7 @@ test('historical binding schema blocks course lessons and browser writes',async(
     await db.exec(await readFile(new URL('20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql',base),'utf8'));
     await db.exec(await readFile(new URL('20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql',base),'utf8'));
     await db.exec(await readFile(new URL('20260925141617_cb20_historical_live_caption_bindings.sql',base),'utf8'));
-    await db.exec(await readFile(new URL('20260925143157_cb20_historical_null_product_guard.sql',base),'utf8'));
+    await db.exec(await readFile(new URL('20260925145323_6a819f7c-46a8-47a2-b24b-bbbb04391398.sql',base),'utf8'));
     await db.query('INSERT INTO products_v2(id) VALUES($1)',[COURSE_PRODUCT_IDS[1]]);
     await db.query('INSERT INTO live_events(id,product_id,kinescope_live_event_id,kinescope_project_id,updated_at) VALUES($1,$2,$3,$4,$5)',
       [eventId,COURSE_PRODUCT_IDS[1],liveId,'project-one','2026-09-13T12:19:00Z']);
