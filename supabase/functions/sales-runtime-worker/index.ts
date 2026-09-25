@@ -91,24 +91,9 @@ Deno.serve(async (request) => {
         attendance_history_status:context.client.attendance_history_status});
     }
     if (body.action === "preview") {
-      const p = await read(
-        db.from("sales_campaigns").select("*").eq("code", "cb21-owner-test")
-          .single(),
-      );
-      const c = await read(
-        db.from("sales_conversations").select("*").eq("campaign_id", p.id)
-          .single(),
-      );
-      const context = await loadContext(db, p, c);
-      if(context.mediaSources.length) return json({ok:false,reason:'use_synthetic_preview_or_guarded_job_for_media'},409);
-      // Read-only generation: does not replay a persisted message or create a job.
-      const candidate = await draftReply(context, c.stage);
-      return json({
-        ok: true,
-        mode: "preview_no_send",
-        fact_count: context.facts.length,
-        candidate,
-      });
+      // This legacy route generated a draft from a real customer's transcript
+      // and returned it to the caller. Use only the isolated synthetic preview.
+      return json({ error: "use_preview_scenario" }, 410);
     }
     if (body.action === "preview_scenario") {
       previewStage='scope';
