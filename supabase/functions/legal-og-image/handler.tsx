@@ -2,6 +2,17 @@ import { ImageResponse } from "npm:@vercel/og@0.6.8";
 import React from "npm:react@19.1.1";
 import { createClient } from "npm:@supabase/supabase-js@2.108.2";
 
+// Deno check runs without the React JSX runtime types; declare permissive
+// intrinsic elements so the inline OG markup typechecks.
+declare global {
+  // deno-lint-ignore no-namespace
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: Record<string, unknown>;
+    }
+  }
+}
+
 type SharePreview = {
   title: string;
   doc_number: string | null;
