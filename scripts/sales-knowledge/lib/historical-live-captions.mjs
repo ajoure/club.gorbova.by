@@ -49,7 +49,7 @@ async function inspectEvent(io,actor,eventId){
   if(tracks.length>=100)throw new Error('historical_subtitle_pagination_review');
   const ruTracks=tracks.filter(track=>track.language==='ru');
   if(ruTracks.length!==1||ruTracks[0].status!=='done')throw new Error('historical_russian_subtitles_ambiguous');
-  const candidate=await inspectAlias(io,token,videoId);
+  const candidate=await inspectAlias(io,token,videoId,{revisionFallback:videos[0]});
   if(candidate.video_id.toLowerCase()!==videoId)throw new Error('historical_video_identity_changed');
   const sources=await io.rows('course_transcription_sources','id,source_revision,source_scope,enabled,duration_ms',
     {video_id:`eq.${videoId}`});
