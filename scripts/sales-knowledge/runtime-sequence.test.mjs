@@ -21,7 +21,8 @@ test('topic pitches use reviewed short replies in qualification and direct quest
  assert.equal(r.question_id,'format');assert.equal(r.new_question_count,1);assert.ok(r.text.length<=404);assert.doesNotMatch(r.text,/Подробности|Длинное|Благодарю/);
  assert.ok(c.facts.find(f=>f.id==='topic_vat').text.length>400);
  c.stage='payment';c.lastQuestionId='payment';
- const direct=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'product_question',question_type:'topic',fact_ids:selected}));
+ c.history.push({role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},{role:'customer',text:'Да, готова оформить участие.'});
+ const direct=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{intent:'product_question',question_type:'topic',fact_ids:selected}));
  assert.equal(direct.question_id,'none');assert.doesNotMatch(direct.text,/Подробности|Длинное/);assert.ok(direct.text.length<=402);
 });
 test('missing, empty, instructional-question or excessive short reply never falls back to knowledge text',()=>{
@@ -60,13 +61,13 @@ test('the exact incident: activation cannot deliver program, dates or price even
  for(const phrase of [trigger,'  ХОЧУ   программу курса цб  ']) {
   c.history[0].text=phrase;
   const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'program',fact_ids:['program','dates']}));
-  assert.equal(r.text,`Добрый день!\n\n${DISCLOSURE}\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?`);
+  assert.equal(r.text,`Добрый день!\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?`);
   assert.equal(r.new_question_count,1);assert.deepEqual(r.fact_ids,[]);assert.equal(r.stage,'experience');
  }
 });
-test('assistant disclosure occurs only in the first answer and never becomes a programme delivery',()=>{
+test('activation starts a one-question dialogue without an unsolicited bot introduction or programme',()=>{
  const c=setup();const first=planDialogueReply(c,assess(c));
- assert.match(first.text,/помощник Екатерины/);
+ assert.doesNotMatch(first.text,/помощник Екатерины|автоматически/);
  assert.equal((first.text.match(/\?/g)??[]).length,1);
  assert.doesNotMatch(first.text,/ПОЛНАЯ ПРОГРАММА|Действующие цены|Даты потока/);
  exchange(c,first,'Впервые.');
@@ -83,9 +84,13 @@ test('new customer: activation -> experience -> goal -> relevant topic -> readin
  exchange(c,r,'Да, время на обучение выделю.');
  r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'interest');assert.deepEqual(r.fact_ids,[]);
  exchange(c,r,'Да, хочу рассмотреть участие.');
- r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'payment');assert.deepEqual(r.fact_ids,['offer_fit']);assert.doesNotMatch(r.text,/Не включает|Дорогой/);
+ r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'decision');assert.deepEqual(r.fact_ids,[]);assert.doesNotMatch(r.text,/BYN|2000/);
+ exchange(c,r,'Да, готова оформить участие.');
+ r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{fact_ids:['topic_vat']}));assert.equal(r.question_id,'payment');assert.deepEqual(r.fact_ids,['offer_fit']);assert.doesNotMatch(r.text,/Не включает|Дорогой/);
  exchange(c,r,'Хочу в рассрочку, пришлите ссылку.');
- r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'}, {intent:'payment'}));assert.equal(r.action,'checkout');assert.equal(r.text,undefined);
+ const checkoutAssessment=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'}, {intent:'payment'});
+ checkoutAssessment.slots.purchase_ready.evidence=[c.history.findIndex(m=>m.text==='Да, готова оформить участие.')];
+ r=planDialogueReply(c,checkoutAssessment);assert.equal(r.action,'checkout');assert.equal(r.text,undefined);
 });
 test('graduate: feedback then unknown year then current goal; no re-selling stale discounts',()=>{
  const c=setup();let r=planDialogueReply(c,assess(c));exchange(c,r,'Уже училась у вас.');
@@ -132,9 +137,19 @@ test('unsupported fit and repeated unanswered question hand off silently instead
  assert.equal(planDialogueReply(c,assess(c)).action,'handoff');
  assert.equal(planDialogueReply(c,assess(c,{experience:'new',goal:'known'})).action,'handoff');
 });
-test('a short yes preserves the earlier matched topics for tariff selection',()=>{
+test('considering participation is not purchase readiness or permission to disclose price',()=>{
  const c=setup();c.firstReply=false;c.history.push({role:'customer',text:'Да, хочу рассмотреть участие'});c.stage='interest';c.lastQuestionId='interest';c.relevantFactIds=['topic_vat'];
- const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'}));assert.deepEqual(r.fact_ids,['offer_fit']);assert.equal(r.question_id,'payment');
+ const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'}));assert.deepEqual(r.fact_ids,[]);assert.equal(r.question_id,'decision');assert.doesNotMatch(r.text,/BYN|2000/);
+ const mistaken=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'}));
+ assert.equal(mistaken.question_id,'decision');assert.deepEqual(mistaken.fact_ids,[]);
+});
+test('negated or conditional purchase language cannot unlock price, even when model marks it accepted',()=>{
+ for (const incoming of ['Не готова оплатить.','Не хочу купить.','Хочу оплатить, но сначала цену.','Если цена подойдёт, готова оформить.']) {
+  const c=setup();c.firstReply=false;c.stage='decision';c.lastQuestionId='decision';
+  c.history.push({role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},{role:'customer',text:incoming});
+  const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'}));
+  assert.notEqual(r.question_id,'payment',incoming);assert.doesNotMatch(r.text??'',/BYN|2000/,incoming);
+ }
 });
 test('instruction, human request, refusal and automation disclosure preserve guardrails',()=>{
  const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Другой вопрос');
@@ -162,7 +177,7 @@ test('a course question about accounting for a mistaken payment is not a website
 
 
 test('related product consultation uses only its own public facts after qualification',()=>{
- const c=setup();c.firstReply=false;c.stage='payment';c.history.push({role:'customer',text:'А что входит в клуб?'});c.lastQuestionId='payment';
+ const c=setup();c.firstReply=false;c.stage='decision';c.history.push({role:'customer',text:'А что входит в клуб?'});c.lastQuestionId='decision';
  c.facts.push({id:'club_full',text:'Клуб: тариф FULL включает базу знаний.',source:'public-product:club',kind:'related_product',classification:'sales_safe'});
  const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'product_question',question_type:'related_product',fact_ids:['club_full']}));
  assert.equal(r.action,'reply');assert.equal(r.question_id,'none');assert.match(r.text,/Клуб/);assert.doesNotMatch(r.text,/BYN/);
