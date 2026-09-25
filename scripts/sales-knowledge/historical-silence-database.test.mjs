@@ -36,7 +36,7 @@ test('historical silence RPC preserves held ASR, records proof and resumes witho
       GRANT ALL ON course_transcription_sources,course_historical_event_bindings,
         course_transcription_bindings,course_caption_gap_audits,course_caption_gap_parts,course_gap_reviews
         TO service_role;`);
-    const migration=await readFile(new URL('../../supabase/migrations/20260925210000_cb20_historical_digital_silence.sql',import.meta.url),'utf8');
+    const migration=await readFile(new URL('../../supabase/migrations/20260925181839_e855ec5f-e169-4c66-9429-5a4266982f0b.sql',import.meta.url),'utf8');
     await db.exec(migration);
     await db.query(`INSERT INTO course_transcription_sources VALUES($1,true,'historical_live_event',$2)`,[source,revision]);
     await db.query(`INSERT INTO course_historical_event_bindings VALUES($1)`,[source]);
