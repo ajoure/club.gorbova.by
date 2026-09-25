@@ -10,6 +10,7 @@ import {topicReplyText} from "../_shared/sales-runtime/topic-replies.mjs";
 import { loadContext } from "../_shared/sales-runtime/context.ts";
 import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
 import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
+import { CB21_RELEASE_DIGEST } from "../_shared/cb21-release.ts";
 async function draftReply(
   context: Awaited<ReturnType<typeof loadContext>>,
   stage: string,
@@ -44,7 +45,7 @@ Deno.serve(async (request) => {
   if (request.method === "GET") {
     // Static deployment probe: no database, model, credentials or customer data.
     // A live response proves that the preview guard is in the deployed bundle.
-    const response = json({ runtime_revision: "cb21-payment-turn-gate-v1" });
+    const response = json({ runtime_revision: "cb21-payment-turn-gate-v1", release_digest: CB21_RELEASE_DIGEST });
     response.headers.set("Cache-Control", "no-store");
     response.headers.set("Access-Control-Allow-Methods", "GET");
     return response;
