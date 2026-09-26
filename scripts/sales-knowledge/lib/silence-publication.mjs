@@ -46,7 +46,7 @@ export async function publishSilence(io,actor,approved,prepared){
   const expected={...proof,actor,manifest_sha256:approved.capture_manifest_sha256};
   const result=await io.rpc('course_transcription_mark_verified_silence',args);
   if(result?.status!=='ready'||!same(result.evidence,expected))throw Error('silence_readback_failed');
-  const rows=await io.rows('course_transcription_parts','*',{job_id:`eq.${approved.job_id}`,part_index:`eq.${proof.part_index}`}),p=rows[0];
+  const rows=await io.rows('course_transcription_parts','*',{job_id:`eq.${approved.job_id}`,part_index:`eq.${proof.part_index}`,order:'part_index.asc'}),p=rows[0];
   const annotation=`[Редакционная отметка: цифровая тишина; ${proof.start_ms}–${proof.end_ms} мс; речь отсутствует.]`;
   if(rows.length!==1||p.status!=='ready'||p.attempts!==0||p.audio_sha256!==proof.audio_sha256
    ||p.transcript_text!==annotation||!same(p.silence_evidence,expected))throw Error('silence_readback_failed');
