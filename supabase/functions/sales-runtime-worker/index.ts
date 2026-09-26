@@ -14,6 +14,7 @@ import { loadContext } from "../_shared/sales-runtime/context.ts";
 import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
 import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
 import { CB21_RELEASE_DIGEST } from "../_shared/cb21-release.ts";
+import {authorizeInteractiveAction} from "../_shared/sales-runtime/interactive-auth.mjs";
 async function draftReply(
   context: Awaited<ReturnType<typeof loadContext>>,
   stage: string,
@@ -65,20 +66,25 @@ Deno.serve(async (request) => {
         p_candidate: secret,
       });
     if (!cronAuthorized) {
-      // The owner's browser can run only the isolated, read-only fixture.
-      // Every operational action still requires the cron secret.
-      if (body.action !== "preview_scenario") return json({ error: "unauthorized" }, 401);
-      const actor = await operator(db, request);
-      if (!actor || !await rpc(db, "has_role_v2", {
-        _user_id: actor.id,
-        _role_code: "super_admin",
-      })) return json({ error: "forbidden" }, 403);
+      const decision = await authorizeInteractiveAction({
+        action: body.action,
+        actor: await operator(db, request),
+        isSuperAdmin: (id:string) => rpc(db, "has_role_v2", {_user_id:id,_role_code:"super_admin"}),
+        loadOwnerScope: async () => {
+          const campaign = await read(db.from("sales_campaigns").select("id,test_user_id,mode").eq("code","cb21-owner-test").single());
+          const conversation = await read(db.from("sales_conversations").select("human_hold").eq("campaign_id",campaign.id).single());
+          return {campaign,conversation};
+        },
+      });
+      if(!decision.allowed)return json({error:decision.error},decision.status);
     }
     // A read-only readiness check does not claim, generate, notify, or send.
     if (body.action === "health") {
       return json({
         ok: true,
         provider_configured: !!Deno.env.get("LOVABLE_API_KEY"),
+        release_digest: CB21_RELEASE_DIGEST,
+        broadcast_state: await rpc(db,"sales_broadcast_state",{p_now:new Date().toISOString()}),
         runtime: "cb21-v2",
         client_evidence_revision: "v1",
         knowledge_editor_revision: "v1",
