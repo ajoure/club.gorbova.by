@@ -15,7 +15,7 @@ before(async()=>{
  for(const name of ['20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql','20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql'])
   await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
  await db.exec("ALTER TABLE course_transcription_sources ADD COLUMN source_scope text NOT NULL DEFAULT 'course'");
- await db.exec(await readFile(new URL('../../supabase/migrations/20260925222034_cb21_verified_digital_silence.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260925224758_cf9b9702-12c8-4b70-a378-7c7c80e501a5.sql',import.meta.url),'utf8'));
 });
 after(async()=>db?.close());beforeEach(async()=>db.exec('TRUNCATE course_transcription_sources CASCADE'));
 async function rpc(args,role='service_role'){
