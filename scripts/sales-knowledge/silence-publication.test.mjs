@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectLongSource} from './lib/long-course-stt.mjs';
-import {prepareSilencePublication} from './lib/silence-publication.mjs';
+import {prepareSilencePublication,publishSilence} from './lib/silence-publication.mjs';
 import {pcmParts,STT_MODEL} from './lib/course-stt.mjs';
-import {COURSE_PRODUCT_IDS} from './lib/course-provider-import.mjs';
+import {COURSE_PRODUCT_IDS,createManagedTransport} from './lib/course-provider-import.mjs';
 const actor='00000000-0000-4000-8000-000000000001',video='11111111-1111-4111-8111-111111111111',block='22222222-2222-4222-8222-222222222222',id='33333333-3333-4333-8333-333333333333';
 async function fixture(){
  const state={active:true,revision:1,noise:false,writes:0};let tables={};
@@ -33,4 +33,28 @@ for(const change of ['noise','revision','active','missing_job','unfinished_speec
  if(change==='unfinished_speech')f.tables.course_transcription_parts[1].status='pending';
  if(change==='changed_binding')f.tables.course_transcription_bindings=[];
  await assert.rejects(f.run());assert.equal(f.state.writes,0);
+});
+
+test('publication reads marked parts through managed transport with their composite key',async()=>{
+ const f=await fixture(),prepared=await f.run(),approved=prepared.manifest;
+ const proof=approved.proofs[0],evidence={...proof,actor,manifest_sha256:approved.capture_manifest_sha256};
+ let marks=0,readbacks=0;
+ const io=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'synthetic',fetchImpl:async(url,options)=>{
+  const u=new URL(url);
+  if(u.pathname.endsWith('/rpc/course_transcription_mark_verified_silence')){
+   marks++;return Response.json({status:'ready',evidence,reused:marks>1});
+  }
+  assert.equal(u.pathname,'/rest/v1/course_transcription_parts');
+  assert.equal(u.searchParams.get('order'),'part_index.asc');
+  assert.equal(u.searchParams.get('job_id'),'eq.'+approved.job_id);
+  if(u.searchParams.has('part_index')){
+   assert.equal(u.searchParams.get('part_index'),'eq.0');readbacks++;
+   return Response.json([{status:'ready',attempts:0,audio_sha256:proof.audio_sha256,silence_evidence:evidence,
+    transcript_text:`[Редакционная отметка: цифровая тишина; ${proof.start_ms}–${proof.end_ms} мс; речь отсутствует.]`}]);
+  }
+  // Stop before finalize: this transport regression only supplies the marked row.
+  return Response.json([]);
+ }});
+ await assert.rejects(publishSilence(io,actor,approved,prepared),/silence_finalization_incomplete/);
+ assert.equal(readbacks,1);assert.equal(marks,2);
 });
