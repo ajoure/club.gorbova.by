@@ -28,7 +28,7 @@ await db.exec(`
  CREATE TABLE public.orders_v2(id uuid,status text);
  CREATE TABLE public.order_group_items(id uuid,order_id uuid,order_group_id uuid,role text,product_id uuid,item_snapshot jsonb);
  CREATE TABLE public.scheduled_product_access(order_group_id uuid,status text,access_delivery_mode text,opens_at timestamptz,updated_at timestamptz);
- CREATE TABLE public.audit_logs(action text,actor_type text,actor_user_id uuid,entity_type text,entity_id text,meta jsonb);
+ CREATE TABLE public.audit_logs(action text,actor_type text CONSTRAINT audit_logs_actor_type_check CHECK (actor_type IN ('user','system','service')),actor_user_id uuid,entity_type text,entity_id text,meta jsonb);
  CREATE TABLE public.tariffs(id uuid PRIMARY KEY,product_id uuid);
  CREATE TABLE public.tariff_offers(id uuid PRIMARY KEY,tariff_id uuid,is_active boolean,meta jsonb);
  CREATE TABLE public.offer_addons(parent_offer_id uuid,is_active boolean,access_delivery_mode text,access_opens_at timestamptz);
@@ -57,6 +57,18 @@ for (const table of ['training_modules','training_lessons','lesson_blocks','less
  await db.exec(`ALTER TABLE public.${table} ENABLE ROW LEVEL SECURITY; CREATE POLICY old_permissive ON public.${table} FOR ALL TO authenticated,anon USING(true) WITH CHECK(true);`);
 }
 await db.exec(await readFile(new URL('../../supabase/migrations/20260929061010_cb21_learning_release_gate.sql',import.meta.url),'utf8'));
+// Match the real production CHECK: the original admin-save failure must roll back.
+await db.exec(`SELECT set_config('request.jwt.claim.sub','${admin}',false);`);
+await assert.rejects(db.query(`SELECT public.set_training_release_schedule('${flow}','2026-10-01',46,'manual')`),/audit_logs_actor_type_check/);
+assert.equal((await db.query(`SELECT start_date::text value FROM public.flows WHERE id='${flow}'`)).rows[0].value,'2026-09-30');
+const triggerBefore=(await db.query(`SELECT pg_get_functiondef('private.sync_cb21_learning_release()'::regprocedure) body`)).rows[0].body;
+await db.exec(await readFile(new URL('../../supabase/migrations/20260929070426_cb21_release_audit_actor.sql',import.meta.url),'utf8'));
+const triggerAfter=(await db.query(`SELECT pg_get_functiondef('private.sync_cb21_learning_release()'::regprocedure) body`)).rows[0].body;
+assert.equal(triggerAfter,triggerBefore.replace("ELSE 'admin' END","ELSE 'user' END"));
+assert.equal((await db.query(`SELECT count(*)::int n FROM public.audit_logs WHERE actor_type='system' AND actor_user_id IS NULL`)).rows[0].n,1);
+await assert.rejects(db.query(`INSERT INTO public.audit_logs(actor_type) VALUES('admin')`),/audit_logs_actor_type_check/);
+await db.exec(`SELECT set_config('request.jwt.claim.sub','',false);`);
+
 const scalar=async(sql,args=[]) => (await db.query(sql,args)).rows[0].value;
 const reason=(u,l,date)=>scalar('SELECT private.cb21_lesson_lock_reason($1,$2,$3) value',[u,l,date]);
 assert.equal(await reason(buyer,lesson1,'2026-09-29T20:59:59Z'),'before_start');
@@ -99,6 +111,7 @@ assert.equal(await scalar(`SELECT opens_at='2026-11-13T21:00Z'::timestamptz valu
 await db.exec(`SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub','${admin}',false); SELECT public.set_training_release_schedule('${flow}','2026-09-30',45,'manual'); RESET ROLE;`);
 assert.equal(await scalar(`SELECT access_delivery_mode value FROM public.scheduled_product_access WHERE order_group_id='${id(32)}'`),'manual');
 assert.equal(await scalar(`SELECT opens_at value FROM public.scheduled_product_access WHERE order_group_id='${id(32)}'`),null);
+assert.equal(await scalar(`SELECT count(*)::int value FROM public.audit_logs WHERE actor_type='user' AND actor_user_id='${admin}'`),1);
 // A subscription-only purchaser uses the same CB21 gate without manufacturing an entitlement.
 await db.exec(`INSERT INTO public.subscriptions_v2 VALUES('${id(50)}','${product}','${tariff}','active','2026-09-01','2027-06-30'); UPDATE public.flows SET start_date=current_date-1; SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub','${id(50)}',false);`);
 assert.equal(await scalar(`SELECT public.user_has_training_lesson_access('${id(50)}','${lesson1}') value`),true);
