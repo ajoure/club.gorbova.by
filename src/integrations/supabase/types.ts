@@ -23753,11 +23753,6 @@ export type Database = {
       }
     }
     Functions: {
-      get_training_release_schedule: { Args: { _module_id: string }; Returns: Json }
-      get_training_release_lessons: { Args: { _module_id: string }; Returns: Json }
-      set_training_release_schedule: { Args: { _flow_id: string; _start_date: string; _addon_delay_days: number; _addon_mode: string }; Returns: Json }
-      training_release_guard: { Args: { _lesson_id: string }; Returns: boolean }
-      training_module_release_guard: { Args: { _module_id: string }; Returns: boolean }
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {
@@ -26295,6 +26290,14 @@ export type Database = {
         Args: { p_section_code: string }
         Returns: Json
       }
+      get_training_release_lessons: {
+        Args: { _module_id: string }
+        Returns: Json
+      }
+      get_training_release_schedule: {
+        Args: { _module_id: string }
+        Returns: Json
+      }
       get_user_document_package_ids: {
         Args: never
         Returns: {
@@ -27432,6 +27435,15 @@ export type Database = {
         Args: { p_domain: string; p_page_id: string }
         Returns: undefined
       }
+      set_training_release_schedule: {
+        Args: {
+          _addon_delay_days: number
+          _addon_mode: string
+          _flow_id: string
+          _start_date: string
+        }
+        Returns: Json
+      }
       settle_composable_order_group: {
         Args: { _payment_id: string; _primary_order_id: string }
         Returns: Json
@@ -27459,6 +27471,11 @@ export type Database = {
         Returns: Json
       }
       tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
+      training_module_release_guard: {
+        Args: { _module_id: string }
+        Returns: boolean
+      }
+      training_release_guard: { Args: { _lesson_id: string }; Returns: boolean }
       trigger_card_verification: { Args: never; Returns: undefined }
       try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       unassign_contact_center_dialog_v1: {
