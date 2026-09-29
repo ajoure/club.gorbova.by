@@ -40,6 +40,14 @@ test('eligible new preregistration phrase activates and keeps existing content/o
   d.candidate.contains_paid_instruction = false; d.candidate.product_id = 'other';
   assert.equal(evaluateReply(d).allowed, false);
 });
+test('approved namespaced knowledge version allows owner activation and first reply', () => {
+  const d = fixture();
+  d.policy.knowledge_version = 'sales-kb:ff2438da-1234-4abc-8123-123456789abc';
+  d.candidate.knowledge_version = d.policy.knowledge_version;
+  d.conversation = activateSalesConversation(d);
+  assert.equal(d.conversation.sales_started, true);
+  assert.equal(evaluateReply(d).allowed, true);
+});
 test('wrong phrase, missing preregistration, historic, edited and echoed events never activate', () => {
   for (const patch of [{ text: 'course' }, { preregistration_verified: false },
     { preregistration_verified: 'true' }, { origin: 'import' }, { type: 'edited_message' }, { type: 'bot_echo' }, { seq: 4 }]) {
