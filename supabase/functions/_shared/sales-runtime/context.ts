@@ -1,6 +1,5 @@
 import { loadPublicTariffAccess } from "../public-tariff-access.ts";
 import { DB, read, rpc } from "./db.ts";
-import { DISCLOSURE } from "./replies.mjs";
 import { readFullHistory, describeAttachment } from "./history.mjs";
 import {readAIConfig} from './ai.mjs';
 import {loadRelatedProducts} from './related-products.ts';
@@ -115,12 +114,7 @@ export async function loadContext(db: DB, p: any, c: any) {
     ),
   );
   const now = Date.now(),
-    facts: Fact[] = [{
-      id: "automation",
-      text: DISCLOSURE,
-      classification: "sales_safe",
-      source: "owner-test-transparency-policy",
-    }];
+    facts: Fact[] = [];
   const add = (id: string, text: string, source: string, kind?: string) =>
     facts.push({ id, text, source, kind, classification: "sales_safe" });
   add(

@@ -47,3 +47,9 @@ test('private worker probes stay behind existing credentials and before side eff
   assert.ok(control.indexOf('"has_role_v2"') <
     control.indexOf('release_digest: CB21_RELEASE_DIGEST'));
 });
+
+test('worker context does not import removed disclosure text', async () => {
+  const context = await readFile(join(functions, '_shared/sales-runtime/context.ts'), 'utf8');
+  assert.doesNotMatch(context, /\bDISCLOSURE\b/);
+  assert.doesNotMatch(context, /owner-test-transparency-policy/);
+});
