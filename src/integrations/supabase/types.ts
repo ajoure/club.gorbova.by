@@ -23753,11 +23753,6 @@ export type Database = {
       }
     }
     Functions: {
-      get_training_release_schedule: { Args: { _module_id: string }; Returns: Json }
-      get_training_release_lessons: { Args: { _module_id: string }; Returns: Json }
-      set_training_release_schedule: { Args: { _flow_id: string; _start_date: string; _addon_delay_days: number; _addon_mode: string }; Returns: Json }
-      training_release_guard: { Args: { _lesson_id: string }; Returns: boolean }
-      training_module_release_guard: { Args: { _module_id: string }; Returns: boolean }
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {
