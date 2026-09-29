@@ -1,6 +1,12 @@
 -- READ ONLY. Compare saleable CB21 add-ons with deliverable CB20 source rows.
 -- Historic CB20/Club entitlements are intentionally outside this catalogue gate.
-WITH pairs(role, offer_source_tariff, addon_source_tariff, target_tariff) AS (
+WITH release_policy AS (
+ SELECT CASE WHEN meta#>>'{learning_gate,addon_mode}'='manual' THEN 'manual' ELSE 'fixed_date' END mode,
+   CASE WHEN meta#>>'{learning_gate,addon_mode}'='manual' THEN NULL::timestamptz
+     WHEN meta ? 'learning_gate' THEN (start_date::date+(meta#>>'{learning_gate,addon_delay_days}')::integer)::timestamp AT TIME ZONE 'Europe/Minsk'
+     ELSE '2026-12-09T21:00:00Z'::timestamptz END opens_at
+ FROM public.flows WHERE id='b10e15c5-51c3-5df5-ba83-a42416da5902'
+), pairs(role, offer_source_tariff, addon_source_tariff, target_tariff) AS (
  VALUES
  ('accountant','38ee08c4-21db-4a97-86e6-303bd96c48db'::uuid,'38ee08c4-21db-4a97-86e6-303bd96c48db'::uuid,'3c749a5d-fa43-5552-b064-c66611dedd58'::uuid),
  ('chief','a18df7a7-9c8b-4e63-9ea9-b6887c23927f'::uuid,'a18df7a7-9c8b-4e63-9ea9-b6887c23927f'::uuid,'3b427617-b192-57fa-9ac4-e85c28a7ad2f'::uuid),
@@ -73,8 +79,8 @@ invalid AS (
    OR NOT coalesce(a.addon_tariff_active,false)
    OR NOT coalesce(a.addon_offer_active,false)
    OR coalesce(a.addon_offer_amount,0)<=0
-   OR a.access_delivery_mode IS DISTINCT FROM 'fixed_date'
-   OR a.access_opens_at IS DISTINCT FROM '2026-12-09T21:00:00Z'::timestamptz
+   OR a.access_delivery_mode IS DISTINCT FROM (SELECT mode FROM release_policy)
+   OR a.access_opens_at IS DISTINCT FROM (SELECT opens_at FROM release_policy)
    OR (a.role IN('business','alumni') AND
      (a.pricing_mode IS DISTINCT FROM 'percent_discount' OR a.discount_percent IS DISTINCT FROM 50))
    OR (a.role IN('accountant','chief') AND

@@ -46,6 +46,7 @@ export interface TrainingLesson {
   attachments?: LessonAttachment[];
   // PATCH: Scheduled lessons flag
   isScheduled?: boolean;
+  release_lock_reason?: string | null;
   // Month-gate (cabinet, source: backend RPC)
   lock_reason?: "month_mismatch" | null;
   locked_month?: string | null;
@@ -94,12 +95,15 @@ export function useTrainingLessons(moduleId?: string) {
       
       // PATCH-1: Fetch ALL lessons (admin sees inactive too)
       // Filtering by is_active and published_at happens after enrichment
-      const { data: lessonsData, error } = await supabase
-        .from("training_lessons")
-        .select("*")
-        .eq("module_id", moduleId)
-        .order("sort_order", { ascending: true });
-
+      // The configured course catalogue redacts every locked lesson on the server.
+      // Other trainings retain their existing query and policies.
+      const { data: catalogue, error: catalogueError } = isAdminUser
+        ? { data: null, error: null }
+        : await supabase.rpc("get_training_release_lessons", { _module_id: moduleId });
+      if (catalogueError) throw catalogueError;
+      const { data: lessonsData, error } = Array.isArray(catalogue)
+        ? { data: catalogue as unknown as TrainingLesson[], error: null }
+        : await supabase.from("training_lessons").select("*").eq("module_id", moduleId).order("sort_order", { ascending: true });
       if (error) throw error;
 
       // Fetch attachments for all lessons
@@ -140,7 +144,7 @@ export function useTrainingLessons(moduleId?: string) {
         // НЕ фильтруем по published_at — урок показываем, но с флагом isScheduled
         .map(lesson => {
           const publishedAt = lesson.published_at ? new Date(lesson.published_at) : null;
-          const isScheduled = publishedAt && publishedAt > now;
+          const isScheduled = (publishedAt && publishedAt > now) || !!(lesson as TrainingLesson).release_lock_reason;
           return {
             ...lesson,
             // isScheduled = true для уроков с будущей датой (показываем "Скоро")

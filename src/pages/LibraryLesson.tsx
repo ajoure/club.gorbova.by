@@ -171,7 +171,7 @@ export default function LibraryLesson() {
   // Access check via useTrainingModules
   const { modules: allModules, loading: modulesLoading } = useTrainingModules();
   const moduleWithAccess = allModules.find(m => m.slug === moduleSlug);
-  const hasAccess = moduleWithAccess?.has_access ?? true;
+  const hasAccess = moduleWithAccess?.has_access ?? (module?.product_id !== "2b7bf6d4-ad8d-46ad-9399-7f96c307c596");
 
   // Find current lesson
   const currentLesson = lessons.find(l => l.slug === lessonSlug);
@@ -180,10 +180,10 @@ export default function LibraryLesson() {
   const nextLesson = currentIndex < lessons.length - 1 ? lessons[currentIndex + 1] : null;
 
   // Fetch blocks for current lesson
-  const { blocks, loading: blocksLoading } = useLessonBlocks(currentLesson?.id);
+  const { blocks, loading: blocksLoading } = useLessonBlocks(currentLesson?.release_lock_reason ? undefined : currentLesson?.id);
 
   // Fetch questions for this lesson (if any - for video Q&A episodes)
-  const { data: lessonQuestions } = useLessonQuestions(currentLesson?.id);
+  const { data: lessonQuestions } = useLessonQuestions(currentLesson?.release_lock_reason ? undefined : currentLesson?.id);
 
   const handleToggleComplete = async () => {
     if (!currentLesson) return;
@@ -199,7 +199,7 @@ export default function LibraryLesson() {
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
 
-  if (moduleLoading || lessonsLoading) {
+  if (moduleLoading || lessonsLoading || modulesLoading) {
     return (
       <DashboardLayout>
         <div className="container mx-auto px-4 py-6 max-w-4xl">
@@ -223,6 +223,15 @@ export default function LibraryLesson() {
         </div>
       </DashboardLayout>
     );
+  }
+
+  if (currentLesson.release_lock_reason && !isAdminMode) {
+    return <DashboardLayout><div className="container mx-auto max-w-md px-4 py-12 text-center">
+      <Lock className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+      <h1 className="mb-3 text-2xl font-bold">Урок закрыт</h1>
+      <p className="mb-6 text-muted-foreground">{currentLesson.release_lock_reason === "previous_lesson" ? "Сначала завершите предыдущий урок." : "Урок откроется по расписанию тренинга после старта обучения и публикации модуля."}</p>
+      <Button variant="outline" onClick={() => navigate(`/library/${moduleSlug}`)}>Вернуться к тренингу</Button>
+    </div></DashboardLayout>;
   }
 
   // PATCH-2: Check if lesson is scheduled for future (non-admin)
@@ -255,7 +264,7 @@ export default function LibraryLesson() {
   }
 
   // P4b: Access check — show lock if no access, "empty" if content not added
-  const showAccessDenied = !blocksLoading && blocks.length === 0 && !hasAccess && !modulesLoading && !isAdminMode;
+  const showAccessDenied = !hasAccess && !modulesLoading && !isAdminMode && (module.product_id === "2b7bf6d4-ad8d-46ad-9399-7f96c307c596" || (!blocksLoading && blocks.length === 0));
   const showEmptyContent = !blocksLoading && blocks.length === 0 && hasAccess && !currentLesson.video_url && !currentLesson.audio_url && !currentLesson.content;
 
   if (showAccessDenied) {

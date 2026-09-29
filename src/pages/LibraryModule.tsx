@@ -1,3 +1,5 @@
+import { formatTrainingReleaseDate, useTrainingReleaseSchedule } from "@/hooks/useTrainingReleaseSchedule";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useUnreadFeedbackByLesson } from "@/hooks/useTrainingFeedback";
@@ -63,6 +65,7 @@ const getMenuSectionLabel = (key: string | null): string =>
 export default function LibraryModule() {
   const { moduleSlug } = useParams<{ moduleSlug: string }>();
   const navigate = useNavigate();
+  const { isAdmin } = usePermissions();
 
   // Fetch module info
   const { data: module, isLoading: moduleLoading } = useQuery({
@@ -79,6 +82,8 @@ export default function LibraryModule() {
     },
     enabled: !!moduleSlug,
   });
+
+  const release = useTrainingReleaseSchedule(module?.id);
 
   // Get access info from useTrainingModules (sidebar/global access list)
   const { modules: allModules, loading: modulesLoading } = useTrainingModules();
@@ -159,7 +164,7 @@ export default function LibraryModule() {
   const lessonIds = lessons.map(l => l.id);
   const { data: unreadByLesson } = useUnreadFeedbackByLesson(lessonIds);
 
-  if (moduleLoading) {
+  if (moduleLoading || (module?.product_id === "2b7bf6d4-ad8d-46ad-9399-7f96c307c596" && release.isLoading)) {
     return (
       <DashboardLayout>
         <div className="container mx-auto px-4 py-6 max-w-4xl">
@@ -187,6 +192,15 @@ export default function LibraryModule() {
         </div>
       </DashboardLayout>
     );
+  }
+
+  if (!isAdmin() && release.data && (release.data.before_start || !release.data.is_active)) {
+    return <DashboardLayout><div className="container mx-auto max-w-md px-4 py-12 text-center">
+      <Lock className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+      <h1 className="mb-3 text-2xl font-bold">Обучение ещё не началось</h1>
+      <p className="text-muted-foreground">Старт — {formatTrainingReleaseDate(release.data.starts_at)}, в 00:00 по Минску. До старта все уроки закрыты.</p>
+      <Button className="mt-6" variant="outline" onClick={() => navigate("/products")}>Мои продукты</Button>
+    </div></DashboardLayout>;
   }
 
   return (
@@ -427,6 +441,8 @@ export default function LibraryModule() {
                         <p className="text-xs text-amber-600 dark:text-amber-400">
                           Доступно покупателям тарифа BUSINESS
                         </p>
+                      ) : lesson.release_lock_reason ? (
+                        <p className="text-xs text-amber-600">{lesson.release_lock_reason === "previous_lesson" ? "Сначала завершите предыдущий урок" : "Закрыто по расписанию тренинга"}</p>
                       ) : isScheduled && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
                           <Timer className="h-3 w-3" />
