@@ -62,7 +62,7 @@ await db.exec(`SELECT set_config('request.jwt.claim.sub','${admin}',false);`);
 await assert.rejects(db.query(`SELECT public.set_training_release_schedule('${flow}','2026-10-01',46,'manual')`),/audit_logs_actor_type_check/);
 assert.equal((await db.query(`SELECT start_date::text value FROM public.flows WHERE id='${flow}'`)).rows[0].value,'2026-09-30');
 const triggerBefore=(await db.query(`SELECT pg_get_functiondef('private.sync_cb21_learning_release()'::regprocedure) body`)).rows[0].body;
-await db.exec(await readFile(new URL('../../supabase/migrations/20260929070426_cb21_release_audit_actor.sql',import.meta.url),'utf8'));
+await db.exec(await readFile(new URL('../../supabase/migrations/20260929071629_4564b752-c664-4a51-a5c4-80c3df9adf3e.sql',import.meta.url),'utf8'));
 const triggerAfter=(await db.query(`SELECT pg_get_functiondef('private.sync_cb21_learning_release()'::regprocedure) body`)).rows[0].body;
 assert.equal(triggerAfter,triggerBefore.replace("ELSE 'admin' END","ELSE 'user' END"));
 assert.equal((await db.query(`SELECT count(*)::int n FROM public.audit_logs WHERE actor_type='system' AND actor_user_id IS NULL`)).rows[0].n,1);
