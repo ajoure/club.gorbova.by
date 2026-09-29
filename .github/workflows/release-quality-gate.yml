@@ -40,7 +40,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
           node --test scripts/sales-knowledge/*.test.mjs
       - name: CB21 learning release RLS boundaries
-        run: node scripts/tests/cb21-learning-release.test.mjs
+        run: |
+          node scripts/tests/cb21-learning-release.test.mjs
+          node scripts/tests/cb21-oct31-schedule.test.mjs
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build
