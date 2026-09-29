@@ -1,3 +1,4 @@
+import { TrainingReleaseSettings } from "@/components/admin/trainings/TrainingReleaseSettings";
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -903,6 +904,7 @@ export default function AdminTrainingModules() {
                 setFormData={setFormData}
                 editingModule={editingModule}
               />
+              {editingModule && !editingModule.parent_module_id && editingModule.product_id === "2b7bf6d4-ad8d-46ad-9399-7f96c307c596" && <TrainingReleaseSettings moduleId={editingModule.id} />}
               <div className="flex items-start gap-2 rounded-md border border-border p-3">
                 <Switch
                   id="inherit-content-month"

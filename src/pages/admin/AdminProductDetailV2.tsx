@@ -1,3 +1,4 @@
+import { TrainingReleaseSettings } from "@/components/admin/trainings/TrainingReleaseSettings";
 import { OfferPurchaseEligibilitySettings, validatePurchaseEligibility } from "@/components/admin/products/OfferPurchaseEligibilitySettings";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1435,6 +1436,7 @@ export default function AdminProductDetailV2() {
 
           {/* Flows Tab */}
           <TabsContent value="flows" className="space-y-4 mt-6">
+            {productId === "2b7bf6d4-ad8d-46ad-9399-7f96c307c596" && <TrainingReleaseSettings moduleId="4365e913-36f1-432e-ab16-748c3ca6826a" />}
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Потоки</h2>
