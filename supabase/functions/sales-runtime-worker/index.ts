@@ -296,14 +296,36 @@ Deno.serve(async (request) => {
         policyInput(p, current, job, b, candidate, new Date().toISOString()),
       );
       if (!verdict.allowed) {
-        return json({ ok: true, action: "cancelled", reason: verdict.reason });
+        await rpc(db, "sales_handoff", {
+          p_job: job.id,
+          p_token: job.claim_token,
+          p_reason: `policy_${verdict.reason}`,
+        });
+        await notifyAssignments(db);
+        return json({ ok: true, action: "handoff", reason: verdict.reason });
       }
       const allowed = await rpc(db, "sales_begin_send", {
         p_job: job.id,
         p_token: job.claim_token,
         p_candidate: candidate,
       });
-      if (!allowed) return json({ ok: true, action: "cancelled" });
+      if (!allowed) {
+        // The SQL delivery gate may intentionally requeue this job for an
+        // active broadcast or a quiet-hours delay. Only a still-claimed job
+        // needs operator review; it must never age into a false crash alert.
+        const afterGate = await read(db.from("sales_jobs").select("status,claim_token")
+          .eq("id", job.id).single());
+        if (afterGate.status === "claimed" && afterGate.claim_token === job.claim_token) {
+          await rpc(db, "sales_handoff", {
+            p_job: job.id,
+            p_token: job.claim_token,
+            p_reason: "dispatch_blocked",
+          });
+          await notifyAssignments(db);
+          return json({ ok: true, action: "handoff", reason: "dispatch_blocked" });
+        }
+        return json({ ok: true, action: afterGate.status === "queued" ? "deferred" : "cancelled" });
+      }
       sending = true;
       const telegram = await fetch(
         `https://api.telegram.org/bot${bot.bot_token_encrypted}/sendMessage`,

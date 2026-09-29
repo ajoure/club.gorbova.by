@@ -1,4 +1,8 @@
 const id = (v) => typeof v === "string" && /^[\w-]{1,128}$/.test(v);
+// The knowledge editor issues this namespaced version after an approved edit.
+// Keep scope identifiers strict; only knowledge versions may use this format.
+const knowledgeVersion = (v) => id(v) || (typeof v === "string" &&
+  /^sales-kb:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
 const seq = (v) => Number.isSafeInteger(v) && v >= 0;
 const time = (v) => typeof v === "string" ? Date.parse(v) : NaN;
 
@@ -81,7 +85,7 @@ export function evaluateReply({ policy, conversation, candidate, now }) {
     candidate.history_revision !== conversation.history_revision
   ) return deny("stale_history");
   if (
-    !id(policy.knowledge_version) ||
+    !knowledgeVersion(policy.knowledge_version) ||
     candidate.knowledge_version !== policy.knowledge_version
   ) return deny("stale_knowledge");
   if (
@@ -266,7 +270,7 @@ export function activateSalesConversation({ policy, conversation, event }) {
   if (
     policy?.approved !== true || policy.require_activation !== true ||
     !["shadow", "draft", "auto"].includes(policy.mode) || !id(policy.version) ||
-    !id(policy.knowledge_version) || event.preregistration_verified !== true ||
+    !knowledgeVersion(policy.knowledge_version) || event.preregistration_verified !== true ||
     !matchesSalesTrigger(event.text, policy.trigger_phrase)
   ) return next;
   for (

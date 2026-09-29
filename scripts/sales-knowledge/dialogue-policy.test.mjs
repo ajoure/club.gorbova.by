@@ -19,6 +19,18 @@ test('reply to a new customer question requires WAIT_CUSTOMER after delivery', (
   const result = evaluateReply(scenario());
   assert.equal(result.allowed, true); assert.equal(result.after_delivery, 'WAIT_CUSTOMER');
 });
+test('approved editor knowledge version is accepted without loosening scope IDs', () => {
+  const data = scenario();
+  const version = 'sales-kb:ff2438da-1234-4abc-8123-123456789abc';
+  data.policy.knowledge_version = version;
+  data.candidate.knowledge_version = version;
+  assert.equal(evaluateReply(data).allowed, true);
+  data.policy.knowledge_version = 'sales-kb:not-a-uuid';
+  assert.equal(evaluateReply(data).reason, 'stale_knowledge');
+  data.policy.knowledge_version = version;
+  data.conversation.id = 'chat:other';
+  assert.equal(evaluateReply(data).reason, 'outside_scope');
+});
 for (const [name, change] of [
   ['off', d => { d.policy.mode = 'off'; }],
   ['shadow', d => { d.policy.mode = 'shadow'; }],
