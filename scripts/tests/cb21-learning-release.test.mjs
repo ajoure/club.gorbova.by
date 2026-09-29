@@ -48,8 +48,8 @@ await db.exec(`
  INSERT INTO public.tariff_offers VALUES('${id(21)}','${tariff}',true,'{}'),('${id(22)}','${tariff}',true,'{"sales_legacy_only":true}');
  INSERT INTO public.offer_addons SELECT '${id(21)}',true,'fixed_date','2026-12-09T21:00Z'::timestamptz FROM generate_series(1,128);
  INSERT INTO public.offer_addons VALUES('${id(22)}',true,'manual',null);
- INSERT INTO public.orders_v2 VALUES('${id(30)}','pending');
- INSERT INTO public.order_group_items VALUES('${id(31)}',null,'${id(32)}','primary','${product}','{}'),('${id(33)}','${id(30)}','${id(32)}','addon','${legacyProduct}','{"access_delivery_mode":"manual","price":100}');
+ INSERT INTO public.orders_v2 VALUES('${id(30)}','pending'),('${id(34)}','draft');
+ INSERT INTO public.order_group_items VALUES('${id(31)}',null,'${id(32)}','primary','${product}','{}'),('${id(33)}','${id(30)}','${id(32)}','addon','${legacyProduct}','{"access_delivery_mode":"manual","price":100}'),('${id(35)}','${id(34)}','${id(32)}','addon','${legacyProduct}','{"access_delivery_mode":"manual","price":200}');
  GRANT USAGE ON SCHEMA auth,public TO authenticated,anon;
  GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO authenticated,anon;
 `);
@@ -92,6 +92,8 @@ await assert.rejects(db.query(`INSERT INTO public.lesson_progress VALUES('${buye
 await db.exec(`RESET ROLE; UPDATE public.flows SET start_date='2026-09-30';`);
 assert.equal(await scalar(`SELECT item_snapshot->>'access_delivery_mode' value FROM public.order_group_items WHERE id='${id(33)}'`),'fixed_date');
 assert.equal(await scalar(`SELECT (item_snapshot->>'price')::int value FROM public.order_group_items WHERE id='${id(33)}'`),100);
+assert.equal(await scalar(`SELECT item_snapshot->>'access_delivery_mode' value FROM public.order_group_items WHERE id='${id(35)}'`),'fixed_date');
+assert.equal(await scalar(`SELECT (item_snapshot->>'price')::int value FROM public.order_group_items WHERE id='${id(35)}'`),200);
 await db.exec(`INSERT INTO public.scheduled_product_access(order_group_id,status,access_delivery_mode,opens_at) VALUES('${id(32)}','scheduled','manual',null);`);
 assert.equal(await scalar(`SELECT opens_at='2026-11-13T21:00Z'::timestamptz value FROM public.scheduled_product_access WHERE order_group_id='${id(32)}'`),true);
 await db.exec(`SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub','${admin}',false); SELECT public.set_training_release_schedule('${flow}','2026-09-30',45,'manual'); RESET ROLE;`);

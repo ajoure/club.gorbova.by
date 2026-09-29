@@ -239,7 +239,7 @@ BEGIN
   UPDATE public.order_group_items item SET item_snapshot=coalesce(item.item_snapshot,'{}')||jsonb_build_object(
     'access_delivery_mode',CASE WHEN addon_mode='manual' THEN 'manual' ELSE 'fixed_date' END,
     'access_opens_at',CASE WHEN addon_mode='manual' THEN NULL ELSE opens END)
-    FROM public.orders_v2 o WHERE o.id=item.order_id AND o.status::text='pending' AND item.role='addon'
+    FROM public.orders_v2 o WHERE o.id=item.order_id AND o.status::text IN ('pending','draft') AND item.role='addon'
       AND EXISTS(SELECT 1 FROM public.order_group_items primary_item WHERE primary_item.order_group_id=item.order_group_id
         AND primary_item.role='primary' AND primary_item.product_id=NEW.product_id);
   UPDATE public.scheduled_product_access spa SET
