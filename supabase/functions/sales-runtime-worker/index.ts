@@ -1,7 +1,7 @@
 import { cors, database, json, operator, read, rpc } from "../_shared/sales-runtime/db.ts";
 import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
 import { policyInput } from "../_shared/sales-runtime/replies.mjs";
-import {isActivation, hasExplicitTechnicalProblem, planDialogueReply, SEQUENCE_SYSTEM, slotValues, indexedEvidenceHistory, assessmentTrace} from "../_shared/sales-runtime/sequence.mjs";
+import {isActivation, hasExplicitTechnicalProblem, hasIdentityQuestion, planDialogueReply, SEQUENCE_SYSTEM, slotValues, indexedEvidenceHistory, assessmentTrace} from "../_shared/sales-runtime/sequence.mjs";
 import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
@@ -20,6 +20,10 @@ async function draftReply(
   stage: string,
   onAssessment?: (selection: any) => void,
 ) {
+  // A direct identity question needs a human answer, even if the model is unavailable.
+  if (!isActivation(context) && hasIdentityQuestion(context)) {
+    return {action:'handoff' as const,reason:'identity_question'};
+  }
   if (!isActivation(context) && hasExplicitTechnicalProblem(context)) {
     const latest=context.history.filter(m=>m.role==='customer').at(-1)?.text??'';
     if(/не пишите|не надо (?:мне )?писать|прекратите (?:мне )?писать|отпишите меня/iu.test(latest)) return {action:'stop' as const,reason:'customer_opt_out'};
