@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {renderSelection,DISCLOSURE} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
+import {renderSelection} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
 const facts=[{id:'topic',text:'В уроке разбираются виды имущества.',classification:'sales_safe',source:'verified-source'}, {id:'private',text:'Платное решение',classification:'paid_private',source:'source'}];
 const select={action:'reply',fact_ids:['topic'],question_id:'goals',bridge_id:'none'};
 test('only exact server facts and one bank question reach the customer',()=>{
@@ -13,8 +13,7 @@ test('resume does not repeat greeting or ask known experience',()=>{
  assert.throws(()=>renderSelection({...select,bridge_id:'welcome'},facts,{firstReply:false}));
  assert.throws(()=>renderSelection({...select,question_id:'experience'},facts,{knownExperience:true}));
 });
-test('handoff and opt-out produce no customer message; automation disclosure is truthful',()=>{
+test('handoff and opt-out produce no customer message',()=>{
  assert.deepEqual(renderSelection({action:'handoff'},facts),{action:'handoff',reason:'needs_human'});
  assert.deepEqual(renderSelection({action:'stop'},facts),{action:'stop',reason:'customer_opt_out'});
- assert.match(DISCLOSURE,/автоматически/);
 });

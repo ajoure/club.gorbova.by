@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS, hasExplicitTechnicalProblem} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
-import {DISCLOSURE} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
 const trigger='Хочу программу курса ЦБ';
 const facts=[
  {id:'program',text:'ПОЛНАЯ ПРОГРАММА: 28 модулей',classification:'sales_safe',source:'catalog'},
@@ -177,12 +176,17 @@ test('negated or conditional purchase language cannot unlock price, even when mo
   assert.notEqual(r.question_id,'payment',incoming);assert.doesNotMatch(r.text??'',/BYN|2000/,incoming);
  }
 });
-test('instruction, human request, refusal and automation disclosure preserve guardrails',()=>{
+test('instruction, human request, refusal and identity questions produce no automated answer',()=>{
  const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Другой вопрос');
  for(const intent of ['instruction','human','stop']) {
   const r=planDialogueReply(c,assess(c,{}, {intent}));assert.equal(r.action,intent==='stop'?'stop':'handoff');assert.equal(r.text,undefined);
  }
- const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'automation'}));assert.match(r.text,/автоматически/);
+ const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'automation'}));
+ assert.deepEqual(r,{action:'handoff',reason:'identity_question'});
+ for(const text of ['Это бот?', 'Мне лично Катерина отвечает?', 'Катерина, это вы?', 'Вы лично пишете?']) {
+  const question=setup();question.firstReply=false;question.history.push({role:'customer',text});
+  assert.deepEqual(planDialogueReply(question,assess(question)),{action:'handoff',reason:'identity_question'});
+ }
 });
 
 
