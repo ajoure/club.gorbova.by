@@ -47,6 +47,11 @@ Deno.serve(async (request) => {
     if(body.action==='knowledge_products') {
       await rpc(db,'sales_configure_knowledge_products',{p_campaign:campaign.id,p_actor:actor.id,
         p_ids:body.product_ids,p_expected:body.expected_product_ids});
+    } else if(body.action==='followup_delay') {
+      await rpc(db,'sales_configure_followup_delay',{
+        p_campaign:campaign.id,p_actor:actor.id,
+        p_min:body.followup_min_seconds,p_max:body.followup_max_seconds,
+      });
     } else if(body.action==='ai_config') {
       await rpc(db,'sales_configure_ai',{p_campaign:campaign.id,p_actor:actor.id,
         p_config:readAIConfig(body.ai_config),p_expected:body.expected_ai_config});
@@ -61,7 +66,7 @@ Deno.serve(async (request) => {
     }
     const fresh = await must(
       db.from("sales_campaigns").select(
-        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,ai_config,knowledge",
+        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,followup_min_seconds,followup_max_seconds,ai_config,knowledge",
       ).eq("id", campaign.id).single(),
     );
     const conversation = await must(

@@ -42,6 +42,7 @@ before(async()=>{
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912083730_cb21_checkout_capabilities.sql',import.meta.url),'utf8'));
  for(const name of ['20260912103149_6c915c55-929b-42ba-9cc0-a8d2b4950c1b.sql','20260912103321_bdea673d-1fb3-4974-958c-72349e73c6e0.sql','20260912105739_sales_context_ai.sql','20260912112411_sales_consultation_products.sql','20260912112527_21624fbd-6791-42e7-95f8-6ded9de89bd7.sql'])
   await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260930101631_cb21_conversation_delay.sql',import.meta.url),'utf8'));
 });
 after(async()=>{await db.close()});
 async function fixture(now=defaultTestNow){
@@ -139,6 +140,23 @@ test('changing random range enforces bounds and retains current scheduled due ti
  await assert.rejects(rpc('sales_control',[p,'delay',owner,0,180]),/check constraint/);
  await rpc('sales_control',[p,'delay',owner,120,240]);assert.deepEqual((await one('SELECT due_at FROM sales_jobs')).due_at,j.due_at);
  await msg(101,'Еще');const next=await one("SELECT extract(epoch from due_at-created_at) delay FROM sales_jobs WHERE status='queued'");assert.ok(next.delay>=119&&next.delay<=241);
+});
+test('first reply uses opening delay and later customer turns use configured conversational delay',async()=>{
+ const p=await fixture();
+ await db.exec("UPDATE sales_campaigns SET code='cb21-owner-test'");
+ await rpc('sales_control',[p,'delay',owner,60,60]);
+ await rpc('sales_configure_followup_delay',[p,owner,10,15]);
+ await msg(105);
+ const first=await one("SELECT extract(epoch from due_at-created_at) delay FROM sales_jobs WHERE status='queued'");
+ assert.ok(first.delay>=59&&first.delay<=61);
+ const sent=await due();
+ await rpc('sales_begin_send',[sent.id,sent.claim_token,{text:'Первый вопрос',stage:'experience',question_id:'experience'}]);
+ await rpc('sales_finish_send',[sent.id,sent.claim_token,106]);
+ await msg(107,'Впервые');
+ const followup=await one("SELECT extract(epoch from due_at-created_at) delay FROM sales_jobs WHERE status='queued'");
+ assert.ok(followup.delay>=9&&followup.delay<=16);
+ await assert.rejects(rpc('sales_configure_followup_delay',[p,stranger,10,15]),/owner_required/);
+ await assert.rejects(rpc('sales_configure_followup_delay',[p,owner,0,15]),/invalid_followup_delay/);
 });
 test('silent handoff targets the approved owner even if this question already had an assignee',async()=>{
  await fixture();const id=await msg(110);await db.query("INSERT INTO contact_center_message_assignments(source,source_message_id,assignee_user_id,assigned_by_user_id) VALUES('telegram',$1,$2,$2)",[id,stranger]);

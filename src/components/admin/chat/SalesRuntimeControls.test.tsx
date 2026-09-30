@@ -28,6 +28,8 @@ const base = {
     trigger_phrase: "Хочу программу курса ЦБ",
     delay_min_seconds: 60,
     delay_max_seconds: 180,
+    followup_min_seconds: 10,
+    followup_max_seconds: 15,
   },
   conversation: { state: "READY", started: true, reason: null },
   job: { status: "queued", due_at: "2026-09-12T12:00:00Z" },
@@ -89,9 +91,18 @@ describe("exact-dialog sales controls", () => {
       target: { value: "0" },
     });
     expect(
-      (screen.getByRole("button", { name: "Сохранить" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "Сохранить первый ответ" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
+  });
+  it("saves the separate short delay for continued conversation", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Настройки задержки автопродаж" }));
+    expect(screen.getByLabelText("Минимальная задержка продолжения")).toHaveProperty("value", "10");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить продолжение" }));
+    await waitFor(() => expect(mock.invoke).toHaveBeenCalledWith("sales-runtime-control", {
+      body: {action:"followup_delay",user_id:"user-scope",business_account_id:"business-scope",followup_min_seconds:10,followup_max_seconds:15},
+    }));
   });
   it("does not offer resume on uncertain delivery or controls without permission", async () => {
     mock.invoke.mockResolvedValue({

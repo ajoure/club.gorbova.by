@@ -21,6 +21,8 @@ type Status = {
     trigger_phrase: string;
     delay_min_seconds: number;
     delay_max_seconds: number;
+    followup_min_seconds: number;
+    followup_max_seconds: number;
     ai_config?: {model:string;max_tokens:number;timeout_seconds:number;max_context_chars:number;vision_enabled:boolean;max_image_bytes:number};
     consultation_product_ids?: string[];
   };
@@ -49,7 +51,9 @@ export function SalesRuntimeControls(
     [ai,setAi]=useState<Status['campaign']['ai_config']>(),
     [productIds,setProductIds]=useState<string[]>([]),
     [min, setMin] = useState("60"),
-    [max, setMax] = useState("180");
+    [max, setMax] = useState("180"),
+    [followupMin, setFollowupMin] = useState("10"),
+    [followupMax, setFollowupMax] = useState("15");
   const queryKey = ["sales-runtime", userId, businessAccountId];
   async function invoke(action: string, extra: Record<string, unknown> = {}) {
     const { data, error } = await supabase.functions.invoke(
@@ -103,10 +107,14 @@ export function SalesRuntimeControls(
     if (query.data?.campaign) {
       setMin(String(query.data.campaign.delay_min_seconds));
       setMax(String(query.data.campaign.delay_max_seconds));
+      setFollowupMin(String(query.data.campaign.followup_min_seconds));
+      setFollowupMax(String(query.data.campaign.followup_max_seconds));
     }
   }, [
     query.data?.campaign?.delay_min_seconds,
     query.data?.campaign?.delay_max_seconds,
+    query.data?.campaign?.followup_min_seconds,
+    query.data?.campaign?.followup_max_seconds,
   ]);
   useEffect(()=>{if(!settings)setAi(query.data?.campaign?.ai_config)},[settings,query.data?.campaign?.ai_config]);
   useEffect(()=>{if(!settings)setProductIds(query.data?.campaign?.consultation_product_ids??[])},[settings,query.data?.campaign?.consultation_product_ids]);
@@ -139,6 +147,8 @@ export function SalesRuntimeControls(
   const act = (action: string) => mutation.mutate({ action });
   const validDelay = Number.isInteger(+min) && +min >= 30 && +min <= 600 &&
     Number.isInteger(+max) && +max >= +min && +max <= 900;
+  const validFollowupDelay = Number.isInteger(+followupMin) && +followupMin >= 1 && +followupMin <= 60 &&
+    Number.isInteger(+followupMax) && +followupMax >= +followupMin && +followupMax <= 120;
   return (
     <Dialog open={settings} onOpenChange={setSettings}>
     <section
@@ -227,7 +237,7 @@ export function SalesRuntimeControls(
       </DialogHeader>
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            Случайная задержка перед каждым ответом, в секундах.
+            Первый ответ после кодовой фразы, в секундах.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs">
@@ -263,7 +273,7 @@ export function SalesRuntimeControls(
                   delay_max_seconds: +max,
                 })}
             >
-              Сохранить
+              Сохранить первый ответ
             </Button>
             {enabled && (
               <Button
@@ -275,6 +285,17 @@ export function SalesRuntimeControls(
                 Выключить
               </Button>
             )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Следующие ответы в уже начатом диалоге, в секундах. Время генерации ИИ добавляется к этой паузе.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs">От<Input aria-label="Минимальная задержка продолжения" type="number" min={1} max={60}
+              value={followupMin} onChange={e=>setFollowupMin(e.target.value)} className="w-20 h-8" /></label>
+            <label className="text-xs">До<Input aria-label="Максимальная задержка продолжения" type="number" min={1} max={120}
+              value={followupMax} onChange={e=>setFollowupMax(e.target.value)} className="w-20 h-8" /></label>
+            <Button size="sm" variant="outline" disabled={mutation.isPending || !validFollowupDelay}
+              onClick={()=>mutation.mutate({action:"followup_delay",followup_min_seconds:+followupMin,followup_max_seconds:+followupMax})}>Сохранить продолжение</Button>
           </div>
           <p className="text-xs text-muted-foreground">
             После вопроса бот ждёт клиента. Возможно одно напоминание в разрешённое время.

@@ -60,12 +60,13 @@ test('the exact incident: activation cannot deliver program, dates or price even
  for(const phrase of [trigger,'  ХОЧУ   программу курса цб  ']) {
   c.history[0].text=phrase;
   const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'program',fact_ids:['program','dates']}));
-  assert.equal(r.text,`Добрый день!\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?`);
+  assert.equal(r.text,`Добрый день! Это Катерина)\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?`);
   assert.equal(r.new_question_count,1);assert.deepEqual(r.fact_ids,[]);assert.equal(r.stage,'experience');
  }
 });
 test('activation starts a one-question dialogue without an unsolicited bot introduction or programme',()=>{
  const c=setup();const first=planDialogueReply(c,assess(c));
+ assert.match(first.text,/^Добрый день! Это Катерина\)/);
  assert.doesNotMatch(first.text,/помощник Екатерины|автоматически/);
  assert.equal((first.text.match(/\?/g)??[]).length,1);
  assert.doesNotMatch(first.text,/ПОЛНАЯ ПРОГРАММА|Действующие цены|Даты потока/);
@@ -73,6 +74,17 @@ test('activation starts a one-question dialogue without an unsolicited bot intro
  const next=planDialogueReply(c,assess(c,{experience:'new'}));
  assert.doesNotMatch(next.text,/помощник Екатерины|автоматически/);
  assert.equal(next.question_id,'goals');
+});
+test('short topic label prompts a concrete follow-up instead of inventing a module match',()=>{
+ const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Не учился');
+ const goal=planDialogueReply(c,assess(c,{experience:'new'}));
+ assert.match(goal.text,/Поняла вас\)/);
+ exchange(c,goal,'Мне нужно строительство');
+ const reply=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{fact_ids:['topic_vat']}));
+ assert.equal(reply.question_id,'goals_detail');
+ assert.equal(reply.fact_ids.length,0);
+ assert.doesNotMatch(reply.text,/НДС|первичн|время на обучение/iu);
+ assert.equal((reply.text.match(/\?/g)??[]).length,1);
 });
 test('new customer: activation -> experience -> goal -> relevant topic -> readiness -> offer -> checkout selection',()=>{
  const c=setup();let r=planDialogueReply(c,assess(c));
