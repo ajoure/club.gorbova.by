@@ -102,6 +102,10 @@ test('a stale short goal still needs clarification after later interest and a pr
  const r=planDialogueReply(c,a);
  assert.equal(r.action,'reply');assert.equal(r.question_id,'goals_detail');
  assert.deepEqual(r.fact_ids,[]);assert.doesNotMatch(r.text,/цена|первичн|НДС|готовы оформить/iu);
+ a.slots.goal.evidence=[3,5,7];
+ const multipleEvidence=planDialogueReply(c,a);
+ assert.equal(multipleEvidence.action,'reply');assert.equal(multipleEvidence.question_id,'goals_detail');
+ assert.deepEqual(multipleEvidence.fact_ids,[]);
 });
 test('one uncertain answer to purchase decision gets a clarification before human handoff',()=>{
  const c=setup();c.firstReply=false;c.stage='decision';c.lastQuestionId='decision';
