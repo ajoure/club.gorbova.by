@@ -6,8 +6,8 @@ export const DIALOGUE_QUESTIONS = {
   participation: 'Подскажите, удалось пройти курс или пока только начали знакомиться с уроками?',
   feedback: 'Подскажите, вам был полезен курс?', // Q03, one question
   year: 'А в каком году учились, напомните, пожалуйста?', // Q04
-  goals: 'Какие знания хотели бы сейчас обновить или углубить?', // Q02, one question
-  goals_detail: 'Расскажите, в каких рабочих ситуациях сейчас возникают сложности?',
+  goals: 'Расскажите, какая у вас сейчас задача в работе? Хочу понять, будет ли моё обучение вам полезно)', // Q02, adapted to one question
+  goals_detail: 'А что именно в этой теме сейчас вызывает сложности?',
   confidence: 'В каких ситуациях сейчас больше всего не хватает уверенности?',
   employee_goals: 'Подскажите, какую работу будет выполнять сотрудник после обучения?',
   barrier: 'Что помешало закончить в прошлый раз: время, формат или сложность материала?',
@@ -103,8 +103,11 @@ export function readAssessment(raw, context) {
       if (!Number.isInteger(i) || !m || m.role !== 'customer' || normalizeTrigger(m.text) === normalizeTrigger(context.triggerPhrase)) throw Error('invalid_customer_evidence');
     }
     slots[key] = slot.value;
-    if (key === 'goal' && slot.value === 'known' && slot.evidence.every(i =>
-      /^(да|нет|ок|окей|ага|понятно|всё|все|хорошо|готов[аы]?|не знаю)[.!?\s]*$/iu.test(context.history[i].text.trim()))) slots[key] = 'unknown';
+    if (key === 'goal' && slot.value === 'known' && ['goals','goals_detail'].includes(context.lastQuestionId) && slot.evidence.every(i => {
+      const answer = context.history[i].text.trim();
+      return /^(да|нет|ок|окей|ага|понятно|всё|все|хорошо|готов[аы]?|не знаю)[.!?\s]*$/iu.test(answer)
+        || /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(answer);
+    })) slots[key] = 'unknown';
     if (key === 'purchase_ready' && slot.value === 'accepted' && !hasExplicitPurchaseDecision(context, slot.evidence)) slots[key] = 'unknown';
   }
   if (!Array.isArray(raw.fact_ids) || raw.fact_ids.length > 2 || new Set(raw.fact_ids).size !== raw.fact_ids.length) throw Error('invalid_fact_selection');
@@ -137,7 +140,7 @@ function compose(questionId, facts = [], {greeting = false, bridge = '', stage} 
   const content = facts.map(f => f.kind === 'topic' ? topicReplyText(f) : f.text);
   if (content.some(text => text === null)) return handoff('missing_short_topic_reply');
   const text = [
-    greeting ? 'Добрый день!' : bridge,
+    greeting ? 'Добрый день! Это Катерина)' : bridge,
     ...content,
     question,
   ].filter(Boolean).join('\n\n');
@@ -212,7 +215,9 @@ export function planDialogueReply(context, raw) {
   if (a.slots.goal === 'unknown' && context.lastQuestionId === 'goals_detail') return handoff('answer_needs_human_clarification');
   if (context.lastQuestionId === q) return ['goals','confidence','employee_goals'].includes(q)
     ? compose('goals_detail') : handoff('answer_needs_human_clarification');
-  if (!['format','interest','decision','payment'].includes(q)) return compose(q);
+  if (!['format','interest','decision','payment'].includes(q)) return compose(q, [], {
+    bridge:q === 'goals' && context.lastQuestionId === 'experience' && a.slots.experience === 'new' ? 'Поняла вас)' : '',
+  });
   if (q === 'interest') return compose(q);
   if (q === 'decision') return compose(q);
   const chosenTopics = a.facts.filter(f => f.kind === 'topic' && f.module_id);
