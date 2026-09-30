@@ -86,6 +86,39 @@ test('short topic label prompts a concrete follow-up instead of inventing a modu
  assert.doesNotMatch(reply.text,/НДС|первичн|время на обучение/iu);
  assert.equal((reply.text.match(/\?/g)??[]).length,1);
 });
+test('a stale short goal still needs clarification after later interest and a price question',()=>{
+ const c=setup();c.firstReply=false;c.stage='decision';c.lastQuestionId='decision';
+ c.history.push({role:'customer',text:'Не учился'},
+   {role:'seller',text:DIALOGUE_QUESTIONS.goals,question_id:'goals'},
+   {role:'customer',text:'Мне нужно строительство'},
+   {role:'seller',text:DIALOGUE_QUESTIONS.format,question_id:'format'},
+   {role:'customer',text:'Да, планирую учиться'},
+   {role:'seller',text:DIALOGUE_QUESTIONS.interest,question_id:'interest'},
+   {role:'customer',text:'Да. Что нужно от меня?'},
+   {role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
+   {role:'customer',text:'Не знаю'});
+ const a=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{fact_ids:['topic_vat']});
+ a.slots.experience.evidence=[1];a.slots.goal.evidence=[3];a.slots.format.evidence=[5];a.slots.interest.evidence=[7];
+ const r=planDialogueReply(c,a);
+ assert.equal(r.action,'reply');assert.equal(r.question_id,'goals_detail');
+ assert.deepEqual(r.fact_ids,[]);assert.doesNotMatch(r.text,/цена|первичн|НДС|готовы оформить/iu);
+});
+test('one uncertain answer to purchase decision gets a clarification before human handoff',()=>{
+ const c=setup();c.firstReply=false;c.stage='decision';c.lastQuestionId='decision';
+ c.history.push({role:'customer',text:'Хочу научиться вести учёт НДС для своей компании, сейчас не понимаю порядок заполнения декларации.'},
+   {role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
+   {role:'customer',text:'Не знаю'});
+ const a=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'});
+ a.slots.goal.evidence=[1];
+ const r=planDialogueReply(c,a);
+ assert.equal(r.action,'reply');assert.equal(r.question_id,'decision_detail');
+ assert.match(r.text,/останавливает/);
+ c.lastQuestionId='decision_detail';c.history.push({role:'seller',text:r.text,question_id:r.question_id},{role:'customer',text:'Не знаю'});
+ const second=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'});
+ second.slots.goal.evidence=[1];
+ assert.deepEqual(planDialogueReply(c,second),
+   {action:'handoff',reason:'answer_needs_human_clarification'});
+});
 test('new customer: activation -> experience -> goal -> relevant topic -> readiness -> offer -> checkout selection',()=>{
  const c=setup();let r=planDialogueReply(c,assess(c));
  exchange(c,r,'Впервые.');
@@ -171,11 +204,13 @@ test('checkout follow-up questions return to checkout without repeating the tari
  for (const questionId of ['payment','payment_kind','invoice_payer','checkout_confirm']) {
   const c=setup();c.firstReply=false;c.stage=questionId;c.lastQuestionId=questionId;c.relevantFactIds=['topic_vat'];
   c.history.push({role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
+    {role:'customer',text:'Хочу научиться вести учёт НДС для своей компании, сейчас не понимаю порядок заполнения декларации.'},
+    {role:'seller',text:DIALOGUE_QUESTIONS.decision,question_id:'decision'},
     {role:'customer',text:'Да, готова оформить участие.'},
     {role:'seller',text:'Подтверждаете оформление?',question_id:questionId},
     {role:'customer',text:questionId==='checkout_confirm'?'Да, подтверждаю.':'Хочу оплатить.'});
   const raw=assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted',purchase_ready:'accepted'},{intent:'payment'});
-  raw.slots.purchase_ready.evidence=[2];
+  raw.slots.goal.evidence=[2];raw.slots.purchase_ready.evidence=[4];
   const r=planDialogueReply(c,raw);
   assert.equal(r.action,'checkout',questionId);assert.equal(r.text,undefined);
  }

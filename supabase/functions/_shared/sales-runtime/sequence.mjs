@@ -14,6 +14,7 @@ export const DIALOGUE_QUESTIONS = {
   format: 'Сможете выделить время на обучение?', // Q08 without historical dates/workload
   interest: 'Хотите разобрать подходящий вариант участия?',
   decision: 'Подскажите, вы уже готовы оформить участие или пока хотите уточнить что-то по программе?',
+  decision_detail: 'Что вас сейчас останавливает?',
   payment: 'Планируете приобретать одним платежом или в рассрочку?', // Q20
   none: '',
 };
@@ -32,7 +33,7 @@ slots содержит experience, goal, feedback, year, barrier, format, intere
 experience: unknown/new/graduate/unfinished/trial/employee/self_taught. goal,feedback,year,barrier: unknown/known. format,interest,purchase_ready: unknown/accepted/declined.
 Без прямых слов клиента значение unknown и evidence[]. Покупка не доказывает прохождения. Пробные уроки не полный курс. Учёба сотрудника не личная учёба представителя. Самообучение не прохождениеЦБ.
 goal known только если содержательно объяснена рабочая задача/цель. Одно да/нет/всё/понятно не цель. feedback known — оценка предыдущего обучения. year known — понятен год/поток/версия. barrier — почему не закончил. format accepted только согласие выделить время/подтвержденный формат; interest accepted — желание рассмотреть участие, не простое слово-заявка. purchase_ready accepted — только явное решение купить/оформить сейчас; «хочу рассмотреть», «интересно», запрос цены, программы или ссылки без подтверждения готовности не означают purchase_ready. Короткое «да» учитывай только как ответ на последний вопрос продавца: для purchase_ready это вопрос decision.
-Значения проверяй по всей доступной истории; не заставляй повторять уже известное. Краткое да/нет интерпретируй по предыдущему вопросу продавца. Ранее отправленная ботом программа не является согласием клиента.
+Значения проверяй по всей доступной истории; не заставляй повторять уже известное. Краткое да/нет интерпретируй по предыдущему вопросу продавца. Ранее отправленная ботом программа не является согласием клиента. Короткое название темы вроде «Мне нужно строительство» не объясняет конкретную задачу даже после последующих ответов про время и интерес: goal остаётся unknown, пока клиент не уточнит сложность.
 activation=true означает КОДОВОЕ СЛОВО, а не запрос программы, цены, дат или материалов. В этом случае fact_ids=[], question_type=none, intent=answer. Не записывай эту фразу как цель или согласие купить.
 После активации самостоятельный прямой вопрос клиента о продукте: product_question, точный question_type. Не превращай ответ о своем опыте/целях в запрос программы. Фраза 'работаю с НДС' — задача, не вопрос 'как рассчитатьНДС'.
 Практические расчеты, проводки, правовые советы, учебное решение — instruction. Нет точного безопасного факта по сложному вопросу, претензия, скидка, восстановление доступа — human. Вопрос о том, кто пишет или используется ли автоматизация — product_question с question_type=automation; сервер молча передаст его владельцу. Техническая проблема (ссылка/страница/кнопка не открывается или не работает, ошибка оплаты, сбой сайта, невозможность войти), в том числе показанная на скриншоте — technical. Это НЕ просьба создать новую ссылку: не повторяй оформление, не предлагай ремонт, не утверждай что ошибка исправлена; вопрос будет молча поручен владельцу. Оплата/ссылка/оформление/счёт без технической проблемы — payment. Просьба прекратить — stop.
@@ -87,6 +88,17 @@ function hasExplicitPurchaseDecision(context, evidence) {
   });
 }
 
+function isShortGoalLabel(text) {
+  const answer = String(text ?? '').trim();
+  return /^(да|нет|ок|окей|ага|понятно|всё|все|хорошо|готов[аы]?|не знаю)[.!?\s]*$/iu.test(answer)
+    || /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(answer);
+}
+
+function hasShortGoalLabel(context) {
+  return context.history.some(message => message.role === 'customer'
+    && /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(String(message.text ?? '').trim()));
+}
+
 export function readAssessment(raw, context) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('invalid_assessment');
   if (Object.keys(raw).some(k => !['intent', 'question_type', 'slots', 'fact_ids', 'checkout'].includes(k))) throw Error('unexpected_assessment_text');
@@ -103,11 +115,7 @@ export function readAssessment(raw, context) {
       if (!Number.isInteger(i) || !m || m.role !== 'customer' || normalizeTrigger(m.text) === normalizeTrigger(context.triggerPhrase)) throw Error('invalid_customer_evidence');
     }
     slots[key] = slot.value;
-    if (key === 'goal' && slot.value === 'known' && ['goals','goals_detail'].includes(context.lastQuestionId) && slot.evidence.every(i => {
-      const answer = context.history[i].text.trim();
-      return /^(да|нет|ок|окей|ага|понятно|всё|все|хорошо|готов[аы]?|не знаю)[.!?\s]*$/iu.test(answer)
-        || /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(answer);
-    })) slots[key] = 'unknown';
+    if (key === 'goal' && slot.value === 'known' && slot.evidence.every(i => isShortGoalLabel(context.history[i].text))) slots[key] = 'unknown';
     if (key === 'purchase_ready' && slot.value === 'accepted' && !hasExplicitPurchaseDecision(context, slot.evidence)) slots[key] = 'unknown';
   }
   if (!Array.isArray(raw.fact_ids) || raw.fact_ids.length > 2 || new Set(raw.fact_ids).size !== raw.fact_ids.length) throw Error('invalid_fact_selection');
@@ -154,7 +162,7 @@ function nextQuestion(s, context) {
   if (s.experience === 'unfinished' && s.barrier === 'unknown') return 'barrier';
   if (s.experience === 'graduate' && s.feedback === 'unknown') return 'feedback';
   if (s.experience === 'graduate' && s.year === 'unknown') return 'year';
-  if (s.goal === 'unknown') return s.experience === 'employee' ? 'employee_goals' : s.experience === 'self_taught' ? 'confidence' : 'goals';
+  if (s.goal === 'unknown') return s.experience === 'employee' ? 'employee_goals' : s.experience === 'self_taught' ? 'confidence' : hasShortGoalLabel(context) ? 'goals_detail' : 'goals';
   if (s.format === 'unknown') return 'format';
   if (s.interest === 'unknown') return 'interest';
   if (s.purchase_ready !== 'accepted') return 'decision';
@@ -182,7 +190,9 @@ export function planDialogueReply(context, raw) {
   if (a.intent === 'thanks' && ['payment','closed'].includes(context.stage)) return compose('none',[],{bridge:'Договорились. Если будут вопросы и уточнения, смело пишите🫶🏻',stage:'closed'});
   if (a.slots.format === 'declined' || a.slots.interest === 'declined') return handoff('format_or_interest_objection');
   if ((a.intent === 'product_question' || a.intent === 'payment') && !['payment','format','decision'].includes(q)) {
-    return compose(q, [], {bridge:'Сначала хочу понять, будет ли обучение вам полезно.'});
+    return compose(q, [], {bridge:a.question_type === 'price'
+      ? 'Понимаю, цена важна. Сначала хочу разобраться в вашей задаче, чтобы предложить подходящий вариант.'
+      : 'Сначала хочу понять, будет ли обучение вам полезно.'});
   }
   if (q === 'decision' && a.intent === 'product_question' && a.question_type !== 'price') {
     const allowed = f => a.question_type === 'program' ? f.id === 'program'
@@ -213,6 +223,8 @@ export function planDialogueReply(context, raw) {
     return compose(context.lastQuestionId === q ? 'none' : q, a.facts, {stage:context.lastQuestionId === q ? context.stage : q});
   }
   if (a.slots.goal === 'unknown' && context.lastQuestionId === 'goals_detail') return handoff('answer_needs_human_clarification');
+  if (q === 'decision' && context.lastQuestionId === 'decision') return compose('decision_detail');
+  if (q === 'decision' && context.lastQuestionId === 'decision_detail') return handoff('answer_needs_human_clarification');
   if (context.lastQuestionId === q) return ['goals','confidence','employee_goals'].includes(q)
     ? compose('goals_detail') : handoff('answer_needs_human_clarification');
   if (!['format','interest','decision','payment'].includes(q)) return compose(q, [], {
