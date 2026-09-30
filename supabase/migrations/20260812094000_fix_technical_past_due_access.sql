@@ -74,13 +74,13 @@ JOIN public.subscriptions_v2 new_s ON new_s.order_id = new_o.id
 JOIN public.orders_v2 old_o
   ON old_o.user_id = new_o.user_id
  AND old_o.product_id = new_o.product_id
- AND old_o.public_id = 'SUB-LINK-MS69W0DD'
+  AND old_o.order_number = 'SUB-LINK-MS69W0DD'
 JOIN public.subscriptions_v2 old_s ON old_s.order_id = old_o.id
 JOIN public.entitlements e
   ON e.user_id = new_o.user_id
  AND e.product_id = new_o.product_id
  AND e.status = 'active'
-WHERE new_o.public_id = 'SUB-LINK-MSOFLH7I'
+WHERE new_o.order_number = 'SUB-LINK-MSOFLH7I'
   AND new_s.status = 'past_due'
   AND new_s.access_end_at IS NULL
   AND new_s.next_charge_at > now()
