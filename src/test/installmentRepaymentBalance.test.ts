@@ -20,4 +20,20 @@ describe('repayment balance for imported statement payments', () => {
       payments: [payment('first', 'payment'), payment('refund', 'Возврат')],
     })).toThrowError(new RepaymentPlanError('payment_type_requires_review'));
   });
+
+  it('deduplicates webhook and statement rows with the same provider payment id', () => {
+    const imported = payment('same', ' ПЛАТЕЖ ');
+    imported.id = 'statement-row';
+    expect(repaymentBalance({
+      orderId: 'order-1', userId: 'user-1', currency: 'BYN', total: 1326,
+      payments: [payment('same', 'payment'), imported],
+    }).paidMinor).toBe(44200);
+  });
+
+  it.each(['Отмена', 'void'])('rejects %s', type => {
+    expect(() => repaymentBalance({
+      orderId: 'order-1', userId: 'user-1', currency: 'BYN', total: 1326,
+      payments: [payment('first', 'payment'), payment('other', type)],
+    })).toThrowError(new RepaymentPlanError('payment_type_requires_review'));
+  });
 });
