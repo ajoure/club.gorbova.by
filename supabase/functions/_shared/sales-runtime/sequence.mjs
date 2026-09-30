@@ -91,7 +91,9 @@ function hasExplicitPurchaseDecision(context, evidence) {
 function isShortGoalLabel(text) {
   const answer = String(text ?? '').trim();
   return /^(да|нет|ок|окей|ага|понятно|всё|все|хорошо|готов[аы]?|не знаю)[.!?\s]*$/iu.test(answer)
-    || /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(answer);
+    || /^(?:мне\s+)?(?:нужн[оаы]?|интересн[оаы]?|хочу)\s+(?:[\p{L}-]+\s*){1,2}[.!?\s]*$/iu.test(answer)
+    || /^(?:да[,\s]+)?(?:планирую|готов[аы]?|могу|смогу)\s+(?:учиться|заниматься|выделить\s+время)[.!?\s]*$/iu.test(answer)
+    || /^да[.!?,\s]+что\s+нужно\s+от\s+меня\??$/iu.test(answer);
 }
 
 function hasShortGoalLabel(context) {
