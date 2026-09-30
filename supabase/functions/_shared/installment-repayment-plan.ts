@@ -31,7 +31,10 @@ export function repaymentBalance(input: {
     if (p.order_id !== input.orderId || p.user_id !== input.userId || p.currency !== input.currency) {
       throw new RepaymentPlanError('payment_identity_mismatch');
     }
-    if (p.transaction_type && !['payment', 'capture'].includes(p.transaction_type)) {
+    // Statement imports can store the same successful charge with a Russian
+    // display label. Keep the allowlist narrow so refunds/voids still fail closed.
+    const transactionType = p.transaction_type?.trim().toLowerCase();
+    if (transactionType && !['payment', 'capture', 'платеж', 'платёж'].includes(transactionType)) {
       throw new RepaymentPlanError('payment_type_requires_review');
     }
     // A refund changes the agreement; never silently re-charge refunded money.
