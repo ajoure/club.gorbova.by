@@ -18884,6 +18884,8 @@ export type Database = {
           delay_max_seconds: number
           delay_min_seconds: number
           enabled_at: string | null
+          followup_max_seconds: number
+          followup_min_seconds: number
           id: string
           knowledge: Json
           knowledge_version: string
@@ -18903,6 +18905,8 @@ export type Database = {
           delay_max_seconds?: number
           delay_min_seconds?: number
           enabled_at?: string | null
+          followup_max_seconds?: number
+          followup_min_seconds?: number
           id?: string
           knowledge?: Json
           knowledge_version: string
@@ -18922,6 +18926,8 @@ export type Database = {
           delay_max_seconds?: number
           delay_min_seconds?: number
           enabled_at?: string | null
+          followup_max_seconds?: number
+          followup_min_seconds?: number
           id?: string
           knowledge?: Json
           knowledge_version?: string
@@ -27150,6 +27156,15 @@ export type Database = {
           p_expected: Json
         }
         Returns: boolean
+      }
+      sales_configure_followup_delay: {
+        Args: {
+          p_actor: string
+          p_campaign: string
+          p_max: number
+          p_min: number
+        }
+        Returns: undefined
       }
       sales_configure_knowledge_products: {
         Args: {
