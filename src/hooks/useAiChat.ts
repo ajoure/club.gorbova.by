@@ -53,6 +53,7 @@ export interface ChatScenario {
 }
 
 export interface ScenarioContext {
+  scenario_code?: string;
   prompt_id?: string;
   scenario_type?: string;
   launcher_title_snapshot?: string;
@@ -181,6 +182,7 @@ export function useAiChat() {
       if (lastAssistant?.metadata) {
         freshContext = {
           prompt_id: lastAssistant.metadata.prompt_id,
+          scenario_code: lastAssistant.metadata.scenario_code,
           scenario_type: lastAssistant.metadata.scenario_type,
           launcher_title_snapshot: lastAssistant.metadata.launcher_title_snapshot,
         };
@@ -222,6 +224,7 @@ export function useAiChat() {
     content: string,
     options?: {
       promptId?: string;
+      newConversation?: boolean;
       fileContents?: string;
       fileNames?: string[];
       images?: Array<{ base64: string; filename: string; mimeType?: string }>;
@@ -245,7 +248,7 @@ export function useAiChat() {
     setIsLoading(true);
 
     try {
-      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error && !m.metadata?.exclude_from_ai_history), userMsg].map(m => ({
+      const allMessages = [...(options?.newConversation ? [] : messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error && !m.metadata?.exclude_from_ai_history)), userMsg].map(m => ({
         role: m.role,
         content: m.content,
       }));
@@ -258,7 +261,7 @@ export function useAiChat() {
           fileContents: options?.fileContents,
           fileNames: options?.fileNames,
           images: options?.images,
-          conversation_id: conversationId,
+          conversation_id: options?.newConversation ? null : conversationId,
           unsupported_files: options?.unsupportedFiles,
         },
       });
@@ -298,6 +301,7 @@ export function useAiChat() {
       if (shouldRestoreScenarioContext(data?.metadata?.scenario_type)) {
         setActiveScenarioContext({
           prompt_id: data.metadata.prompt_id,
+          scenario_code: data.metadata.scenario_code,
           scenario_type: data.metadata.scenario_type,
           launcher_title_snapshot: data.metadata.launcher_title_snapshot,
         });
@@ -306,6 +310,7 @@ export function useAiChat() {
       }
 
       setMessages(prev => [...prev, assistantMsg]);
+      return true;
     } catch (err) {
       if (!isCurrent()) return;
       console.error("Chat error:", err);
@@ -317,6 +322,7 @@ export function useAiChat() {
         timestamp: new Date(),
         metadata: { is_error: true },
       }]);
+      return false;
     } finally {
       if (isCurrent()) {
         requestPending.current = false;

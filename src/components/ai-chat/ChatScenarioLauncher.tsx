@@ -42,7 +42,7 @@ export function ChatScenarioLauncher({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-[44px] w-[44px] shrink-0" disabled={disabled || loading}>
+        <Button aria-label="Возможности помощника" variant="ghost" size="icon" className="h-[44px] w-[44px] shrink-0" disabled={disabled || loading}>
           <Sparkles className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

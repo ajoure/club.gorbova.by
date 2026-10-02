@@ -199,6 +199,7 @@ const DENIAL_HUMAN: Record<string, string> = {
   asset_classifier_not_in_products: 'Сервис «Определение шифра ОС» не входит в ваши активные продукты.',
   bank_statement_analysis_not_in_products: 'Сервис «Анализ выписки» не входит в ваши активные продукты.',
   act_reconciliation_not_in_products: 'Сервис «Сверка актов» не входит в ваши активные продукты.',
+  accounting_regulations_not_in_products: 'Сервис «Регламенты бухгалтерии» не входит в ваши активные продукты.',
   no_access: 'AI-помощник недоступен на вашем тарифе.',
 };
 
@@ -213,7 +214,7 @@ export async function resolveAiAccessStatus(
   knownScenarioCodes: string[],
 ): Promise<AiAccessStatusUi> {
   const access = await resolveAiAccess(supabase, userId);
-  const [assetClassifierAllowed, bankStatementAnalyzerAllowed, actReconciliationAllowed] = await Promise.all([
+  const [assetClassifierAllowed, bankStatementAnalyzerAllowed, actReconciliationAllowed, regulationsAllowed] = await Promise.all([
     knownScenarioCodes.includes(ASSET_CLASSIFIER_SCENARIO_CODE)
       ? resolveSectionAccess(supabase, userId, ASSET_CLASSIFIER_SECTION_CODE)
       : false,
@@ -223,9 +224,15 @@ export async function resolveAiAccessStatus(
     knownScenarioCodes.includes(ACT_RECONCILIATION_SCENARIO_CODE)
       ? resolveSectionAccess(supabase, userId, ACT_RECONCILIATION_SECTION_CODE)
       : false,
+    knownScenarioCodes.includes('accounting_regulations')
+      ? resolveSectionAccess(supabase, userId, 'ai_accounting_regulations')
+      : false,
   ]);
   const chatCheck = isModeAllowed(access, 'chat');
   const scenarios = knownScenarioCodes.map((code) => {
+    if (code === 'accounting_regulations') {
+      return { code, allowed: regulationsAllowed, denial_reason: regulationsAllowed ? undefined : 'accounting_regulations_not_in_products' };
+    }
     if (code === ASSET_CLASSIFIER_SCENARIO_CODE) {
       return {
         code,

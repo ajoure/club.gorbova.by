@@ -27,6 +27,7 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
   const inputRef = useRef<HTMLInputElement>(null);
   const isBankStatement = scenario.code === "bank_statement_analysis";
   const isActReconciliation = scenario.code === "act_reconciliation";
+  const isRegulations = scenario.code === "accounting_regulations";
   const scenarioFileLimit = isActReconciliation ? 2 : MAX_FILES;
 
   const handleFiles = (fileList: FileList | null) => {
@@ -69,10 +70,10 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
   const isAssetClassifier = scenario.code === "asset_classifier";
 
   return (
-    <GlassCard className="mx-4 mb-4">
+    <GlassCard className={isRegulations ? "mx-2 sm:mx-4 mb-2 sm:mb-4 max-h-[48dvh] overflow-y-auto shrink-0" : "mx-4 mb-4"}>
       <div className="flex items-center justify-between mb-3">
         <h4 className="font-medium text-sm">{scenario.launcher_title}</h4>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onCancel}>
+        <Button aria-label="Закрыть форму сценария" variant="ghost" size="icon" className="h-6 w-6" onClick={onCancel}>
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -94,6 +95,24 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
             <li>Сканы и фотографии должны быть чёткими, без обрезанных строк и повёрнутых страниц. За один запуск — суммарно до 5 страниц скана или изображений.</li>
             <li>В выписке должны читаться дата, сумма, назначение платежа, наименование получателя и его УНП. Файлы с паролем не поддерживаются.</li>
           </ul>
+        </div>
+      )}
+
+      {isRegulations && (
+        <div className="space-y-3 text-sm">
+          <ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+            <li>Опишите один процесс: кто участвует, какие документы и программа используются, кто проверяет результат.</li>
+            <li>Ответьте на уточнения в чате. Если правила ещё нет, так и напишите — ИИ предложит вариант и пометит его для согласования.</li>
+            <li>Проверьте проект, попросите внести правки и скачайте Word. Переписка сохраняется в «Истории анализа».</li>
+          </ol>
+          <p className="text-xs text-muted-foreground">Файлы не нужны. До 6000 символов в описании. Не вводите пароли и персональные данные. Это проект внутреннего регламента: перед внедрением его должен проверить и утвердить ответственный сотрудник.</p>
+          <div className="flex flex-wrap gap-2">
+            {["Приём первичных документов", "Расходы сотрудников", "Сверка с контрагентами", "Закрытие месяца"].map(example => (
+              <Button key={example} variant="outline" size="sm" className="h-auto whitespace-normal text-left" disabled={isLoading} onClick={() => setText(`Нужен регламент: ${example.toLowerCase()}. `)}>{example}</Button>
+            ))}
+          </div>
+          <Textarea aria-label="Описание бухгалтерского процесса" value={text} maxLength={6000} disabled={isLoading} onChange={event => setText(event.target.value)} placeholder="Например: первичные документы поступают по электронной почте. Бухгалтер заносит их в 1С, главный бухгалтер проверяет. Нужны порядок работы и контроль пропущенных документов." className="min-h-[120px] text-base sm:text-sm" />
+          <p className="text-right text-xs text-muted-foreground">{text.length} / 6000</p>
         </div>
       )}
 
@@ -199,13 +218,14 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
         disabled={
           isLoading ||
           (isFileType && (isActReconciliation ? files.length !== 2 : files.length === 0)) ||
-          (isAssetClassifier && text.trim().length < 3)
+          (isAssetClassifier && text.trim().length < 3) ||
+          (isRegulations && text.trim().length < 10)
         }
         onClick={() => onSubmit(files, text)}
       >
         {isLoading
           ? (isAssetClassifier ? "Подбираю..." : "Анализирую...")
-          : (isAssetClassifier ? "ОК" : "Анализировать")}
+          : (isRegulations ? "Начать регламент" : isAssetClassifier ? "ОК" : "Анализировать")}
       </Button>
     </GlassCard>
   );

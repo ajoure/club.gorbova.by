@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@/hooks/useAiChat";
+import { RegulationActions } from "./RegulationActions";
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -153,6 +154,9 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
           <div className="flex justify-start mt-1 ml-1">
             <CopyButton content={message.content} />
           </div>
+        )}
+        {!isUser && !message.metadata?.is_error && message.metadata?.scenario_code === "accounting_regulations" && /^# Проект регламента/m.test(message.content) && (
+          <RegulationActions content={message.content} />
         )}
       </div>
     </div>

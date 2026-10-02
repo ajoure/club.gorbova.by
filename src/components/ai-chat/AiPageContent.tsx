@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRbac } from "@/hooks/useRbac";
 import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
-import { useAiAccess, formatQuotaSlot } from "@/hooks/useAiAccess";
+import { useAiAccess, formatQuotaSlot, isScenarioAllowed } from "@/hooks/useAiAccess";
 import { toast } from "sonner";
 import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
 import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
@@ -289,7 +289,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const { data: aiAccess } = useAiAccess();
   const chatAllowed = aiAccess ? aiAccess.allowed_modes.chat : true;
   const chatQuota = aiAccess?.quota_by_mode.chat.daily;
-  const messageInputAllowed = chatAllowed;
+  const regulationsActive = aiChat.activeScenarioContext?.scenario_code === "accounting_regulations";
+  const messageInputAllowed = regulationsActive ? isScenarioAllowed(aiAccess, "accounting_regulations") : chatAllowed;
 
   // Scroll listener — track if user is near bottom
   useEffect(() => {
@@ -463,6 +464,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       scenario.type === "document_review" ||
       scenario.code === "asset_classifier" ||
       scenario.code === "bank_statement_analysis" ||
+      scenario.code === "accounting_regulations" ||
       scenario.code === "act_reconciliation"
     ) {
       setActiveScenario(scenario);
@@ -474,6 +476,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const handleScenarioSubmit = async (files: File[], text?: string) => {
     if (!activeScenario) return;
     userSentMessageRef.current = true;
+
+    if (activeScenario.code === "accounting_regulations") {
+      aiChat.clearChat();
+      const succeeded = await aiChat.sendMessage(text || "", { promptId: activeScenario.id, newConversation: true });
+      if (succeeded) setActiveScenario(null);
+      return;
+    }
 
     if (activeScenario.code === "asset_classifier") {
       await aiChat.runAssetClassifier(text || "");
@@ -783,7 +792,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
           <div className="border-t border-border/50 p-2 sm:p-4 bg-background/50 shrink-0 min-w-0">
             {/* Access banner (приоритет — chat запрещён) */}
-            {aiAccess && !chatAllowed && (
+            {regulationsActive && (
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span>Регламенты бухгалтерии · отвечайте на уточнения или опишите правки</span>
+                <Button variant="ghost" size="sm" disabled={aiChat.isLoading} onClick={() => { aiChat.clearChat(); setInputValue(""); }}>Завершить режим</Button>
+              </div>
+            )}
+            {aiAccess && !chatAllowed && !regulationsActive && (
               <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs flex items-center justify-between gap-2">
                 <span className="text-amber-800 dark:text-amber-200">
                   {aiAccess.denial_reasons.chat_not_in_tier}
@@ -814,11 +829,12 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 />
               </div>
               <Textarea
+                maxLength={regulationsActive ? 6000 : undefined}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={
-                  chatAllowed
+                  regulationsActive ? "Ответьте на уточнения или напишите, что изменить..." : chatAllowed
                     ? "Напиши свой вопрос..."
                     : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."
                 }
@@ -826,6 +842,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 disabled={aiChat.isLoading || !messageInputAllowed}
               />
               <Button
+                aria-label="Отправить сообщение"
                 onClick={handleSendMessage}
                 disabled={!inputValue.trim() || aiChat.isLoading || !messageInputAllowed}
                 size="icon"

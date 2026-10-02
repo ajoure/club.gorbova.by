@@ -15,11 +15,21 @@ function deferred<T>() {
 }
 
 describe('conversation isolation', () => {
+  it('starts regulations without leaking previous history and restores its mode', async () => {
+    mocks.invoke.mockResolvedValueOnce({ data: { content: 'Previous answer', conversation_id: 'old' } });
+    const { result } = renderHook(() => useAiChat());
+    await act(async () => { await result.current.sendMessage('Previous question'); });
+    mocks.invoke.mockResolvedValueOnce({ data: { content: 'Уточните участников', conversation_id: 'regulations', metadata: { prompt_id: 'prompt', scenario_type: 'chat', scenario_code: 'accounting_regulations' } } });
+    await act(async () => { result.current.clearChat(); await result.current.sendMessage('Приём документов', { promptId: 'prompt', newConversation: true }); });
+    expect(mocks.invoke.mock.calls[1][1].body.messages).toEqual([{ role: 'user', content: 'Приём документов' }]);
+    expect(mocks.invoke.mock.calls[1][1].body.conversation_id).toBeNull();
+    expect(result.current.activeScenarioContext).toMatchObject({ prompt_id: 'prompt', scenario_code: 'accounting_regulations' });
+  });
   it.each(['chat', 'classifier'])('ignores an old %s response after New chat, including storage', async kind => {
     const pending = deferred<any>();
     mocks.invoke.mockReturnValue(pending.promise);
     const { result } = renderHook(() => useAiChat());
-    let request!: Promise<void>;
+    let request!: Promise<unknown>;
     act(() => { request = kind === 'chat' ? result.current.sendMessage('Old question') : result.current.runAssetClassifier('Old question'); });
     act(() => result.current.clearChat());
     await act(async () => { pending.resolve({ data: { content: 'Old answer', conversation_id: 'old' }, error: null }); await request; });
@@ -32,7 +42,7 @@ describe('conversation isolation', () => {
     const old = deferred<any>(); const next = deferred<any>();
     mocks.invoke.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
     const { result } = renderHook(() => useAiChat());
-    let first!: Promise<void>; let second!: Promise<void>;
+    let first!: Promise<unknown>; let second!: Promise<unknown>;
     act(() => { first = result.current.sendMessage('Old'); });
     act(() => result.current.clearChat());
     act(() => { second = result.current.sendMessage('New'); });
@@ -61,7 +71,7 @@ describe('conversation isolation', () => {
   it('prevents two simultaneous submissions before React rerenders', async () => {
     const pending = deferred<any>(); mocks.invoke.mockReturnValue(pending.promise);
     const { result } = renderHook(() => useAiChat());
-    let request!: Promise<void>;
+    let request!: Promise<unknown>;
     act(() => { request = result.current.sendMessage('First'); void result.current.sendMessage('Second'); });
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
     await act(async () => { pending.resolve({ data: { content: 'Answer' } }); await request; });
