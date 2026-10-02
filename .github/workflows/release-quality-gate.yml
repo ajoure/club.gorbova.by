@@ -66,6 +66,8 @@ jobs:
         run: |
           node scripts/tests/cb21-learning-release.test.mjs
           node scripts/tests/cb21-oct31-schedule.test.mjs
+      - name: Accounting regulations migration safety
+        run: node --test scripts/tests/accounting-regulations-migration.test.mjs
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build
