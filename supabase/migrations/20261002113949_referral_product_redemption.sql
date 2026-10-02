@@ -628,6 +628,7 @@ BEGIN
     'prior_purchase_order_id',es.meta->'prior_purchase_order_id',
     'referral_secondary_scope_applied',true)
     FROM public.entitlement_sources es WHERE es.id::text=v_effective_source_ref AND es.meta->>'origin'='referral_redemption_secondary'),'{}');
+  v_meta:=v_meta||jsonb_build_object('referral_origin',(SELECT es.meta->>'origin' FROM public.entitlement_sources es WHERE es.id::text=v_effective_source_ref AND es.meta->>'origin' LIKE 'referral_redemption%'));
   IF v_effective_tariff_id IS NOT NULL THEN
     v_meta := v_meta || jsonb_build_object('tariff_id', v_effective_tariff_id);
   END IF;
@@ -744,6 +745,7 @@ BEGIN
   PERFORM referral_private.end_secondary_sources(i.id,'revoked');
   PERFORM public.recalculate_entitlement_aggregate(r.user_id,i.product_id);
   UPDATE public.referral_redemption_items SET phase='revoked' WHERE id=i.id;
+  UPDATE public.orders_v2 SET meta=coalesce(meta,'{}')||jsonb_build_object('referral_redemption_status','reversed') WHERE id=i.order_id AND meta->>'financial_kind'='referral_redemption';
   INSERT INTO public.referral_redemption_outbox(item_id,event_key) VALUES(i.id,'referral:projection:'||i.id||':revoked') ON CONFLICT(event_key) DO NOTHING;
   INSERT INTO public.access_grant_ledger(source_event_key,action_type,status,reason_code,source_event_type,source_subject_type,source_subject_ref,target_type,target_key,target_ref,user_id,profile_id,order_id,result,metadata)
   VALUES('referral:reverse:'||i.id,'revoke','revoked','admin_revoke','admin','admin_action',r.id::text,'product',r.user_id||':'||i.product_id,i.product_id,r.user_id,r.profile_id,i.order_id,jsonb_build_object('source_id',i.source_id),jsonb_build_object('reason_code','referral_redemption_reversal','actor_id',auth.uid(),'reason',p_reason));

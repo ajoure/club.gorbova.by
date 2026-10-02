@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { dealStatusLabel, isContactMoneyDeal, isFreeDeal } from './dealFinancialKind';
+import { dealStatusLabel, isContactMoneyDeal, isFreeDeal, isReferralRedemption } from './dealFinancialKind';
 
 describe('CRM money and free grant presentation', () => {
+  it('labels referral exchange separately from payment and a free gift', () => {
+    const deal = {status:'paid',final_price:0,paid_amount:0,meta:{financial_kind:'referral_redemption'}};
+    expect(isReferralRedemption(deal)).toBe(true);
+    expect(isFreeDeal(deal)).toBe(false);
+    expect(isContactMoneyDeal(deal)).toBe(false);
+    expect(dealStatusLabel(deal,'Оплачено')).toBe('По реферальной программе');
+    expect(isReferralRedemption({...deal, payments_v2:[{status:'succeeded',amount:100}]})).toBe(false);
+  });
   it('excludes unpaid attempts and explicit free grants, includes partial money and refunds', () => {
     const rows = [
       { status: 'pending', final_price: 250 },

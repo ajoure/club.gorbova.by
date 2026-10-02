@@ -64,5 +64,8 @@ Deploy после merge — перечисленные функции из то�
 - `telegram-reinvite-ghosts`
 - `telegram-revoke-access`
 - `telegram-webhook`
+- `telegram-media-worker`
 
 Применить обе named migrations. Затем schema/grants read-back, SQL runtime transaction-rollback smoke без реальных денежных операций, worker unauthorized + dry_run и expected manifest. Бounded maturity только при совпадении manifest; read-back buckets/transactions и repeat=0. После этого enable существующего cron, проверить command без secret, job run и 0 ошибок. Publish только при всех PASS; screenshots desktop/mobile по опубликованному URL без PII. Реальную клиентскую выдачу не использовать для smoke.
+
+Общий CB21 release digest регенерируется при shared-code изменениях; четыре существующих CB21 функции должны возвращать одинаковый новый digest в своих защищённых health probes. Это пересборка зависимостей; конфигурацию, очередь, режим и сообщения sales runtime не менять.

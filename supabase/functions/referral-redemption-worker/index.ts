@@ -87,8 +87,8 @@ Deno.serve(async(req)=>{
     // Existing commercial guard preserves overlapping sources. No force revoke.
     for(const [clubId] of clubs)await invoke('telegram-revoke-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',reason:'referral_source_ended',is_manual:true,respect_remaining_access:true,notify_customer:false});
    }
-   const {error:completeError}=await client.from('referral_redemption_outbox').update({status:'done',completed_at:new Date().toISOString(),leased_until:null,error_code:null}).eq('id',event.id).eq('status','processing').eq('attempts',event.attempts);
-   if(completeError)throw new Error('completion_readback_failed');
+   const {data:completed,error:completeError}=await client.from('referral_redemption_outbox').update({status:'done',completed_at:new Date().toISOString(),leased_until:null,error_code:null}).eq('id',event.id).eq('status','processing').eq('attempts',event.attempts).select('id').maybeSingle();
+   if(completeError||!completed)throw new Error('completion_readback_failed');
    done++;
   }catch(error){
    failed++;
