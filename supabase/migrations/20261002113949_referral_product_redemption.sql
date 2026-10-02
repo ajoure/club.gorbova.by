@@ -214,14 +214,14 @@ BEGIN
  v_meta:=jsonb_build_object('redemption_id',q.id,'actor_id',auth.uid(),'reason',q.request->>'reason','consent_reference',q.request->>'consent_reference');
  IF (q.snapshot->>'converted_cash_minor')::bigint>0 THEN
   INSERT INTO public.referral_balance_transactions(partner_id,transaction_type,idempotency_key,source_type,source_id,description,created_by,metadata)
-  VALUES(q.partner_id,'manual_adjustment','referral:conversion:'||q.id,'referral_redemption',q.id,'Добровольная конвертация денежной части в бонусы',auth.uid(),v_meta||jsonb_build_object('reason_code','cash_to_internal_conversion')) RETURNING id INTO v_tx;
+  VALUES(q.partner_id,'manual_adjustment','referral:conversion:'||q.id,'referral_redemption',q.id,'Добровольная конвертация денежной части в бонусы',auth.uid(),jsonb_build_object('redemption_id',q.id,'reason_code','cash_to_internal_conversion')) RETURNING id INTO v_tx;
   INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES
    (v_tx,q.partner_id,'available',-(q.snapshot->>'converted_cash_minor')::bigint),(v_tx,q.partner_id,'internal',(q.snapshot->>'converted_cash_minor')::bigint);
  END IF;
  v_bonus:=(q.snapshot->>'internal_minor')::bigint+(q.snapshot->>'converted_cash_minor')::bigint;
  IF v_bonus>0 THEN
   INSERT INTO public.referral_balance_transactions(partner_id,transaction_type,idempotency_key,source_type,source_id,description,created_by,metadata)
-  VALUES(q.partner_id,'bonus_spend','referral:redeem:'||q.id,'referral_redemption',q.id,'Продукты за реферальные бонусы',auth.uid(),v_meta) RETURNING id INTO v_tx;
+  VALUES(q.partner_id,'bonus_spend','referral:redeem:'||q.id,'referral_redemption',q.id,'Продукты за реферальные бонусы',auth.uid(),jsonb_build_object('redemption_id',q.id,'reason_code','referral_redemption')) RETURNING id INTO v_tx;
   INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES(v_tx,q.partner_id,'internal',-v_bonus),(v_tx,q.partner_id,'internal_spent',v_bonus);
  END IF;
  FOR v_item IN SELECT value FROM jsonb_array_elements(q.snapshot->'items') LOOP
@@ -736,12 +736,12 @@ BEGIN
  IF EXISTS(SELECT 1 FROM public.referral_redemption_items WHERE redemption_id=r.id AND starts_at<=now()) AND NOT p_allow_consumed THEN RAISE EXCEPTION 'consumed_access_requires_explicit_decision'; END IF;
  v_bonus:=r.internal_minor+r.converted_cash_minor;
  INSERT INTO public.referral_balance_transactions(partner_id,transaction_type,idempotency_key,source_type,source_id,description,created_by,metadata)
- VALUES(r.partner_id,'manual_adjustment','referral:redeem:reverse:'||r.id,'referral_redemption',r.id,'Отмена реферальной выдачи',auth.uid(),jsonb_build_object('reason_code','referral_redemption_reversal','reason',p_reason,'allow_consumed',p_allow_consumed,'subsidy_reversed_minor',r.subsidy_minor)) RETURNING id INTO v_tx;
+ VALUES(r.partner_id,'manual_adjustment','referral:redeem:reverse:'||r.id,'referral_redemption',r.id,'Отмена реферальной выдачи',auth.uid(),jsonb_build_object('reason_code','referral_redemption_reversal','redemption_id',r.id,'subsidy_reversed_minor',r.subsidy_minor)) RETURNING id INTO v_tx;
  IF r.internal_minor>0 THEN INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES(v_tx,r.partner_id,'internal',r.internal_minor); END IF;
  IF r.converted_cash_minor>0 THEN INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES(v_tx,r.partner_id,'available',r.converted_cash_minor); END IF;
  IF v_bonus>0 THEN INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES(v_tx,r.partner_id,'internal_spent',-v_bonus); END IF;
  FOR i IN SELECT * FROM public.referral_redemption_items WHERE redemption_id=r.id ORDER BY product_id FOR UPDATE LOOP
-  UPDATE public.entitlement_sources SET status='revoked',revoked_at=now(),revocation_reason=p_reason WHERE id=i.source_id AND meta->>'redemption_id'=r.id::text;
+  UPDATE public.entitlement_sources SET status='revoked',revoked_at=now(),revocation_reason='referral_redemption_reversal' WHERE id=i.source_id AND meta->>'redemption_id'=r.id::text;
   PERFORM referral_private.end_secondary_sources(i.id,'revoked');
   PERFORM public.recalculate_entitlement_aggregate(r.user_id,i.product_id);
   UPDATE public.referral_redemption_items SET phase='revoked' WHERE id=i.id;

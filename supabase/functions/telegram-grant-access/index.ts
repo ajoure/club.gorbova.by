@@ -950,7 +950,7 @@ Deno.serve(async (req) => {
         // Check if grant already exists for this source_id (prevents duplicates on retries)
         const { data: existingGrant } = await supabase
           .from('telegram_access_grants')
-          .select('id, end_at')
+          .select('id, end_at, status')
           .eq('user_id', user_id)
           .eq('club_id', club.id)
           .eq('source_id', source_id)
@@ -964,12 +964,12 @@ Deno.serve(async (req) => {
           const sourceEnd = source === 'referral_redemption' ? boundedValidUntil : activeUntil;
           const newEnd = sourceEnd ? new Date(sourceEnd).getTime() : Infinity;
           
-          if (newEnd !== existingEnd) {
+          if (newEnd !== existingEnd || (source === 'referral_redemption' && existingGrant.status !== 'active')) {
             console.log(`[grant-access] Aligning grant ${existingGrant.id} end_at: ${existingGrant.end_at} -> ${activeUntil}`);
             await supabase
               .from('telegram_access_grants')
               .update({ 
-                end_at: sourceEnd, 
+                end_at: sourceEnd,
                 ...(source === 'referral_redemption' ? { status: 'active' } : {}),
                 updated_at: new Date().toISOString(),
                 meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, renewed: true, access_rule_id: access_rule_id || null },

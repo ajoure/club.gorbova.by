@@ -90,6 +90,8 @@ Deno.serve(async(req)=>{
       }
      }
      await invoke('telegram-grant-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',source_id:item.order_id,valid_until:expires,access_rule_id:grant?.rule_id,notify_customer:false});
+     const {data:projected,error:projectionError}=await client.from('telegram_access_grants').select('status,end_at').eq('user_id',r.user_id).eq('club_id',clubId).eq('source_id',item.order_id).eq('source','referral_redemption').maybeSingle();
+     if(projectionError||!projected||projected.status!=='active'||!projected.end_at||Date.parse(projected.end_at)!==Date.parse(expires))throw new Error('telegram_projection_readback_failed');
     }
     // GetCourse's deal API cannot enforce an arbitrary finite period. The
     // issued product is explicitly in-app only; no paid/unbounded GC deal.

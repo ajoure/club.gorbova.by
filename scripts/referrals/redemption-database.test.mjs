@@ -90,6 +90,7 @@ assert.equal(result.balances.internal,0); assert.equal(result.balances.available
 assert.equal((await commit(confirmed)).status,'already_completed');
 assert.equal((await db.query('SELECT count(*) n FROM orders_v2')).rows[0].n,1);
 assert.equal((await db.query('SELECT count(*) n FROM payments_v2')).rows[0].n,0);
+assert.equal((await db.query("SELECT count(*) n FROM referral_balance_transactions WHERE metadata ? 'reason' OR metadata ? 'consent_reference'")).rows[0].n,0);
 assert.equal((await db.query('SELECT count(*) n FROM referral_balance_transactions WHERE transaction_type=\'bonus_spend\'')).rows[0].n,1);
 assert.equal((await db.query('SELECT status FROM entitlements')).rows[0].status,'active');
 assert.equal((await db.query('SELECT status,auto_renew FROM subscriptions_v2')).rows[0].status,'expired');
