@@ -3878,7 +3878,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                   </Badge>
                                 )}
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-violet-600 border-violet-200">
-                                  {source.source_type === "bonus" ? "бонусный доступ" : "отдельный источник"}
+                                  {(source.meta as Record<string, unknown>)?.origin === "referral_redemption" ? "доступ по реферальной программе" : source.source_type === "bonus" ? "бонусный доступ" : "отдельный источник"}
                                 </Badge>
                               </div>
                             </div>

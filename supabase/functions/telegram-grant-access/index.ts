@@ -28,6 +28,7 @@ interface GrantAccessRequest {
   duration_days?: number;    // For calculating access end
   access_rule_id?: string;   // Exact access_rules lineage for finite bonuses
   entitlement_source_id?: string; // Existing active entitlement used for an admin resend
+  notify_customer?: boolean; // Only service callers may suppress notifications.
   force_resend?: boolean;    // Explicitly reissue personal links after server-side validation
   // Sub-patch B: Parent lineage for downstream ledger propagation
   parent_event_key?: string | null;
@@ -336,7 +337,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log('Grant access request:', body);
+    const notifyCustomer = !(isServiceRoleCall && body.notify_customer === false);
+    // Keep contact details and invite links out of request logs.
+    console.log('Grant access request received');
 
     if (!user_id) {
       return new Response(JSON.stringify({ error: 'user_id required' }), {
@@ -480,7 +483,7 @@ Deno.serve(async (req) => {
       const targetChannelGrantEnabled = targetClub?.channel_grant_enabled !== false;
 
       // Queue access granted notification
-      await supabase.from('pending_telegram_notifications').insert({
+      if (notifyCustomer) await supabase.from('pending_telegram_notifications').insert({
         user_id,
         notification_type: 'access_granted',
         club_id: targetClubId,
@@ -1191,7 +1194,7 @@ Deno.serve(async (req) => {
 
       // Send invite links via bot
       let dmSent = false;
-      let dmError: string | undefined;
+      let dmError: string | undefined = notifyCustomer ? undefined : 'notifications_suppressed';
       let dmText = '';
       // PATCH: scope-fix — переменные для зеркалирования DM в telegram_messages
       // должны быть доступны в нижнем блоке записи telegram_logs (раньше падало
@@ -1200,7 +1203,7 @@ Deno.serve(async (req) => {
       let mirroredTelegramMessageId: number | null = null;
       let mirrorError: string | null = null;
 
-      if (chatInviteLink || channelInviteLink) {
+      if (notifyCustomer && (chatInviteLink || channelInviteLink)) {
         const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = { inline_keyboard: [] };
         if (chatInviteLink) keyboard.inline_keyboard.push([{ text: '💬 Войти в чат клуба', url: chatInviteLink }]);
         if (channelInviteLink) keyboard.inline_keyboard.push([{ text: '📣 Войти в канал клуба', url: channelInviteLink }]);

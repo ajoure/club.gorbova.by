@@ -43,6 +43,8 @@ export function ReferralDashboardCard() {
     },
   });
 
+  const redemptions = useQuery({ queryKey: ["my-referral-redemptions"], enabled: partnerQuery.data?.enabled === true, queryFn: async () => { const { data, error } = await rpc("referral_get_my_redemptions"); if (error) throw error; return data as any[]; } });
+
   const customerCreditQuery = useQuery({
     queryKey: ['referral-customer-credit'],
     enabled: partnerQuery.data?.enabled === true,
@@ -113,7 +115,8 @@ export function ReferralDashboardCard() {
 
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           <Balance label="Накопленная скидка" value={formatBynMinor(Number(customerCreditQuery.data?.available_minor ?? 0))} />
-          <Balance label="Ожидает" value={formatBynMinor(balances.pending_minor)} />
+          <Balance label="Ожидает к выплате" value={formatBynMinor(balances.pending_minor)} />
+          <Balance label="Ожидает на продукты" value={formatBynMinor(balances.internal_pending_minor)} />
           <Balance label="К выплате" value={formatBynMinor(balances.available_minor)} />
           <Balance label="Внутренний бонус" value={formatBynMinor(balances.internal_minor)} />
           <Balance label="Зарезервировано" value={formatBynMinor(balances.held_minor)} />
@@ -122,6 +125,8 @@ export function ReferralDashboardCard() {
         {data.payouts?.enabled && balances.available_minor > 0 && (
           <div className="flex justify-end"><Button variant="outline" onClick={() => payoutMutation.mutate()} disabled={payoutMutation.isPending}>Запросить выплату</Button></div>
         )}
+
+        {(redemptions.data ?? []).length > 0 && <section className="space-y-2"><h3 className="font-medium">Продукты за реферальные бонусы</h3>{redemptions.data!.map(item => <div key={item.id} className="rounded-md border p-3 text-sm space-y-2"><Badge variant="secondary">Доступ по реферальной программе{item.status === "reversed" ? " · отменён" : ""}</Badge>{(item.items ?? []).map((product: any, index: number) => <p key={index}>{product.product_name} · {product.tariff_name}<br/><span className="text-xs text-muted-foreground">{new Date(product.starts_at).toLocaleDateString("ru-BY")} — {new Date(product.expires_at).toLocaleDateString("ru-BY")}</span></p>)}<p>Использовано бонусов: {formatBynMinor(item.bonus_minor)} · Подарок компании: {formatBynMinor(item.subsidy_minor)}</p></div>)}</section>}
 
         <div className="grid md:grid-cols-2 gap-5">
           <section>
