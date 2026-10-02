@@ -3,6 +3,7 @@
 // Источник истины — _shared/ai-access.ts (resolveAiAccess + isModeAllowed + LIMITS).
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveAiAccessStatus } from '../_shared/ai-access.ts';
+import { withRegulationsAccess } from './accounting-regulations.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
       .not('code', 'is', null);
     const knownCodes = Array.from(new Set((scenarios || []).map((s: any) => s.code).filter(Boolean)));
 
-    const status = await resolveAiAccessStatus(service, user.id, knownCodes);
+    const status = await withRegulationsAccess(service, user.id, await resolveAiAccessStatus(service, user.id, knownCodes));
 
     return new Response(JSON.stringify(status), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

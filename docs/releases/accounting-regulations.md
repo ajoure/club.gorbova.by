@@ -24,10 +24,8 @@ recap agreed facts. No promise of unlimited context or legally approved text.
    ROLLBACK; expect 1 section, 1 prompt, 13 rules, then all 0 after rollback.
    Apply atomically with original-version journal record; do not create duplicate
    migration files. Read back 1/1/13, route/private flag and original old counts.
-4. Deploy `gorbova-ai-chat`, `ai-access-status`. Shared release digest changed;
-   deploy `sales-runtime-worker`, `sales-runtime-control`, `telegram-webhook`,
-   `telegram-media-worker` unchanged except bundled shared code. Probe release
-   markers without sending messages or running jobs.
+4. Deploy ONLY `gorbova-ai-chat`, `ai-access-status`. Shared code/release digest
+   remain unchanged. Do not deploy contact-center, sales or webhook functions.
 5. Anonymous calls: 401. Read-only rule checks for active purchaser, no product,
    expired access. Synthetic operator `--self` smoke is allowed; no impersonation
    or new accounts. Operator bypass is NOT purchaser E2E proof.

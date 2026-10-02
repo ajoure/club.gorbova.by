@@ -1,5 +1,6 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { resolveSectionAccess } from "./ai-access.ts";
+import { resolveSectionAccess } from "../../supabase/functions/_shared/ai-access.ts";
+import { withRegulationsAccess } from "../../supabase/functions/ai-access-status/accounting-regulations.ts";
 
 function client(allowed: boolean, options: { inactive?: boolean; missing?: boolean; rpcError?: boolean; admin?: boolean } = {}) {
   return {
@@ -28,5 +29,10 @@ for (const [name, allowed, options, expected] of [
 ] as const) {
   Deno.test(`accounting regulations: ${name}`, async () => {
     assertEquals(await resolveSectionAccess(client(allowed, options), 'operator', 'ai_accounting_regulations'), expected);
+    const status: any = { allowed_scenarios: [{ code: 'accounting_regulations', allowed: true }, { code: '107NK', allowed: false }], allowed_modes: { chat: false, prompt: false }, denial_reasons: {} };
+    const projected = await withRegulationsAccess(client(allowed, options), 'operator', status);
+    assertEquals(projected.allowed_scenarios[0].allowed, expected);
+    assertEquals(projected.allowed_modes.prompt, expected);
+    assertEquals(projected.allowed_modes.chat, false);
   });
 }
