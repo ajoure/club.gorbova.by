@@ -961,14 +961,16 @@ Deno.serve(async (req) => {
           // must converge both upward and downward. This safely repairs old
           // grants that accidentally inherited a main-course end date.
           const existingEnd = existingGrant.end_at ? new Date(existingGrant.end_at).getTime() : 0;
-          const newEnd = activeUntil ? new Date(activeUntil).getTime() : Infinity;
+          const sourceEnd = source === 'referral_redemption' ? boundedValidUntil : activeUntil;
+          const newEnd = sourceEnd ? new Date(sourceEnd).getTime() : Infinity;
           
           if (newEnd !== existingEnd) {
             console.log(`[grant-access] Aligning grant ${existingGrant.id} end_at: ${existingGrant.end_at} -> ${activeUntil}`);
             await supabase
               .from('telegram_access_grants')
               .update({ 
-                end_at: activeUntil, 
+                end_at: sourceEnd, 
+                ...(source === 'referral_redemption' ? { status: 'active' } : {}),
                 updated_at: new Date().toISOString(),
                 meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, renewed: true, access_rule_id: access_rule_id || null },
               })
@@ -988,7 +990,7 @@ Deno.serve(async (req) => {
           source_id: source_id || null,
           granted_by: admin_id || null,
           start_at: new Date().toISOString(),
-          end_at: activeUntil,
+          end_at: source === 'referral_redemption' ? boundedValidUntil : activeUntil,
           status: 'active',
           meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, access_rule_id: access_rule_id || null },
         });

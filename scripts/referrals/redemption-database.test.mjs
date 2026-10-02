@@ -175,5 +175,25 @@ assert.equal(new Set(claimed.map(event=>event.item_id)).size,claimed.length);
 const secondClaim=(await db.query('SELECT * FROM public.referral_redemption_claim_outbox(50)')).rows;
 assert.equal(secondClaim.length,0);
 await db.exec(migration); // A repeat managed apply is harmless.
+// Compile and verify the scheduler against explicit test doubles for managed
+// Vault/net/cron. No real network call or real secret is used by this fixture.
+await db.exec(`CREATE SCHEMA vault; CREATE SCHEMA net; CREATE SCHEMA cron;
+CREATE TABLE vault.secrets(id uuid DEFAULT gen_random_uuid(),name text UNIQUE,secret text);
+CREATE VIEW vault.decrypted_secrets AS SELECT id,name,secret decrypted_secret FROM vault.secrets;
+CREATE FUNCTION gen_random_bytes(integer) RETURNS bytea LANGUAGE sql AS $$SELECT decode(repeat('ab',$1),'hex')$$;
+CREATE FUNCTION vault.create_secret(new_secret text,new_name text,new_description text) RETURNS uuid LANGUAGE sql AS $$INSERT INTO vault.secrets(secret,name) VALUES(new_secret,new_name) RETURNING id$$;
+CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb) RETURNS bigint LANGUAGE sql AS $$SELECT 1::bigint$$;
+CREATE TABLE cron.job(jobid bigserial,jobname text,schedule text,command text,active boolean DEFAULT true);
+CREATE FUNCTION cron.schedule(job_name text,schedule text,command text) RETURNS bigint LANGUAGE sql AS $$INSERT INTO cron.job(jobname,schedule,command) VALUES(job_name,schedule,command) RETURNING jobid$$;
+CREATE FUNCTION cron.alter_job(job_id bigint,active boolean) RETURNS void LANGUAGE sql AS $$UPDATE cron.job SET active=$2 WHERE jobid=$1$$;`);
+const scheduler=await readFile(new URL('../../supabase/migrations/20261002121046_referral_redemption_scheduler.sql',import.meta.url),'utf8');
+await db.exec(scheduler);await db.exec(scheduler);
+const jobs=(await db.query('SELECT * FROM cron.job')).rows;
+assert.equal(jobs.length,1);assert.equal(jobs[0].active,false);assert.equal(jobs[0].command,'SELECT public.invoke_referral_redemption_worker();');
+assert.equal((await db.query("SELECT public.verify_referral_redemption_cron_secret('wrong') valid")).rows[0].valid,false);
+await db.exec('SET ROLE authenticated');
+await rejected(()=>db.query("SELECT public.verify_referral_redemption_cron_secret('anything')"),/permission denied/);
+await rejected(()=>db.query('SELECT public.invoke_referral_redemption_worker()'),/permission denied/);
+await db.exec('RESET ROLE');
 await db.close();
 console.log('PASS: prices, cash consent, granular permission, quote staleness, provider guard, atomic debit, replay, no payments, independent access, reversal split, future activation/expiry and grants');

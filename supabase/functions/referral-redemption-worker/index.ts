@@ -46,11 +46,21 @@ Deno.serve(async(req)=>{
    const r=item.redemption;const now=Date.now();
    const active=r.status==='completed'&&item.phase==='active'&&Date.parse(item.starts_at)<=now&&Date.parse(item.expires_at)>now;
    const resolution=await resolveAccessForOrder(client,{order_id:item.order_id,product_id:item.product_id,tariff_id:item.tariff_id,offer_id:item.offer_id,user_id:r.user_id,profile_id:r.profile_id});
-   if(resolution.blocked_reasons.length)throw new Error('resolution_blocked');
+   if(active&&resolution.blocked_reasons.length)throw new Error('resolution_blocked');
    const {data:product,error:productError}=await client.from('products_v2').select('telegram_club_id').eq('id',item.product_id).single();
-   if(productError)throw new Error('product_read_failed');
+   if(active&&productError)throw new Error('product_read_failed');
    const clubs=new Map<string,number|null>(resolution.club_grants.map(grant=>[grant.club_id,grant.duration_days]));
-   if(product.telegram_club_id&&!clubs.has(product.telegram_club_id))clubs.set(product.telegram_club_id,null);
+   if(product?.telegram_club_id&&!clubs.has(product.telegram_club_id))clubs.set(product.telegram_club_id,null);
+   // Expiry/reversal also follows the actually projected targets, even if
+   // catalog rules were disabled or changed after the original issue.
+   const {data:previous,error:previousError}=await client.from('telegram_access_grants').select('club_id,end_at').eq('user_id',r.user_id).eq('source_id',item.order_id).eq('source','referral_redemption');
+   if(previousError)throw new Error('projection_targets_read_failed');
+   const ended=new Set<string>();
+   for(const target of previous??[]){
+    if(!active&&!clubs.has(target.club_id))clubs.set(target.club_id,null);
+    if(active&&target.end_at&&Date.parse(target.end_at)<=now&&!clubs.has(target.club_id))ended.add(target.club_id);
+   }
+   for(const clubId of ended)await invoke('telegram-revoke-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',reason:'referral_source_ended',is_manual:true,respect_remaining_access:true,notify_customer:false});
    if(active){
     const rules=await resolveProductAccessRules(client,item.product_id,item.tariff_id);
     const actions=await syncSecondaryProductAccessForUser(client,{userId:r.user_id,profileId:r.profile_id,sourceProductId:item.product_id,sourceTariffId:item.tariff_id,sourceSubscription:null,sourceEntitlementSource:{id:item.source_id,access_end_at:item.expires_at},rules,excludeOrderId:item.order_id,ctx:{sourceEventType:'admin',sourceSubjectType:'admin_action',sourceEventKeyPrefix:`referral:projection:${item.id}`,orderId:item.order_id,allowReduceAccess:false,dryRun:true}});
@@ -79,7 +89,7 @@ Deno.serve(async(req)=>{
        if(clubSourceError)throw new Error('club_source_failed');
       }
      }
-     await invoke('telegram-grant-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',source_id:item.order_id,valid_until:expires,notify_customer:false});
+     await invoke('telegram-grant-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',source_id:item.order_id,valid_until:expires,access_rule_id:grant?.rule_id,notify_customer:false});
     }
     // GetCourse's deal API cannot enforce an arbitrary finite period. The
     // issued product is explicitly in-app only; no paid/unbounded GC deal.
