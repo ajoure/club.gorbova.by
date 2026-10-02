@@ -18273,6 +18273,222 @@ export type Database = {
         }
         Relationships: []
       }
+      referral_redemption_items: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          last_reconciled_at: string | null
+          offer_id: string
+          order_id: string
+          phase: string
+          price_minor: number
+          product_id: string
+          redemption_id: string
+          source_id: string
+          starts_at: string
+          tariff_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_reconciled_at?: string | null
+          offer_id: string
+          order_id: string
+          phase: string
+          price_minor: number
+          product_id: string
+          redemption_id: string
+          source_id: string
+          starts_at: string
+          tariff_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_reconciled_at?: string | null
+          offer_id?: string
+          order_id?: string
+          phase?: string
+          price_minor?: number
+          product_id?: string
+          redemption_id?: string
+          source_id?: string
+          starts_at?: string
+          tariff_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_redemption_items_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemption_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemption_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemption_items_redemption_id_fkey"
+            columns: ["redemption_id"]
+            isOneToOne: false
+            referencedRelation: "referral_redemptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemption_items_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "entitlement_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemption_items_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_redemption_outbox: {
+        Row: {
+          attempts: number
+          available_at: string
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          event_key: string
+          id: string
+          item_id: string
+          leased_until: string | null
+          status: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          event_key: string
+          id?: string
+          item_id: string
+          leased_until?: string | null
+          status?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          event_key?: string
+          id?: string
+          item_id?: string
+          leased_until?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_redemption_outbox_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "referral_redemption_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_redemptions: {
+        Row: {
+          actor_id: string
+          consent_reference: string | null
+          converted_cash_minor: number
+          created_at: string
+          id: string
+          internal_minor: number
+          partner_id: string
+          profile_id: string
+          provider_acknowledged: boolean
+          reason: string
+          reversal_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
+          snapshot: Json
+          status: string
+          subsidy_minor: number
+          total_minor: number
+          user_id: string
+        }
+        Insert: {
+          actor_id: string
+          consent_reference?: string | null
+          converted_cash_minor: number
+          created_at?: string
+          id: string
+          internal_minor: number
+          partner_id: string
+          profile_id: string
+          provider_acknowledged?: boolean
+          reason: string
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          snapshot: Json
+          status?: string
+          subsidy_minor: number
+          total_minor: number
+          user_id: string
+        }
+        Update: {
+          actor_id?: string
+          consent_reference?: string | null
+          converted_cash_minor?: number
+          created_at?: string
+          id?: string
+          internal_minor?: number
+          partner_id?: string
+          profile_id?: string
+          provider_acknowledged?: boolean
+          reason?: string
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          snapshot?: Json
+          status?: string
+          subsidy_minor?: number
+          total_minor?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_redemptions_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_redemptions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_relationships: {
         Row: {
           attached_at: string
@@ -26448,6 +26664,7 @@ export type Database = {
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       invoke_bepaid_webhook_realtime_queue: { Args: never; Returns: number }
       invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
+      invoke_referral_redemption_worker: { Args: never; Returns: number }
       invoke_sales_runtime_worker: { Args: never; Returns: number }
       invoke_telegram_daily_summary: { Args: never; Returns: number }
       is_live_event_presenter: {
@@ -26720,6 +26937,10 @@ export type Database = {
         }
         Returns: string
       }
+      referral_admin_commit_redemption: {
+        Args: { p_quote_id: string }
+        Returns: Json
+      }
       referral_admin_credit_historical_order: {
         Args: {
           p_order_id: string
@@ -26760,6 +26981,10 @@ export type Database = {
           sale_status: string
         }[]
       }
+      referral_admin_quote_redemption: {
+        Args: { p_partner_id: string; p_request: Json }
+        Returns: Json
+      }
       referral_admin_reassign_relationship: {
         Args: {
           p_new_partner_profile_id: string
@@ -26768,8 +26993,20 @@ export type Database = {
         }
         Returns: string
       }
+      referral_admin_redemption_context: {
+        Args: { p_partner_id: string }
+        Returns: Json
+      }
       referral_admin_restore_sale_attribution: {
         Args: { p_reason: string; p_sale_id: string }
+        Returns: Json
+      }
+      referral_admin_reverse_redemption: {
+        Args: {
+          p_allow_consumed?: boolean
+          p_reason: string
+          p_redemption_id: string
+        }
         Returns: Json
       }
       referral_admin_reverse_sale_attribution: {
@@ -26815,14 +27052,52 @@ export type Database = {
       }
       referral_get_my_customer_credit: { Args: never; Returns: Json }
       referral_get_my_dashboard: { Args: never; Returns: Json }
+      referral_get_my_redemptions: { Args: never; Returns: Json }
+      referral_get_partner_balance: {
+        Args: { p_partner_id: string }
+        Returns: Json
+      }
       referral_is_admin: { Args: { p_user_id: string }; Returns: boolean }
+      referral_maturation_manifest: { Args: never; Returns: Json }
       referral_mature_due_commissions: {
         Args: { p_limit?: number }
         Returns: number
       }
       referral_process_order: { Args: { p_order_id: string }; Returns: string }
       referral_process_refund: { Args: { p_order_id: string }; Returns: number }
+      referral_project_secondary_source: {
+        Args: {
+          p_expires_at: string
+          p_item_id: string
+          p_meta: Json
+          p_product_id: string
+          p_rule_id: string
+        }
+        Returns: string
+      }
       referral_reconcile_orders: { Args: { p_limit?: number }; Returns: Json }
+      referral_redemption_claim_outbox: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempts: number
+          available_at: string
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          event_key: string
+          id: string
+          item_id: string
+          leased_until: string | null
+          status: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "referral_redemption_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      referral_redemption_tick: { Args: { p_limit?: number }; Returns: Json }
       referral_reserve_customer_credit: {
         Args: {
           p_charge_amount_minor: number
@@ -27591,6 +27866,10 @@ export type Database = {
       }
       verify_broadcast_dispatcher_cron_secret: {
         Args: { _candidate: string }
+        Returns: boolean
+      }
+      verify_referral_redemption_cron_secret: {
+        Args: { p_candidate: string }
         Returns: boolean
       }
       verify_sales_runtime_cron_secret: {
