@@ -53,3 +53,13 @@ export function referralStatusLabel(status: string) {
   };
   return labels[status] ?? status;
 }
+
+/** Parse BYN input without floating-point rounding or implicit NaN/null. */
+export function parseBynMinor(value: string): number {
+  const normalized = value.trim().replace(",", ".");
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) throw new Error("Укажите сумму BYN с не более чем двумя знаками после запятой");
+  const [whole, fraction = ""] = normalized.split(".");
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(minor) || minor > 1_000_000_000) throw new Error("Сумма выходит за допустимый предел");
+  return minor;
+}

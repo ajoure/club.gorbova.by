@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { formatBynMinor } from "@/lib/referrals";
+import { formatBynMinor, parseBynMinor } from "@/lib/referrals";
 
 const rpc=async(name:string,args?:Record<string,unknown>)=>{const {data,error}=await (supabase.rpc as any)(name,args);if(error)throw error;return data;};
 const date=(value:string)=>new Date(value).toLocaleString("ru-BY",{timeZone:"Europe/Minsk",dateStyle:"medium",timeStyle:"short"});
@@ -30,7 +30,7 @@ export function ReferralRedemptionPanel({partnerId}:{partnerId:string}){
  const [gift,setGift]=useState(false);const [providerAck,setProviderAck]=useState(false);const [quote,setQuote]=useState<any>(null);
  const [reverse,setReverse]=useState<string|null>(null);const [reverseReason,setReverseReason]=useState("");const [allowUsed,setAllowUsed]=useState(false);
  const context=useQuery({queryKey:["referral-redemption-context",partnerId],enabled:allowed,queryFn:()=>rpc("referral_admin_redemption_context",{p_partner_id:partnerId})});
- const refresh=()=>{qc.invalidateQueries({queryKey:["referral-redemption-context",partnerId]});qc.invalidateQueries({queryKey:["contact-referrals"]});qc.invalidateQueries({queryKey:["contact-entitlement-sources"]});qc.invalidateQueries({queryKey:["admin-referrals-overview"]});qc.invalidateQueries({queryKey:["contact-orders"]});};
+ const refresh=()=>{qc.invalidateQueries({queryKey:["referral-redemption-context",partnerId]});qc.invalidateQueries({queryKey:["contact-referrals"]});qc.invalidateQueries({queryKey:["contact-entitlement-sources"]});qc.invalidateQueries({queryKey:["admin-referrals-overview"]});qc.invalidateQueries({queryKey:["contact-orders"]});qc.invalidateQueries({queryKey:["contact-entitlements"]});qc.invalidateQueries({queryKey:["contact-subscriptions"]});};
  const catalog:CatalogItem[]=context.data?.catalog??[];const permissions=context.data?.permissions??{};
  const change=(key:string,patch:Partial<CartItem>)=>{setCart(rows=>rows.map(row=>row.key===key?{...row,...patch}:row));setQuote(null);};
  const selected=cart.map(row=>catalog.find(item=>item.offer_id===row.offerId));
@@ -40,8 +40,8 @@ export function ReferralRedemptionPanel({partnerId}:{partnerId:string}){
   const items=cart.map((row,index)=>{const item=selected[index];if(!item)throw new Error("Выберите продукт и тариф для каждой позиции");
    return {product_id:item.product_id,tariff_id:item.tariff_id,offer_id:item.offer_id,period_unit:row.unit,period_count:row.count,start_mode:row.startMode,
     starts_at:row.start?new Date(row.start).toISOString():undefined,expires_at:row.end?new Date(row.end).toISOString():undefined,
-    price_minor:row.price.trim()?Math.round(Number(row.price.replace(",","."))*100):undefined};});
-  return rpc("referral_admin_quote_redemption",{p_partner_id:partnerId,p_request:{items,reason,cash_minor:Math.round(Number(cash.replace(",","."))*100),consent_reference:consent,allow_subsidy:gift,provider_acknowledged:providerAck}});
+    price_minor:row.price.trim()?parseBynMinor(row.price):undefined};});
+  return rpc("referral_admin_quote_redemption",{p_partner_id:partnerId,p_request:{items,reason,cash_minor:parseBynMinor(cash),consent_reference:consent,allow_subsidy:gift,provider_acknowledged:providerAck}});
  },onSuccess:setQuote,onError:(e:Error)=>{setQuote(null);toast.error(errorText(e));}});
  const commit=useMutation({mutationFn:async()=>{
   const result=await rpc("referral_admin_commit_redemption",{p_quote_id:quote.quote_id});
@@ -64,7 +64,7 @@ export function ReferralRedemptionPanel({partnerId}:{partnerId:string}){
    {Number(r.pending_projections)>0&&<p className="text-xs text-amber-700">Внешняя синхронизация: ожидает завершения ({r.pending_projections})</p>}
    {permissions.reverse&&r.status==="completed"&&<Button variant="outline" size="sm" onClick={()=>{setReverse(r.id);setReverseReason("");setAllowUsed(false);}}>Отменить выдачу</Button>}
   </div>)}
-  <Dialog open={open} onOpenChange={value=>{if(!commit.isPending&&!calculate.isPending)setOpen(value);}}><DialogContent className="sm:max-w-3xl max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Продукты за реферальные бонусы</DialogTitle><DialogDescription>Отдельный доступ без платежа и автопродления. Все позиции оформляются вместе. Время доступа — Минск.</DialogDescription></DialogHeader>
+  <Dialog open={open} onOpenChange={value=>{if(!commit.isPending&&!calculate.isPending)setOpen(value);}}><DialogContent className="sm:max-w-3xl max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Продукты за реферальные бонусы</DialogTitle><DialogDescription>Отдельный доступ без платежа и автопродления. Все позиции оформляются вместе. Время доступа — Минск. Выдача действует в нашем приложении; доступ в GetCourse автоматически не выдаётся.</DialogDescription></DialogHeader>
    <div className="grid grid-cols-2 gap-2 text-sm rounded-md bg-muted p-3"><p>На продукты: <strong>{formatBynMinor(context.data?.balances.internal??0)}</strong></p><p>К выплате: <strong>{formatBynMinor(context.data?.balances.available??0)}</strong></p><p>Ожидает: {formatBynMinor((context.data?.balances.pending??0)+(context.data?.balances.internal_pending??0))}</p><p>В резерве: {formatBynMinor((context.data?.balances.held??0)+(context.data?.balances.internal_held??0))}</p></div>
    <fieldset disabled={commit.isPending||calculate.isPending} className="space-y-3">
    {cart.map(row=><div key={row.key} className="rounded-md border p-3 space-y-3">

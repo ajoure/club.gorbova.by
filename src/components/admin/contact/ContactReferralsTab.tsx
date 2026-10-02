@@ -49,12 +49,12 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
       const [relationships, sales, entries] = await Promise.all([
         client.from("referral_relationships").select("id, referred_profile_id, attached_at, status, source, manual_reason, metadata, profiles:referred_profile_id(full_name,email)").eq("partner_id", partner.id).order("attached_at", { ascending: false }),
         client.from("referral_sale_attributions").select("id, public_id, order_id, relationship_id, status, commission_minor, reversed_minor, created_at, metadata, products_v2(name)").eq("partner_id", partner.id).order("created_at", { ascending: false }),
-        client.from("referral_balance_entries").select("bucket,amount_minor").eq("partner_id", partner.id),
+        client.rpc("referral_get_partner_balance", { p_partner_id: partner.id }),
       ]);
       if (relationships.error) throw relationships.error;
       if (sales.error) throw sales.error;
       if (entries.error) throw entries.error;
-      return { partner, referredBy, referrals: relationships.data ?? [], sales: sales.data ?? [], entries: entries.data ?? [] };
+      return { partner, referredBy, referrals: relationships.data ?? [], sales: sales.data ?? [], entries: Object.entries(entries.data ?? {}).map(([bucket, amount_minor]) => ({ bucket, amount_minor })) };
     },
   });
 

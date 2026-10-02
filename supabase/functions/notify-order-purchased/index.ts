@@ -132,6 +132,10 @@ Deno.serve(async (req) => {
   if (orderErr) return json({ error: 'order_lookup_failed', details: orderErr.message }, 500)
   if (!order) return json({ error: 'order_not_found' }, 404)
 
+  if (order.meta?.financial_kind === 'referral_redemption' || order.meta?.suppress_notifications === true) {
+    return json({ skipped: 'notifications_suppressed' })
+  }
+
   if (order.status !== 'paid') {
     return json({ skipped: 'not_paid', status: order.status })
   }

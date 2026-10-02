@@ -78,7 +78,7 @@ export async function checkPriorPurchase(
   ) => {
     let query = supabase
       .from('orders_v2')
-      .select('id, tariff_id, purchase_snapshot')
+      .select('id, tariff_id, purchase_snapshot, meta')
       .eq('status', 'paid')
       .not('is_deleted', 'is', true)
       .neq('id', excludeOrderId);
@@ -99,7 +99,7 @@ export async function checkPriorPurchase(
     for (let from = 0; ; from += 1000) {
       const response = await query.order('id').range(from, from + 999);
       if (response.error) return response;
-      data.push(...(response.data || []));
+      data.push(...(response.data || []).filter((row: any) => row.meta?.financial_kind !== 'referral_redemption'));
       if ((response.data || []).length < 1000) return { data, error: null };
     }
   };

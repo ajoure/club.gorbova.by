@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS public.referral_redemption_items(
  price_minor bigint NOT NULL CHECK(price_minor > 0),
  starts_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK(expires_at > starts_at),
  phase text NOT NULL CHECK(phase IN ('scheduled','active','expired','revoked')),
+ last_reconciled_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS public.referral_redemption_outbox(
@@ -54,13 +55,18 @@ CREATE TABLE IF NOT EXISTS public.referral_redemption_outbox(
  leased_until timestamptz, error_code text, completed_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE referral_private.quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_redemptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_redemption_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_redemption_outbox ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.referral_redemptions,public.referral_redemption_items,public.referral_redemption_outbox FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON referral_private.quotes FROM PUBLIC,anon,authenticated;
 GRANT SELECT ON public.referral_redemptions,public.referral_redemption_items TO authenticated;
 GRANT ALL ON public.referral_redemptions,public.referral_redemption_items,public.referral_redemption_outbox TO service_role;
+DROP POLICY IF EXISTS referral_redemption_read ON public.referral_redemptions;
 CREATE POLICY referral_redemption_read ON public.referral_redemptions FOR SELECT TO authenticated
  USING(user_id=auth.uid() OR public.has_admin_section_access(auth.uid(),'referrals','view') OR public.has_admin_section_access(auth.uid(),'contacts','view'));
+DROP POLICY IF EXISTS referral_redemption_item_read ON public.referral_redemption_items;
 CREATE POLICY referral_redemption_item_read ON public.referral_redemption_items FOR SELECT TO authenticated
  USING(EXISTS(SELECT 1 FROM public.referral_redemptions r WHERE r.id=redemption_id));
 -- Public presentation never exposes the staff reason or consent evidence to the customer.
@@ -83,7 +89,8 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_tem
  'pending',coalesce(sum(amount_minor) FILTER(WHERE bucket='pending'),0),
  'internal_pending',coalesce(sum(amount_minor) FILTER(WHERE bucket='internal_pending'),0),
  'held',coalesce(sum(amount_minor) FILTER(WHERE bucket='held'),0),
- 'internal_held',coalesce(sum(amount_minor) FILTER(WHERE bucket='internal_held'),0))
+ 'internal_held',coalesce(sum(amount_minor) FILTER(WHERE bucket='internal_held'),0),
+ 'paid',coalesce(sum(amount_minor) FILTER(WHERE bucket='paid'),0))
  FROM public.referral_balance_entries WHERE partner_id=p_partner
 $$;
 REVOKE ALL ON FUNCTION referral_private.balance(uuid) FROM PUBLIC,anon,authenticated;
@@ -143,7 +150,7 @@ BEGIN
   v_recurring:=coalesce((v_offer.meta->'recurring'->>'is_recurring')::boolean,(v_offer.meta->>'is_recurring')::boolean,false);
   v_catalog_price:=round(v_offer.amount*100)::bigint;
   IF v_recurring THEN
-   IF v_unit='months' AND coalesce(v_offer.meta->'recurring'->>'billing_period_mode','month') IN ('month','months') THEN v_catalog_price:=v_catalog_price*v_count;
+   IF v_unit='months' AND coalesce(v_offer.meta->'recurring'->>'billing_period_mode','unknown') IN ('month','months') THEN v_catalog_price:=v_catalog_price*v_count;
    ELSE v_catalog_price:=NULL; END IF;
   END IF;
   v_price:=coalesce((v_item->>'price_minor')::bigint,v_catalog_price);
@@ -196,8 +203,12 @@ BEGIN
  PERFORM 1 FROM public.referral_partners WHERE id=q.partner_id FOR UPDATE;
  IF q.consumed_at IS NOT NULL THEN RETURN jsonb_build_object('redemption_id',q.id,'status','already_completed'); END IF;
  IF q.expires_at<=now() THEN RAISE EXCEPTION 'quote_expired'; END IF;
+ -- Freeze the rows used in the calculation through the atomic grant.
+ PERFORM 1 FROM public.products_v2 WHERE id IN (SELECT (x->>'product_id')::uuid FROM jsonb_array_elements(q.request->'items') x) ORDER BY id FOR SHARE;
+ PERFORM 1 FROM public.tariffs WHERE id IN (SELECT (x->>'tariff_id')::uuid FROM jsonb_array_elements(q.request->'items') x) ORDER BY id FOR SHARE;
+ PERFORM 1 FROM public.tariff_offers WHERE id IN (SELECT (x->>'offer_id')::uuid FROM jsonb_array_elements(q.request->'items') x) ORDER BY id FOR SHARE;
  v_snapshot:=referral_private.build_quote(auth.uid(),q.partner_id,q.request,q.anchor);
- IF v_snapshot IS DISTINCT FROM q.snapshot THEN RAISE EXCEPTION 'quote_stale'; END IF;
+ IF v_snapshot IS DISTINCT FROM q.snapshot OR EXISTS(SELECT 1 FROM jsonb_array_elements(q.snapshot->'items') x WHERE (x->>'expires_at')::timestamptz<=now()) THEN RAISE EXCEPTION 'quote_stale'; END IF;
  INSERT INTO public.referral_redemptions(id,partner_id,profile_id,user_id,actor_id,reason,consent_reference,provider_acknowledged,total_minor,internal_minor,converted_cash_minor,subsidy_minor,snapshot)
  VALUES(q.id,q.partner_id,(q.snapshot->>'profile_id')::uuid,(q.snapshot->>'user_id')::uuid,auth.uid(),q.request->>'reason',q.request->>'consent_reference',coalesce((q.request->>'provider_acknowledged')::boolean,false),(q.snapshot->>'total_minor')::bigint,(q.snapshot->>'internal_minor')::bigint,(q.snapshot->>'converted_cash_minor')::bigint,(q.snapshot->>'subsidy_minor')::bigint,q.snapshot);
  v_meta:=jsonb_build_object('redemption_id',q.id,'actor_id',auth.uid(),'reason',q.request->>'reason','consent_reference',q.request->>'consent_reference');
@@ -218,7 +229,7 @@ BEGIN
   -- Zero money order; the actual product value and split live in the redemption journal.
   INSERT INTO public.orders_v2(order_number,user_id,profile_id,product_id,tariff_id,offer_id,base_price,final_price,paid_amount,currency,status,is_trial,meta)
   VALUES('REF-'||upper(replace(q.id::text,'-',''))||'-'||v_idx,(q.snapshot->>'user_id')::uuid,(q.snapshot->>'profile_id')::uuid,(v_item->>'product_id')::uuid,(v_item->>'tariff_id')::uuid,(v_item->>'offer_id')::uuid,0,0,0,'BYN','paid',false,
-   jsonb_build_object('source','referral_redemption','financial_kind','referral_redemption','redemption_id',q.id,'catalog_price_minor',v_item->'catalog_price_minor','redemption_price_minor',v_item->'price_minor','access_start',v_item->'starts_at','access_end',v_item->'expires_at','granted_by',auth.uid(),'prevent_commission_accrual',true,'suppress_notifications',true)) RETURNING id INTO v_order;
+   jsonb_build_object('offer_id',v_item->'offer_id','source','referral_redemption','getcourse_sync_policy','in_app_only','financial_kind','referral_redemption','redemption_id',q.id,'catalog_price_minor',v_item->'catalog_price_minor','redemption_price_minor',v_item->'price_minor','access_start',v_item->'starts_at','access_end',v_item->'expires_at','granted_by',auth.uid(),'prevent_commission_accrual',true,'suppress_notifications',true)) RETURNING id INTO v_order;
   INSERT INTO public.entitlement_sources(source_type,source_ref,user_id,profile_id,product_id,tariff_id,order_id,starts_at,expires_at,status,meta)
   VALUES('bonus','referral_redemption:'||q.id||':'||v_idx,(q.snapshot->>'user_id')::uuid,(q.snapshot->>'profile_id')::uuid,(v_item->>'product_id')::uuid,(v_item->>'tariff_id')::uuid,v_order,(v_item->>'starts_at')::timestamptz,(v_item->>'expires_at')::timestamptz,'active',
    jsonb_build_object('origin','referral_redemption','reason','referral_redemption','redemption_id',q.id,'product_name',v_item->'product_name','tariff_name',v_item->'tariff_name','price_minor',v_item->'price_minor')) RETURNING id INTO v_source;
@@ -322,6 +333,7 @@ BEGIN
  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION referral_private.serialize_wallet_writer() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS referral_wallet_serialize ON public.referral_balance_transactions;
 CREATE TRIGGER referral_wallet_serialize BEFORE INSERT ON public.referral_balance_transactions
 FOR EACH ROW EXECUTE FUNCTION referral_private.serialize_wallet_writer();
 
@@ -338,12 +350,14 @@ begin
     return jsonb_build_object('applied_minor', 0, 'eligible', false);
   end if;
   select * into v_existing from public.referral_bonus_reservations where checkout_key = p_checkout_key;
-  if v_existing.id is not null then return jsonb_build_object('applied_minor', v_existing.amount_minor, 'reservation_id', v_existing.id); end if;
+  if v_existing.id is not null then return jsonb_build_object('applied_minor',CASE WHEN v_existing.status='reserved' AND v_existing.expires_at>now() THEN v_existing.amount_minor ELSE 0 END,'reservation_id',v_existing.id); end if;
   select rp.id into v_partner_id from public.referral_partners rp join public.profiles p on p.id = rp.profile_id
     where p.user_id = p_user_id and rp.status = 'active';
   if v_partner_id is null then return jsonb_build_object('applied_minor', 0); end if;
   perform pg_advisory_xact_lock(hashtextextended(v_partner_id::text,0));
   perform 1 from public.referral_partners where id=v_partner_id for update;
+  select * into v_existing from public.referral_bonus_reservations where checkout_key=p_checkout_key;
+  if v_existing.id is not null then return jsonb_build_object('applied_minor',CASE WHEN v_existing.status='reserved' AND v_existing.expires_at>now() THEN v_existing.amount_minor ELSE 0 END,'reservation_id',v_existing.id); end if;
   -- Expired reservations remain held until a compensating release is recorded.
   -- Do not mark them released without restoring their balance entries.
   -- Reservations have already moved internal -> internal_held; do not subtract twice.
@@ -362,17 +376,36 @@ end $$;
 revoke all on function public.referral_reserve_partner_bonus(uuid, bigint, bigint, text, uuid) from public;
 grant execute on function public.referral_reserve_partner_bonus(uuid, bigint, bigint, text, uuid) to service_role;
 
+CREATE OR REPLACE FUNCTION referral_private.refunds_reconciled(p_order uuid,p_basis bigint,p_commission bigint,p_reversed bigint)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ SELECT coalesce(p_basis>0 AND p_reversed>=least(p_commission,floor(p_commission::numeric*least(greatest(
+ coalesce(sum(round(greatest(coalesce(refunded_amount,0),0)*100)::bigint) FILTER(WHERE amount>=0),0),
+ coalesce(sum(round(abs(amount)*100)::bigint) FILTER(WHERE amount<0 AND (coalesce(transaction_type,'') ILIKE '%refund%' OR status::text='refunded')),0)),p_basis)/nullif(p_basis,0))::bigint),false)
+ FROM public.payments_v2 WHERE order_id=p_order AND NOT coalesce(is_deleted,false)
+$$;
+REVOKE ALL ON FUNCTION referral_private.refunds_reconciled(uuid,bigint,bigint,bigint) FROM PUBLIC,anon,authenticated;
+
 create or replace function public.referral_mature_due_commissions(p_limit integer default 500)
 returns integer language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_sale public.referral_sale_attributions%rowtype; v_tx uuid; v_count integer := 0; v_remaining bigint;
-  v_cash bigint; v_internal bigint; v_withdrawable_bps integer; v_split boolean;
+  v_cash bigint; v_internal bigint; v_withdrawable_bps integer; v_split boolean; v_pending_cash bigint; v_pending_internal bigint;
 begin
   if not (public.referral_is_admin(auth.uid()) or coalesce(auth.jwt()->>'role', '') = 'service_role') then raise exception 'forbidden'; end if;
   for v_sale in select * from public.referral_sale_attributions
-    where status in ('pending', 'partially_reversed') and available_at <= now() and not exists(select 1 from public.referral_balance_transactions bt where bt.idempotency_key='referral:mature:'||referral_sale_attributions.id) order by available_at for update skip locked limit least(greatest(p_limit, 1), 2000)
+    where status in ('pending', 'partially_reversed') and available_at <= now() and exists(select 1 from public.referral_partners rp where rp.id=referral_sale_attributions.partner_id and rp.status='active') and not exists(select 1 from public.referral_balance_transactions bt where bt.idempotency_key='referral:mature:'||referral_sale_attributions.id) order by available_at for update skip locked limit least(greatest(p_limit, 1), 2000)
   loop
     v_tx := null;
     v_remaining := v_sale.commission_minor - v_sale.reversed_minor;
+    v_split:=coalesce((v_sale.rule_snapshot->>'split_60_40_enabled')::boolean,false);
+    v_withdrawable_bps:=coalesce((v_sale.rule_snapshot->>'withdrawable_percent_bps')::integer,10000);
+    v_cash:=CASE WHEN v_split THEN round(v_sale.commission_minor*v_withdrawable_bps::numeric/10000)::bigint-round(v_sale.reversed_minor*v_withdrawable_bps::numeric/10000)::bigint ELSE v_remaining END;
+    v_internal:=v_remaining-v_cash;
+    PERFORM pg_advisory_xact_lock(hashtextextended(v_sale.partner_id::text,0));
+    PERFORM 1 FROM public.referral_partners WHERE id=v_sale.partner_id FOR UPDATE;
+    SELECT coalesce(sum(e.amount_minor) FILTER(WHERE e.bucket='pending'),0),coalesce(sum(e.amount_minor) FILTER(WHERE e.bucket='internal_pending'),0)
+     INTO v_pending_cash,v_pending_internal FROM public.referral_balance_entries e JOIN public.referral_balance_transactions t ON t.id=e.transaction_id WHERE t.source_id=v_sale.id AND e.partner_id=v_sale.partner_id;
+    -- An inconsistent sale remains pending and is visible in the manifest.
+    IF NOT referral_private.refunds_reconciled(v_sale.order_id,v_sale.commission_basis_minor,v_sale.commission_minor,v_sale.reversed_minor) OR v_cash<0 OR v_internal<0 OR v_cash<>v_pending_cash OR v_internal<>v_pending_internal THEN CONTINUE; END IF;
     if v_remaining > 0 then
       insert into public.referral_balance_transactions(partner_id, transaction_type, idempotency_key, source_type, source_id, description)
       values (v_sale.partner_id, 'commission_available', 'referral:mature:' || v_sale.id, 'sale_attribution', v_sale.id, 'Комиссия доступна к выплате')
@@ -404,6 +437,290 @@ end $$;
 REVOKE ALL ON FUNCTION public.referral_mature_due_commissions(integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.referral_mature_due_commissions(integer) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.recalculate_entitlement_aggregate(
+  p_user_id uuid,
+  p_product_id uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ent_id uuid;
+  v_product_code text;
+  v_profile_id uuid;
+  v_effective_tariff_id uuid;
+  v_effective_source_ref text;
+  v_effective_source_type text;
+  v_effective_rank integer;
+  v_has_perpetual boolean := false;
+  v_max_expires timestamptz;
+  v_source_count integer := 0;
+  v_subscription_count integer := 0;
+  v_total_count integer := 0;
+  v_meta jsonb;
+BEGIN
+  IF p_user_id IS NULL OR p_product_id IS NULL THEN
+    RAISE EXCEPTION 'recalculate_entitlement_aggregate: user_id and product_id required';
+  END IF;
+
+  SELECT p.code INTO v_product_code
+  FROM public.products_v2 p
+  WHERE p.id = p_product_id;
+
+  IF v_product_code IS NULL THEN
+    RAISE EXCEPTION 'recalculate_entitlement_aggregate: product_not_found:%', p_product_id;
+  END IF;
+
+  SELECT id INTO v_ent_id
+  FROM public.entitlements
+  WHERE user_id = p_user_id AND product_id = p_product_id
+  FOR UPDATE;
+
+  SELECT es.profile_id INTO v_profile_id
+  FROM public.entitlement_sources es
+  WHERE es.user_id = p_user_id
+    AND es.product_id = p_product_id
+    AND es.profile_id IS NOT NULL
+  ORDER BY es.created_at DESC
+  LIMIT 1;
+
+  IF v_profile_id IS NULL THEN
+    SELECT p.id INTO v_profile_id
+    FROM public.profiles p
+    WHERE p.user_id = p_user_id
+    ORDER BY p.created_at ASC
+    LIMIT 1;
+  END IF;
+
+  UPDATE public.entitlements SET meta=meta-'scope_resolution_mode'-'historical_module_product_ids'-'historical_purchase_type'-'historical_tariff_id'-'prior_purchase_order_id'-'referral_secondary_scope_applied'
+  WHERE id=v_ent_id AND meta->>'referral_secondary_scope_applied'='true';
+
+  WITH active_sources AS (
+    SELECT
+      es.id::text AS source_ref,
+      es.source_type,
+      es.tariff_id,
+      es.expires_at,
+      es.created_at,
+      public.tariff_access_rank(es.tariff_id) AS access_rank
+    FROM public.entitlement_sources es
+    WHERE es.user_id = p_user_id
+      AND es.product_id = p_product_id
+      AND es.status = 'active'
+      AND es.starts_at <= now()
+      AND (es.expires_at IS NULL OR es.expires_at > now())
+  ),
+  active_subscriptions AS (
+    SELECT
+      s.id::text AS source_ref,
+      'subscription'::text AS source_type,
+      s.tariff_id,
+      s.access_end_at AS expires_at,
+      s.created_at,
+      public.tariff_access_rank(s.tariff_id) AS access_rank
+    FROM public.subscriptions_v2 s
+    WHERE s.user_id = p_user_id
+      AND s.product_id = p_product_id
+      AND s.status IN ('active', 'trial', 'past_due')
+      AND (s.access_end_at IS NULL OR s.access_end_at > now())
+  ),
+  candidates AS (
+    SELECT * FROM active_sources
+    UNION ALL
+    SELECT * FROM active_subscriptions
+  )
+  SELECT c.tariff_id, c.source_ref, c.source_type, c.access_rank
+  INTO v_effective_tariff_id, v_effective_source_ref, v_effective_source_type, v_effective_rank
+  FROM candidates c
+  ORDER BY c.access_rank DESC NULLS LAST,
+           c.expires_at DESC NULLS FIRST,
+           c.created_at DESC,
+           c.source_ref DESC
+  LIMIT 1;
+
+  SELECT
+    COUNT(*),
+    COALESCE(bool_or(expires_at IS NULL), false),
+    MAX(expires_at)
+  INTO v_source_count, v_has_perpetual, v_max_expires
+  FROM public.entitlement_sources
+  WHERE user_id = p_user_id
+    AND product_id = p_product_id
+    AND status = 'active'
+    AND starts_at <= now()
+    AND (expires_at IS NULL OR expires_at > now());
+
+  SELECT COUNT(*) INTO v_subscription_count
+  FROM public.subscriptions_v2
+  WHERE user_id = p_user_id
+    AND product_id = p_product_id
+    AND status IN ('active', 'trial', 'past_due')
+    AND (access_end_at IS NULL OR access_end_at > now());
+
+  SELECT
+    COALESCE(bool_or(x.expires_at IS NULL), false),
+    MAX(x.expires_at)
+  INTO v_has_perpetual, v_max_expires
+  FROM (
+    SELECT es.expires_at
+    FROM public.entitlement_sources es
+    WHERE es.user_id = p_user_id
+      AND es.product_id = p_product_id
+      AND es.status = 'active'
+      AND es.starts_at <= now()
+      AND (es.expires_at IS NULL OR es.expires_at > now())
+    UNION ALL
+    SELECT s.access_end_at
+    FROM public.subscriptions_v2 s
+    WHERE s.user_id = p_user_id
+      AND s.product_id = p_product_id
+      AND s.status IN ('active', 'trial', 'past_due')
+      AND (s.access_end_at IS NULL OR s.access_end_at > now())
+  ) x;
+
+  v_total_count := v_source_count + v_subscription_count;
+
+  IF v_total_count = 0 THEN
+    IF v_ent_id IS NOT NULL THEN
+      UPDATE public.entitlements
+      SET status = 'expired',
+          meta = (COALESCE(meta, '{}'::jsonb)
+                  - 'effective_source_id'
+                  - 'effective_source_ref'
+                  - 'effective_source_type'
+                  - 'effective_access_rank'
+                  - 'tariff_id')
+                 || jsonb_build_object(
+                      'active_sources', 0,
+                      'active_subscriptions', 0,
+                      'recalculated_at', now(),
+                      'closed_reason', 'no_active_sources'
+                    ),
+          updated_at = now()
+      WHERE id = v_ent_id;
+    END IF;
+
+    RETURN jsonb_build_object(
+      'status', CASE WHEN v_ent_id IS NULL THEN 'no_entitlement_row' ELSE 'expired' END,
+      'active_sources', 0,
+      'active_subscriptions', 0
+    );
+  END IF;
+
+  v_meta := jsonb_build_object(
+    'effective_source_ref', v_effective_source_ref,
+    'effective_source_type', v_effective_source_type,
+    'effective_access_rank', v_effective_rank,
+    'active_sources', v_source_count,
+    'active_subscriptions', v_subscription_count,
+    'perpetual', v_has_perpetual,
+    'recalculated_at', now()
+  );
+  -- Scope carried by a referral-derived source must reach the runtime
+  -- aggregate; otherwise a historical module grant could become full access.
+  v_meta:=v_meta||coalesce((SELECT jsonb_build_object(
+    'scope_resolution_mode',es.meta->'scope_resolution_mode',
+    'historical_module_product_ids',es.meta->'historical_module_product_ids',
+    'historical_purchase_type',es.meta->'historical_purchase_type',
+    'historical_tariff_id',es.meta->'historical_tariff_id',
+    'prior_purchase_order_id',es.meta->'prior_purchase_order_id',
+    'referral_secondary_scope_applied',true)
+    FROM public.entitlement_sources es WHERE es.id::text=v_effective_source_ref AND es.meta->>'origin'='referral_redemption_secondary'),'{}');
+  IF v_effective_tariff_id IS NOT NULL THEN
+    v_meta := v_meta || jsonb_build_object('tariff_id', v_effective_tariff_id);
+  END IF;
+
+  IF v_ent_id IS NULL THEN
+    INSERT INTO public.entitlements (
+      user_id, profile_id, product_id, product_code, status, expires_at, meta
+    ) VALUES (
+      p_user_id,
+      v_profile_id,
+      p_product_id,
+      v_product_code,
+      'active',
+      CASE WHEN v_has_perpetual THEN NULL ELSE v_max_expires END,
+      v_meta
+    )
+    ON CONFLICT (user_id, product_code) DO UPDATE
+    SET product_id = EXCLUDED.product_id,
+        profile_id = COALESCE(EXCLUDED.profile_id, public.entitlements.profile_id),
+        status = 'active',
+        expires_at = EXCLUDED.expires_at,
+        meta = (COALESCE(public.entitlements.meta, '{}'::jsonb) - 'tariff_id') || EXCLUDED.meta,
+        updated_at = now()
+    RETURNING id INTO v_ent_id;
+  ELSE
+    UPDATE public.entitlements
+    SET profile_id = COALESCE(profile_id, v_profile_id),
+        status = 'active',
+        expires_at = CASE WHEN v_has_perpetual THEN NULL ELSE v_max_expires END,
+        meta = (COALESCE(meta, '{}'::jsonb)
+                - 'effective_source_id'
+                - 'effective_source_ref'
+                - 'effective_source_type'
+                - 'effective_access_rank'
+                - 'tariff_id') || v_meta,
+        updated_at = now()
+    WHERE id = v_ent_id;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status', 'active',
+    'entitlement_id', v_ent_id,
+    'effective_tariff_id', v_effective_tariff_id,
+    'effective_source_ref', v_effective_source_ref,
+    'effective_source_type', v_effective_source_type,
+    'effective_access_rank', v_effective_rank,
+    'effective_expires_at', CASE WHEN v_has_perpetual THEN NULL ELSE v_max_expires END,
+    'active_sources', v_source_count,
+    'active_subscriptions', v_subscription_count
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.recalculate_entitlement_aggregate(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.recalculate_entitlement_aggregate(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.recalculate_entitlement_aggregate(uuid, uuid) TO service_role;
+
+
+-- Derived product grants remain independent sources, not mutable legacy aggregates.
+CREATE OR REPLACE FUNCTION public.referral_project_secondary_source(p_item_id uuid,p_rule_id uuid,p_product_id uuid,p_expires_at timestamptz,p_meta jsonb)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE i record; v_id uuid; v_end timestamptz;
+BEGIN
+ SELECT ri.*,r.user_id,r.profile_id,r.status redemption_status INTO i FROM public.referral_redemption_items ri JOIN public.referral_redemptions r ON r.id=ri.redemption_id WHERE ri.id=p_item_id FOR UPDATE OF ri;
+ IF i.id IS NULL OR i.redemption_status<>'completed' OR i.phase<>'active' OR i.starts_at>now() OR i.expires_at<=now() THEN RAISE EXCEPTION 'source_not_active'; END IF;
+ PERFORM 1 FROM public.entitlement_sources WHERE id=i.source_id AND status='active' FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'source_not_active'; END IF;
+ v_end:=least(i.expires_at,p_expires_at);
+ IF v_end IS NULL OR v_end<=now() THEN RAISE EXCEPTION 'invalid_secondary_window'; END IF;
+ IF EXISTS(SELECT 1 FROM public.entitlements e WHERE user_id=i.user_id AND product_id=p_product_id AND status='active' AND (expires_at IS NULL OR expires_at>now()))
+ AND NOT EXISTS(SELECT 1 FROM public.entitlement_sources WHERE user_id=i.user_id AND product_id=p_product_id AND status='active')
+ AND NOT EXISTS(SELECT 1 FROM public.subscriptions_v2 WHERE user_id=i.user_id AND product_id=p_product_id AND status IN ('active','trial','past_due')) THEN RAISE EXCEPTION 'legacy_access_requires_reconciliation'; END IF;
+ IF nullif(p_meta->>'target_tariff_id','') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.tariffs WHERE id=(p_meta->>'target_tariff_id')::uuid AND product_id=p_product_id AND is_active) THEN RAISE EXCEPTION 'invalid_secondary_tariff'; END IF;
+ INSERT INTO public.entitlement_sources(source_type,source_ref,user_id,profile_id,product_id,tariff_id,order_id,starts_at,expires_at,status,meta)
+ VALUES('bonus','referral_secondary:'||i.id||':'||p_rule_id||':'||p_product_id,i.user_id,i.profile_id,p_product_id,nullif(p_meta->>'target_tariff_id','')::uuid,i.order_id,i.starts_at,v_end,'active',coalesce(p_meta,'{}')||jsonb_build_object('origin','referral_redemption_secondary','redemption_id',i.redemption_id,'referral_item_id',i.id,'source_entitlement_source_id',i.source_id,'rule_id',p_rule_id,'reason','referral_redemption'))
+ ON CONFLICT(source_type,source_ref) DO UPDATE SET expires_at=excluded.expires_at,status='active',meta=excluded.meta RETURNING id INTO v_id;
+ PERFORM public.recalculate_entitlement_aggregate(i.user_id,p_product_id);
+ RETURN v_id;
+END $$;
+REVOKE ALL ON FUNCTION public.referral_project_secondary_source(uuid,uuid,uuid,timestamptz,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.referral_project_secondary_source(uuid,uuid,uuid,timestamptz,jsonb) TO service_role;
+
+CREATE OR REPLACE FUNCTION referral_private.end_secondary_sources(p_item_id uuid,p_status text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE s record;
+BEGIN
+ FOR s IN SELECT id,user_id,product_id FROM public.entitlement_sources WHERE meta->>'origin'='referral_redemption_secondary' AND meta->>'referral_item_id'=p_item_id::text AND status='active' ORDER BY product_id,id FOR UPDATE LOOP
+  UPDATE public.entitlement_sources SET status=p_status,revoked_at=CASE WHEN p_status='revoked' THEN now() ELSE revoked_at END,revocation_reason=CASE WHEN p_status='revoked' THEN 'referral_redemption_reversal' ELSE revocation_reason END WHERE id=s.id;
+  PERFORM public.recalculate_entitlement_aggregate(s.user_id,s.product_id);
+ END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION referral_private.end_secondary_sources(uuid,text) FROM PUBLIC,anon,authenticated;
+
 CREATE OR REPLACE FUNCTION public.referral_admin_reverse_redemption(p_redemption_id uuid,p_reason text,p_allow_consumed boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE r public.referral_redemptions%rowtype; i public.referral_redemption_items%rowtype; v_tx uuid; v_bonus bigint;
@@ -424,6 +741,7 @@ BEGIN
  IF v_bonus>0 THEN INSERT INTO public.referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES(v_tx,r.partner_id,'internal_spent',-v_bonus); END IF;
  FOR i IN SELECT * FROM public.referral_redemption_items WHERE redemption_id=r.id ORDER BY product_id FOR UPDATE LOOP
   UPDATE public.entitlement_sources SET status='revoked',revoked_at=now(),revocation_reason=p_reason WHERE id=i.source_id AND meta->>'redemption_id'=r.id::text;
+  PERFORM referral_private.end_secondary_sources(i.id,'revoked');
   PERFORM public.recalculate_entitlement_aggregate(r.user_id,i.product_id);
   UPDATE public.referral_redemption_items SET phase='revoked' WHERE id=i.id;
   INSERT INTO public.referral_redemption_outbox(item_id,event_key) VALUES(i.id,'referral:projection:'||i.id||':revoked') ON CONFLICT(event_key) DO NOTHING;
@@ -447,10 +765,23 @@ BEGIN
   IF i.expires_at<=now() THEN
    UPDATE public.entitlement_sources SET status='expired' WHERE id=i.source_id AND status='active';
    UPDATE public.referral_redemption_items SET phase='expired' WHERE id=i.id;
+   PERFORM referral_private.end_secondary_sources(i.id,'expired');
   ELSE UPDATE public.referral_redemption_items SET phase='active' WHERE id=i.id; END IF;
   PERFORM public.recalculate_entitlement_aggregate(i.user_id,i.product_id);
   INSERT INTO public.referral_redemption_outbox(item_id,event_key) VALUES(i.id,'referral:projection:'||i.id||CASE WHEN i.expires_at<=now() THEN ':expired' ELSE ':active' END) ON CONFLICT(event_key) DO NOTHING;
+  UPDATE public.referral_redemption_items SET last_reconciled_at=now() WHERE id=i.id;
   n:=n+1;
+ END LOOP;
+ FOR i IN SELECT id,user_id,product_id,meta FROM public.entitlement_sources WHERE status='active' AND meta->>'origin'='referral_redemption_secondary' AND expires_at<=now() ORDER BY expires_at,id LIMIT least(greatest(p_limit,1),500) FOR UPDATE SKIP LOCKED LOOP
+  UPDATE public.entitlement_sources SET status='expired' WHERE id=i.id;
+  PERFORM public.recalculate_entitlement_aggregate(i.user_id,i.product_id);
+  INSERT INTO public.referral_redemption_outbox(item_id,event_key) VALUES((i.meta->>'referral_item_id')::uuid,'referral:secondary-expired:'||i.id) ON CONFLICT(event_key) DO NOTHING;
+ END LOOP;
+ -- Refresh effective tariff after overlapping paid/manual windows change.
+ -- Rotating bounded batches prevent stale higher-tier privileges and starvation.
+ FOR i IN SELECT ri.id,ri.product_id,r.user_id FROM public.referral_redemption_items ri JOIN public.referral_redemptions r ON r.id=ri.redemption_id WHERE r.status='completed' AND ri.phase='active' AND ri.starts_at<=now() AND ri.expires_at>now() AND (ri.last_reconciled_at IS NULL OR ri.last_reconciled_at<now()-interval '5 minutes') ORDER BY ri.last_reconciled_at NULLS FIRST,ri.id LIMIT least(greatest(p_limit,1),500) FOR UPDATE OF ri SKIP LOCKED LOOP
+  PERFORM public.recalculate_entitlement_aggregate(i.user_id,i.product_id);
+  UPDATE public.referral_redemption_items SET last_reconciled_at=now() WHERE id=i.id;
  END LOOP;
  RETURN jsonb_build_object('items_updated',n);
 END $$;
@@ -460,9 +791,10 @@ GRANT EXECUTE ON FUNCTION public.referral_redemption_tick(integer) TO service_ro
 CREATE OR REPLACE FUNCTION public.referral_redemption_claim_outbox(p_limit integer DEFAULT 20)
 RETURNS SETOF public.referral_redemption_outbox LANGUAGE sql SECURITY DEFINER SET search_path=public,pg_temp AS $$
  UPDATE public.referral_redemption_outbox o SET status='processing',attempts=o.attempts+1,leased_until=now()+interval '5 minutes'
- WHERE id IN (SELECT id FROM public.referral_redemption_outbox WHERE
- ((status IN ('pending','failed') AND available_at<=now()) OR (status='processing' AND leased_until<=now()))
- ORDER BY created_at LIMIT least(greatest(p_limit,1),50) FOR UPDATE SKIP LOCKED) RETURNING o.*
+ WHERE id IN (SELECT candidate.id FROM public.referral_redemption_outbox candidate WHERE
+ ((candidate.status IN ('pending','failed') AND candidate.available_at<=now()) OR (candidate.status='processing' AND candidate.leased_until<=now()))
+ AND NOT EXISTS(SELECT 1 FROM public.referral_redemption_outbox earlier WHERE earlier.item_id=candidate.item_id AND earlier.status<>'done' AND (earlier.created_at,earlier.id)<(candidate.created_at,candidate.id))
+ ORDER BY candidate.created_at,candidate.id LIMIT least(greatest(p_limit,1),50) FOR UPDATE SKIP LOCKED) RETURNING o.*
 $$;
 REVOKE ALL ON FUNCTION public.referral_redemption_claim_outbox(integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.referral_redemption_claim_outbox(integer) TO service_role;
@@ -499,3 +831,29 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_tem
 $$;
 REVOKE ALL ON FUNCTION public.referral_get_my_redemptions() FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.referral_get_my_redemptions() TO authenticated;
+
+-- Full journal sum, never a PostgREST row-limited client reduction.
+CREATE OR REPLACE FUNCTION public.referral_get_partner_balance(p_partner_id uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+BEGIN
+ IF NOT (public.has_admin_section_access(auth.uid(),'referrals','view') OR public.has_admin_section_access(auth.uid(),'contacts','view') OR EXISTS(SELECT 1 FROM public.referral_partners rp JOIN public.profiles p ON p.id=rp.profile_id WHERE rp.id=p_partner_id AND p.user_id=auth.uid())) THEN RAISE EXCEPTION 'forbidden'; END IF;
+ RETURN referral_private.balance(p_partner_id);
+END $$;
+REVOKE ALL ON FUNCTION public.referral_get_partner_balance(uuid) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.referral_get_partner_balance(uuid) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.referral_maturation_manifest()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ WITH due AS (
+ SELECT s.id,s.partner_id,r.status partner_status,NOT referral_private.refunds_reconciled(s.order_id,s.commission_basis_minor,s.commission_minor,s.reversed_minor) refund_anomaly,s.commission_minor-s.reversed_minor remaining,
+ CASE WHEN coalesce((s.rule_snapshot->>'split_60_40_enabled')::boolean,false) THEN round(s.commission_minor*coalesce((s.rule_snapshot->>'withdrawable_percent_bps')::integer,10000)::numeric/10000)::bigint-round(s.reversed_minor*coalesce((s.rule_snapshot->>'withdrawable_percent_bps')::integer,10000)::numeric/10000)::bigint ELSE s.commission_minor-s.reversed_minor END cash,
+ coalesce((SELECT sum(e.amount_minor) FROM public.referral_balance_entries e JOIN public.referral_balance_transactions t ON t.id=e.transaction_id WHERE t.source_id=s.id AND e.bucket='pending' AND e.partner_id=s.partner_id),0) pending_cash,
+ coalesce((SELECT sum(e.amount_minor) FROM public.referral_balance_entries e JOIN public.referral_balance_transactions t ON t.id=e.transaction_id WHERE t.source_id=s.id AND e.bucket='internal_pending' AND e.partner_id=s.partner_id),0) pending_internal
+ FROM public.referral_sale_attributions s JOIN public.referral_partners r ON r.id=s.partner_id
+ WHERE s.status IN ('pending','partially_reversed') AND s.available_at<=now() AND NOT EXISTS(SELECT 1 FROM public.referral_balance_transactions t WHERE t.idempotency_key='referral:mature:'||s.id)
+ ), classified AS (SELECT *,remaining-cash internal,refund_anomaly OR cash<0 OR remaining-cash<0 OR pending_cash<>cash OR pending_internal<>remaining-cash anomaly FROM due)
+ SELECT jsonb_build_object('due_count',count(*),'eligible_count',count(*) FILTER(WHERE NOT anomaly AND partner_status='active'),'anomaly_count',count(*) FILTER(WHERE anomaly),'paused_count',count(*) FILTER(WHERE partner_status<>'active'),
+ 'cash_minor',coalesce(sum(cash) FILTER(WHERE NOT anomaly AND partner_status='active'),0),'internal_minor',coalesce(sum(internal) FILTER(WHERE NOT anomaly AND partner_status='active'),0)) FROM classified
+$$;
+REVOKE ALL ON FUNCTION public.referral_maturation_manifest() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.referral_maturation_manifest() TO service_role;

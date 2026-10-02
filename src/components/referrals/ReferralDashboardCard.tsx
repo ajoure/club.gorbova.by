@@ -39,7 +39,13 @@ export function ReferralDashboardCard() {
     queryFn: async () => {
       const { data, error } = await rpc("referral_get_my_dashboard");
       if (error) throw error;
-      return data as DashboardData;
+      const typed = data as DashboardData;
+      if (typed.partner && typed.balances) {
+        const { data: wallet, error: walletError } = await rpc("referral_get_partner_balance", { p_partner_id: typed.partner.id });
+        if (walletError) throw walletError;
+        typed.balances.held_minor = Number(wallet.held ?? 0) + Number(wallet.internal_held ?? 0);
+      }
+      return typed;
     },
   });
 

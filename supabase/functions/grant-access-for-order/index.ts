@@ -415,6 +415,13 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Referral access is owned by its independent source and outbox, never by
+    // paid-order fulfillment (which can create provider subscriptions).
+    if (order.meta?.financial_kind === 'referral_redemption') {
+      return new Response(JSON.stringify({ success: false, error: 'referral_redemption_managed_separately' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // Check if user_id exists
     if (!order.user_id) {
       return new Response(
