@@ -1,4 +1,4 @@
-import { isFreeDeal } from "@/lib/deals/dealFinancialKind";
+import { isFreeDeal, isReferralRedemption } from "@/lib/deals/dealFinancialKind";
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -203,6 +203,9 @@ export function OrderListItem({ order }: OrderListItemProps) {
         </Badge>
       );
     }
+    if (isReferralRedemption(order)) {
+      return <Badge variant="outline" className="text-xs whitespace-normal">{order.meta?.referral_redemption_status === 'reversed' ? 'Реферальная выдача отменена' : 'По реферальной программе'}</Badge>;
+    }
     if (isFreeDeal(order)) {
       return <Badge variant="outline" className="text-xs">Бесплатно</Badge>;
     }
@@ -278,10 +281,11 @@ export function OrderListItem({ order }: OrderListItemProps) {
           <span className="font-semibold text-foreground">
             {order.final_price.toFixed(2)} {order.currency}
           </span>
-          <span className="flex items-center gap-1">
+          {!isReferralRedemption(order) && <span className="flex items-center gap-1">
             <CreditCard className="h-3.5 w-3.5" />
             {getPaymentMethod()}
-          </span>
+          </span>}
+          {isReferralRedemption(order) && order.meta?.access_start && order.meta?.access_end && <span>Доступ: {formatShortDate(order.meta.access_start)} — {formatShortDate(order.meta.access_end)}</span>}
         </div>
       </div>
 

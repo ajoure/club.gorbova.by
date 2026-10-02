@@ -57,6 +57,7 @@ export interface SecondaryGrantAction {
   reason?: string;
   current_expires_at: string | null;
   planned_expires_at: string | null;
+  planned_meta?: Record<string, any>;
   ledger_id?: string | null;
   ledger_execution_key?: string | null;
 }
@@ -257,7 +258,7 @@ export async function buildPriorPurchaseCache(
       for (const channel of identityChannels) {
         let q = supabase
           .from('orders_v2')
-          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
+          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot, meta')
           .eq('status', 'paid')
           .not('is_deleted', 'is', true)
           .in(channel.column, channel.ids)
@@ -270,7 +271,7 @@ export async function buildPriorPurchaseCache(
           const { data, error } = await q.range(from, from + PAGE - 1);
           if (error) throw error;
           const rows = data || [];
-          for (const row of rows as Array<{
+          for (const row of rows.filter((entry: any) => entry.meta?.financial_kind !== 'referral_redemption') as Array<{
             user_id: string | null; profile_id: string | null;
             product_id: string; id: string; tariff_id: string | null;
             purchase_snapshot: Record<string, any> | null;
@@ -306,7 +307,7 @@ export async function buildPriorPurchaseCache(
       for (const channel of identityChannels) {
         let q = supabase
           .from('orders_v2')
-          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
+          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot, meta')
           .eq('status', 'paid')
           .not('is_deleted', 'is', true)
           .in(channel.column, channel.ids)
@@ -319,7 +320,7 @@ export async function buildPriorPurchaseCache(
           console.error('[product-access-grants] module fallback query error:', error.message);
           continue;
         }
-        for (const row of (data || []) as Array<{
+        for (const row of (data || []).filter((entry: any) => entry.meta?.financial_kind !== 'referral_redemption') as Array<{
           user_id: string | null; profile_id: string | null;
           product_id: string; id: string; tariff_id: string | null;
           purchase_snapshot: Record<string, any> | null;
@@ -600,6 +601,8 @@ export async function syncSecondaryProductAccessForUser(
         prior_purchase: priorInfo,
         target_product_id: targetProdId,
       });
+
+      action.planned_meta = enrichedMeta;
 
       // INV-PHANTOM-PARENT-V1 guard REMOVED 2026-05-13.
       // Reason: business-bonus parent entitlements with hpids outside target subtree

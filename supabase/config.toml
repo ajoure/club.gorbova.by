@@ -275,3 +275,6 @@ verify_jwt = false
 # Scheduler-only endpoint; dedicated Vault secret is verified by a service-only RPC.
 [functions.sales-runtime-worker]
 verify_jwt = false
+
+[functions.referral-redemption-worker]
+verify_jwt = false

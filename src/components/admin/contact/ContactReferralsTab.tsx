@@ -12,6 +12,7 @@ import { ContactPickerDialog, type PickedContact } from "@/components/admin/shar
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ReferralRedemptionPanel } from "@/components/referrals/ReferralRedemptionPanel";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 type PickerMode = "partner" | "referred" | "replace-partner" | null;
@@ -48,12 +49,12 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
       const [relationships, sales, entries] = await Promise.all([
         client.from("referral_relationships").select("id, referred_profile_id, attached_at, status, source, manual_reason, metadata, profiles:referred_profile_id(full_name,email)").eq("partner_id", partner.id).order("attached_at", { ascending: false }),
         client.from("referral_sale_attributions").select("id, public_id, order_id, relationship_id, status, commission_minor, reversed_minor, created_at, metadata, products_v2(name)").eq("partner_id", partner.id).order("created_at", { ascending: false }),
-        client.from("referral_balance_entries").select("bucket,amount_minor").eq("partner_id", partner.id),
+        client.rpc("referral_get_partner_balance", { p_partner_id: partner.id }),
       ]);
       if (relationships.error) throw relationships.error;
       if (sales.error) throw sales.error;
       if (entries.error) throw entries.error;
-      return { partner, referredBy, referrals: relationships.data ?? [], sales: sales.data ?? [], entries: entries.data ?? [] };
+      return { partner, referredBy, referrals: relationships.data ?? [], sales: sales.data ?? [], entries: Object.entries(entries.data ?? {}).map(([bucket, amount_minor]) => ({ bucket, amount_minor })) };
     },
   });
 
@@ -195,11 +196,15 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
       <CardContent className="space-y-3">
         <div className="flex gap-2"><div className="flex-1 min-w-0 border rounded-md px-3 py-2 font-mono text-xs truncate">{link}</div><Button variant="outline" size="icon" onClick={async () => { await navigator.clipboard.writeText(link!); toast.success("Ссылка скопирована"); }}><Copy className="h-4 w-4" /></Button></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-          <Metric label="Ожидает" value={formatBynMinor(totals.pending)} />
+          <Metric label="Ожидает к выплате" value={formatBynMinor(totals.pending)} />
+          <Metric label="Ожидает на продукты" value={formatBynMinor(totals.internal_pending)} />
+          <Metric label="На продукты" value={formatBynMinor(totals.internal)} />
+          <Metric label="Резерв на продукты" value={formatBynMinor(totals.internal_held)} />
           <Metric label="К выплате" value={formatBynMinor(totals.available)} />
           <Metric label="В резерве" value={formatBynMinor(totals.held)} />
           <Metric label="Выплачено" value={formatBynMinor(totals.paid)} />
         </div>
+        <ReferralRedemptionPanel partnerId={data.partner.id} />
         {canEdit && <Button variant="outline" size="sm" className="gap-2" onClick={() => setPickerMode("referred")}><Link2 className="h-4 w-4" /> Добавить существующего клиента</Button>}
       </CardContent>
     </Card> : <Card><CardContent className="py-8 text-center space-y-3">

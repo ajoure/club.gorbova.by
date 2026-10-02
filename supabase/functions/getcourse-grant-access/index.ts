@@ -242,6 +242,13 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Arbitrary finite referral windows are not supported by the deal API.
+    // Never silently create an unbounded external access from a bonus order.
+    if (order.meta?.financial_kind === 'referral_redemption') {
+      return new Response(JSON.stringify({ ok: true, status: 'skipped', reason: 'referral_in_app_only' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // Get offer if exists (for offer-level getcourse_offer_id)
     let offer: any = null;
     const offerId = (order.meta as any)?.offer_id;

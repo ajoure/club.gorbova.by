@@ -3862,7 +3862,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     const sourceMeta = source.meta && typeof source.meta === "object" && !Array.isArray(source.meta)
                       ? source.meta as Record<string, unknown>
                       : {};
-                    const sourceLabel = typeof sourceMeta.source_product_name === "string"
+                    const sourceLabel = String(sourceMeta.origin ?? "").startsWith("referral_redemption") ? "реферальной программе" : typeof sourceMeta.source_product_name === "string"
                       ? sourceMeta.source_product_name
                       : "отдельному основанию";
                     return (
@@ -3878,12 +3878,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                   </Badge>
                                 )}
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-violet-600 border-violet-200">
-                                  {source.source_type === "bonus" ? "бонусный доступ" : "отдельный источник"}
+                                  {String((source.meta as Record<string, unknown>)?.origin ?? "").startsWith("referral_redemption") ? "доступ по реферальной программе" : source.source_type === "bonus" ? "бонусный доступ" : "отдельный источник"}
                                 </Badge>
                               </div>
                             </div>
                             <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 shrink-0">
-                              Активен
+                              {new Date(source.starts_at).getTime() > Date.now() ? "Запланирован" : "Активен"}
                             </Badge>
                           </div>
                           <div className="text-xs text-muted-foreground mb-2">
@@ -3932,7 +3932,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                             <div>
                               <div className="font-medium">{product?.name || ent.product_code || "Продукт"}</div>
                               <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">{String((ent.meta as Record<string, unknown>)?.referral_origin ?? "").startsWith("referral_redemption") ? "по реферальной программе" : "доступ по продукту"}</Badge>
                                 {meta?.source_rule_id && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">
                                     {meta?.source_product_name ? `через ${meta.source_product_name}` : "по правилу"}
@@ -4046,7 +4046,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                     <div>
                                       <div className="font-medium text-sm">{product?.name || ent.product_code || "Продукт"}</div>
                                       <div className="text-xs text-muted-foreground">
-                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">{String((ent.meta as Record<string, unknown>)?.referral_origin ?? "").startsWith("referral_redemption") ? "по реферальной программе" : "доступ по продукту"}</Badge>
                                       </div>
                                     </div>
                                     <Badge variant={isExpired ? "outline" : "secondary"}>

@@ -722,12 +722,12 @@ async function resolveClubScopedCommercialAccessBatch(
   if (paidOrderProductIds.length > 0) {
     const { data, error } = await supabase
       .from('orders_v2')
-      .select('id, user_id, product_id, tariff_id')
+      .select('id, user_id, product_id, tariff_id, meta')
       .in('user_id', userIds)
       .in('product_id', paidOrderProductIds)
       .eq('status', 'paid');
     if (error) throw new Error(`commercial_access_rule_orders_failed: ${error.message}`);
-    paidOrders = (data || []) as typeof paidOrders;
+    paidOrders = (data || []).filter((row: any) => row.meta?.financial_kind !== 'referral_redemption') as typeof paidOrders;
   }
 
   // 1. Direct club products: their own paid subscription window remains SoT.

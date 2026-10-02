@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildReferralLink, formatBynMinor, readCapturedReferral, REFERRAL_STORAGE_KEY, referralStatusLabel, storeCapturedReferral } from "./referrals";
+import { buildReferralLink, formatBynMinor, parseBynMinor, readCapturedReferral, REFERRAL_STORAGE_KEY, referralStatusLabel, storeCapturedReferral } from "./referrals";
 
 describe("referral helpers", () => {
+  it("parses exact kopiykas and rejects ambiguous amounts", () => {
+    expect(parseBynMinor("1180,00")).toBe(118000);
+    expect(parseBynMinor("0.29")).toBe(29);
+    expect(parseBynMinor("50")).toBe(5000);
+    for (const value of ["", "NaN", "-50", "1.234", "1e3", "Infinity", "10000001"]) {
+      expect(() => parseBynMinor(value)).toThrow();
+    }
+  });
   it("formats minor units as BYN", () => {
     expect(formatBynMinor(50000)).toContain("500");
   });
