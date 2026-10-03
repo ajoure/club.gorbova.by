@@ -31,7 +31,7 @@ export function ReferralRedemptionPanel({partnerId}:{partnerId:string}){
  const [gift,setGift]=useState(false);const [providerAck,setProviderAck]=useState(false);const [quote,setQuote]=useState<any>(null);
  const [reverse,setReverse]=useState<string|null>(null);const [reverseReason,setReverseReason]=useState("");const [allowUsed,setAllowUsed]=useState(false);
  const context=useQuery({queryKey:["referral-redemption-context",partnerId],enabled:allowed,queryFn:()=>rpc("referral_admin_redemption_context",{p_partner_id:partnerId})});
- const refresh=()=>{qc.invalidateQueries({queryKey:["referral-redemption-context",partnerId]});qc.invalidateQueries({queryKey:["contact-referrals"]});qc.invalidateQueries({queryKey:["contact-entitlement-sources"]});qc.invalidateQueries({queryKey:["admin-referrals-overview"]});qc.invalidateQueries({queryKey:["contact-orders"]});qc.invalidateQueries({queryKey:["contact-entitlements"]});qc.invalidateQueries({queryKey:["contact-subscriptions"]});};
+ const refresh=()=>{qc.invalidateQueries({queryKey:["referral-redemption-context",partnerId]});qc.invalidateQueries({queryKey:["contact-referrals"]});qc.invalidateQueries({queryKey:["contact-entitlement-sources"]});qc.invalidateQueries({queryKey:["admin-referrals-overview"]});qc.invalidateQueries({queryKey:["contact-deals"]});qc.invalidateQueries({queryKey:["contact-entitlements"]});qc.invalidateQueries({queryKey:["contact-subscriptions"]});};
  const catalog:CatalogItem[]=context.data?.catalog??[];const permissions=context.data?.permissions??{};
  const change=(key:string,patch:Partial<CartItem>)=>{setCart(rows=>rows.map(row=>row.key===key?{...row,...patch}:row));setQuote(null);};
  const selected=cart.map(row=>catalog.find(item=>item.offer_id===row.offerId));

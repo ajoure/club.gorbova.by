@@ -57,3 +57,8 @@ export function isContactMoneyDeal(deal: DealFinancialEvidence): boolean {
 export function dealStatusLabel(deal: DealFinancialEvidence, fallback: string): string {
   return isReferralRedemption(deal) ? 'По реферальной программе' : isFreeDeal(deal) ? 'Бесплатно' : fallback;
 }
+
+/** Contact history includes bonus purchases without treating them as revenue. */
+export function isContactVisibleDeal(deal: DealFinancialEvidence): boolean {
+  return isContactMoneyDeal(deal) || isReferralRedemption(deal);
+}

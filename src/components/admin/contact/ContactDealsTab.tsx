@@ -1,4 +1,4 @@
-import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
+import { dealStatusLabel, isReferralRedemption } from "@/lib/deals/dealFinancialKind";
 import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Calendar as CalendarIcon,
   CreditCard,
+  Gift,
   Pencil,
   Eye,
   Undo2,
@@ -136,14 +137,14 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
       const db = getEffectiveDealTimestamp(b);
       return db - da;
     });
-    const paidCount = items.filter(i => i.status === "paid").length;
+    const paidCount = items.filter(i => i.status === "paid" && !isReferralRedemption(i)).length;
     const totalSum = items
-      .filter(i => i.status === "paid")
+      .filter(i => i.status === "paid" && !isReferralRedemption(i))
       .reduce((sum, i) => sum + getDealCommercialAmount(i), 0);
     const currency = items[0]?.currency || "BYN";
 
     // Sort group by latest paid deal date; fallback to latest deal date overall.
-    const paidItems = items.filter(i => i.status === "paid");
+    const paidItems = items.filter(i => i.status === "paid" && !isReferralRedemption(i));
     const tsPool = (paidItems.length ? paidItems : items).map(i =>
       getEffectiveDealTimestamp(i)
     );
@@ -331,11 +332,12 @@ function DealRow({
   onRefund: () => void;
 }) {
   const { data: staff = [] } = useStaffOptions();
-  const responsibleName = staff.find((item) => item.user_id === deal.responsible_user_id)?.label;
+  const responsibleName = staff.find((item) => item.user_id === (deal.responsible_user_id || deal.meta?.granted_by))?.label;
   const meta = (deal.meta || {}) as Record<string, any>;
   const snapshot = (deal.purchase_snapshot || {}) as Record<string, any>;
   const dealMonth = formatDealMonth(meta.deal_month);
-  const isPaid = deal.status === "paid";
+  const referral = isReferralRedemption(deal);
+  const isPaid = deal.status === "paid" && !referral;
   const isSplitParent = meta.split_status === "children_created";
 
   const tariffName = (deal.tariffs as any)?.name;
@@ -384,13 +386,13 @@ function DealRow({
             <span>{formatEffectiveDealDate(deal, "dd.MM.yy HH:mm")}</span>
           </div>
           <div className={deal.responsible_user_id ? "text-[11px] text-muted-foreground" : "text-[11px] text-amber-600"}>
-            {responsibleName || "Без менеджера"}
+            {referral ? `Выдано администратором${responsibleName ? `: ${responsibleName}` : ""}` : responsibleName || "Без менеджера"}
           </div>
         </div>
       </div>
 
       {/* Bottom row on mobile (offset under title); inline on desktop */}
-      <div className="flex items-center gap-1 sm:gap-1.5 flex-nowrap min-w-0 sm:flex-shrink-0 pl-9 sm:pl-0 overflow-hidden">
+      <div className={`flex items-center gap-1 sm:gap-1.5 min-w-0 sm:flex-shrink-0 pl-9 sm:pl-0 ${referral ? "flex-wrap" : "flex-nowrap overflow-hidden"}`}>
         {dealMonth && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -413,12 +415,13 @@ function DealRow({
         </Badge>
 
         <span className="text-xs font-medium flex items-center gap-1 whitespace-nowrap">
-          <CreditCard className="w-3 h-3 text-muted-foreground" />
+          {referral ? <Gift className="w-3 h-3 text-violet-600" /> : <CreditCard className="w-3 h-3 text-muted-foreground" />}
           {new Intl.NumberFormat("ru-BY", {
             style: "currency",
             currency: deal.currency,
             maximumFractionDigits: 0,
-          }).format(getDealCommercialAmount(deal))}
+          }).format(referral ? Number(meta.redemption_price_minor || 0) / 100 : getDealCommercialAmount(deal))}
+          {referral && " бонусами"}
         </span>
 
         <Button
