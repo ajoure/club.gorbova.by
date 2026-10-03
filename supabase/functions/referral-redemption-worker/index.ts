@@ -1,3 +1,4 @@
+import { assertReferralDelivery } from './delivery.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 import { resolveAccessForOrder } from '../_shared/access-resolver.ts';
@@ -47,7 +48,7 @@ Deno.serve(async(req)=>{
    const active=r.status==='completed'&&item.phase==='active'&&Date.parse(item.starts_at)<=now&&Date.parse(item.expires_at)>now;
    const resolution=await resolveAccessForOrder(client,{order_id:item.order_id,product_id:item.product_id,tariff_id:item.tariff_id,offer_id:item.offer_id,user_id:r.user_id,profile_id:r.profile_id});
    if(active&&resolution.blocked_reasons.length)throw new Error('resolution_blocked');
-   const {data:product,error:productError}=await client.from('products_v2').select('telegram_club_id').eq('id',item.product_id).single();
+   const {data:product,error:productError}=await client.from('products_v2').select('telegram_club_id,name').eq('id',item.product_id).single();
    if(active&&productError)throw new Error('product_read_failed');
    const clubs=new Map<string,number|null>(resolution.club_grants.map(grant=>[grant.club_id,grant.duration_days]));
    if(product?.telegram_club_id&&!clubs.has(product.telegram_club_id))clubs.set(product.telegram_club_id,null);
@@ -89,7 +90,21 @@ Deno.serve(async(req)=>{
        if(clubSourceError)throw new Error('club_source_failed');
       }
      }
-     await invoke('telegram-grant-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',source_id:item.order_id,valid_until:expires,access_rule_id:grant?.rule_id,notify_customer:false});
+     // Read only delivery evidence, never invite links. Recognize a manual
+     // resend of the same entitlement as well as the canonical order key.
+     const {data:sent,error:sentError}=await client.from('telegram_logs').select('id,mirrored:meta->mirrored_to_telegram_messages').eq('user_id',r.user_id).eq('club_id',clubId).in('meta->>source_id',[item.order_id,item.source_id]).eq('meta->>dm_sent','true').order('created_at',{ascending:false}).limit(1).maybeSingle();
+     if(sentError)throw new Error('telegram_delivery_read_failed');
+     if(!sent){
+      // Keep the existing outbox pending until linking, rather than creating
+      // another pending notification on every retry.
+      const {data:profile,error:profileError}=await client.from('profiles').select('telegram_user_id').eq('id',r.profile_id).single();
+      if(profileError)throw new Error('telegram_profile_read_failed');
+      if(!profile?.telegram_user_id)throw new Error('telegram_account_not_linked');
+     }
+     const delivery=await invoke('telegram-grant-access',{user_id:r.user_id,club_id:clubId,source:'referral_redemption',source_id:item.order_id,valid_until:expires,access_rule_id:grant?.rule_id,product_name:product?.name,notify_customer:!sent});
+     if(sent){
+      if(sent.mirrored!==true)throw new Error('telegram_mirror_reconciliation_required');
+     }else assertReferralDelivery(delivery,clubId);
      const {data:projected,error:projectionError}=await client.from('telegram_access_grants').select('status,end_at').eq('user_id',r.user_id).eq('club_id',clubId).eq('source_id',item.order_id).eq('source','referral_redemption').maybeSingle();
      if(projectionError||!projected||projected.status!=='active'||!projected.end_at||Date.parse(projected.end_at)!==Date.parse(expires))throw new Error('telegram_projection_readback_failed');
     }

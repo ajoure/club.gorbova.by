@@ -1,4 +1,4 @@
-import { isContactMoneyDeal } from "@/lib/deals/dealFinancialKind";
+import { isContactVisibleDeal } from "@/lib/deals/dealFinancialKind";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
@@ -541,7 +541,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           .order("id")
           .range(offset, offset + 499);
         if (error) throw error;
-        moneyRows.push(...(data ?? []).filter(isContactMoneyDeal));
+        moneyRows.push(...(data ?? []).filter(isContactVisibleDeal));
         if (!data || data.length < 500) break;
       }
       const rows = moneyRows;
