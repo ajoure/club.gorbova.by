@@ -10982,6 +10982,229 @@ export type Database = {
           },
         ]
       }
+      instagram_monitor_comments: {
+        Row: {
+          id: string
+          posted_at: string | null
+          provider_comment_id: string
+          reel_id: string
+          text: string
+          username: string
+        }
+        Insert: {
+          id?: string
+          posted_at?: string | null
+          provider_comment_id: string
+          reel_id: string
+          text: string
+          username?: string
+        }
+        Update: {
+          id?: string
+          posted_at?: string | null
+          provider_comment_id?: string
+          reel_id?: string
+          text?: string
+          username?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_monitor_comments_reel_id_fkey"
+            columns: ["reel_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_monitor_reels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_monitor_profiles: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          last_checked_at: string | null
+          username: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_checked_at?: string | null
+          username: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_checked_at?: string | null
+          username?: string
+        }
+        Relationships: []
+      }
+      instagram_monitor_reels: {
+        Row: {
+          caption: string
+          collected_comments_count: number
+          comments_count: number
+          comments_coverage: string
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          likes_count: number
+          post_url: string
+          profile_id: string
+          published_at: string | null
+          shortcode: string
+          source_run_id: string
+          storage_path: string | null
+          summary: string | null
+          transcript: string | null
+          transcript_status: string
+        }
+        Insert: {
+          caption?: string
+          collected_comments_count?: number
+          comments_count?: number
+          comments_coverage?: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          likes_count?: number
+          post_url: string
+          profile_id: string
+          published_at?: string | null
+          shortcode: string
+          source_run_id: string
+          storage_path?: string | null
+          summary?: string | null
+          transcript?: string | null
+          transcript_status?: string
+        }
+        Update: {
+          caption?: string
+          collected_comments_count?: number
+          comments_count?: number
+          comments_coverage?: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          likes_count?: number
+          post_url?: string
+          profile_id?: string
+          published_at?: string | null
+          shortcode?: string
+          source_run_id?: string
+          storage_path?: string | null
+          summary?: string | null
+          transcript?: string | null
+          transcript_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_monitor_reels_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_monitor_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_monitor_runs: {
+        Row: {
+          attempts: number
+          budget_month: string | null
+          cost_usd: number | null
+          created_at: string
+          error_code: string | null
+          id: string
+          kind: string
+          lease_expires_at: string | null
+          lease_owner: string | null
+          next_run_at: string
+          profile_id: string | null
+          provider_run_id: string | null
+          reel_id: string | null
+          reserved_usd: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          budget_month?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          kind: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          next_run_at?: string
+          profile_id?: string | null
+          provider_run_id?: string | null
+          reel_id?: string | null
+          reserved_usd?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          budget_month?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          kind?: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          next_run_at?: string
+          profile_id?: string | null
+          provider_run_id?: string | null
+          reel_id?: string | null
+          reserved_usd?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_monitor_runs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_monitor_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instagram_monitor_runs_reel_id_fkey"
+            columns: ["reel_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_monitor_reels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_monitor_settings: {
+        Row: {
+          auto_monitor: boolean
+          enabled: boolean
+          id: boolean
+          max_run_usd: number
+          monthly_limit_usd: number
+        }
+        Insert: {
+          auto_monitor?: boolean
+          enabled?: boolean
+          id?: boolean
+          max_run_usd?: number
+          monthly_limit_usd?: number
+        }
+        Update: {
+          auto_monitor?: boolean
+          enabled?: boolean
+          id?: boolean
+          max_run_usd?: number
+          monthly_limit_usd?: number
+        }
+        Relationships: []
+      }
       installment_payments: {
         Row: {
           amount: number
@@ -26611,6 +26834,63 @@ export type Database = {
         Args: { _lesson_id: string; _user_id: string }
         Returns: boolean
       }
+      instagram_monitor_apify_connection: { Args: never; Returns: Json }
+      instagram_monitor_apify_ready: { Args: never; Returns: boolean }
+      instagram_monitor_claim: {
+        Args: { _owner: string }
+        Returns: {
+          attempts: number
+          budget_month: string | null
+          cost_usd: number | null
+          created_at: string
+          error_code: string | null
+          id: string
+          kind: string
+          lease_expires_at: string | null
+          lease_owner: string | null
+          next_run_at: string
+          profile_id: string | null
+          provider_run_id: string | null
+          reel_id: string | null
+          reserved_usd: number
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "instagram_monitor_runs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      instagram_monitor_enqueue: {
+        Args: { _kind: string; _profile_id?: string; _reel_id?: string }
+        Returns: string
+      }
+      instagram_monitor_finish: {
+        Args: {
+          _cost?: number
+          _error?: string
+          _id: string
+          _owner: string
+          _provider_id?: string
+          _status: string
+        }
+        Returns: boolean
+      }
+      instagram_monitor_reserve: {
+        Args: { _id: string; _owner: string }
+        Returns: boolean
+      }
+      instagram_monitor_save_connection: {
+        Args: {
+          _alias: string
+          _enabled: boolean
+          _token?: string
+          _user_id: string
+        }
+        Returns: boolean
+      }
       instagram_outbox_pull_v1: {
         Args: { p_account_id: string; p_limit: number; p_lock_id: string }
         Returns: {
@@ -26663,6 +26943,7 @@ export type Database = {
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       invoke_bepaid_webhook_realtime_queue: { Args: never; Returns: number }
+      invoke_instagram_monitor_worker: { Args: never; Returns: number }
       invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
       invoke_referral_redemption_worker: { Args: never; Returns: number }
       invoke_sales_runtime_worker: { Args: never; Returns: number }
@@ -27865,6 +28146,10 @@ export type Database = {
         Returns: boolean
       }
       verify_broadcast_dispatcher_cron_secret: {
+        Args: { _candidate: string }
+        Returns: boolean
+      }
+      verify_instagram_monitor_cron_secret: {
         Args: { _candidate: string }
         Returns: boolean
       }
