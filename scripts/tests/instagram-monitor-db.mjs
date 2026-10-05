@@ -35,6 +35,11 @@ await db.exec('UPDATE instagram_monitor_profiles SET enabled=false');
 assert.equal((await one('SELECT instagram_monitor_reserve($1,$2) ok',[id,owner])).ok,false,'disabled target cannot start paid provider request');
 assert.equal((await one('SELECT error_code FROM instagram_monitor_runs WHERE id=$1',[id])).error_code,'profile_disabled');
 await db.exec('UPDATE instagram_monitor_profiles SET enabled=true; TRUNCATE instagram_monitor_runs');
+id=await enqueue(); await claim();
+assert.equal((await one('SELECT instagram_monitor_reserve($1,$2) ok',[id,owner])).ok,true);
+assert.equal((await one("SELECT instagram_monitor_finish($1,$2,'failed','apify_http_401',null,0) ok",[id,owner])).ok,true);
+assert.equal(Number((await one('SELECT reserved_usd FROM instagram_monitor_runs WHERE id=$1',[id])).reserved_usd),0,'explicit refusal releases reserve');
+await db.exec('TRUNCATE instagram_monitor_runs');
 for(let i=0;i<16;i++) {
  id=await enqueue(); await claim(); assert.equal((await one('SELECT instagram_monitor_reserve($1,$2) ok',[id,owner])).ok,true);
  assert.equal((await one('SELECT instagram_monitor_finish($1,$2,$3,null,null,0.25) ok',[id,owner,'succeeded'])).ok,true);

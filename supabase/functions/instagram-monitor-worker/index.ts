@@ -233,7 +233,18 @@ async function processJob(job: any, owner: string) {
         const runId = await startApify(token, job.kind, source);
         await finish(job, owner, "waiting", null, runId);
       } catch (e) {
-        await finish(job, owner, "unknown", safeCode(e));
+        const code = safeCode(e);
+        // Explicit authentication/input refusals did not accept a run. Network
+        // errors, timeouts and server failures retain the reservation as UNKNOWN.
+        const rejected = /^apify_http_(400|401|403|404|422)$/.test(code);
+        await finish(
+          job,
+          owner,
+          rejected ? "failed" : "unknown",
+          code,
+          null,
+          rejected ? 0 : null,
+        );
       }
       return;
     }

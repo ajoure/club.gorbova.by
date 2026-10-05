@@ -116,6 +116,9 @@ const errorLabels: Record<string, string> = {
     "Лимит бесплатного пилота исчерпан. Новые сборы остановлены.",
   start_outcome_unknown:
     "Ответ Apify не подтверждён. Проверьте список запусков вручную перед повтором.",
+  apify_http_401: "Проверьте API-ключ Apify в защищённых настройках Lovable.",
+  apify_http_403: "Ключу Apify не хватает прав на запуск Actor.",
+  profile_disabled: "Профиль выключен. Новый сбор не запускался.",
   missing_apify_token: "Ключ Apify пока не подключён.",
   missing_ai_key: "Gemini пока не подключён.",
   ai_credits_exhausted: "Закончились отдельные AI-кредиты Lovable.",
