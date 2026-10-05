@@ -87,6 +87,7 @@ export async function fetchInstagramMedia(
       continue;
     }
     if (!response.ok || !response.body) {
+      await response.body?.cancel();
       throw new Error(`media_fetch_${response.status}`);
     }
     const mime = (response.headers.get("content-type") || "").split(";")[0]

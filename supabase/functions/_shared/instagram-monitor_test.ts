@@ -1,9 +1,12 @@
 import {
   assertEquals,
+  assertRejects,
   assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   allowedInstagramMediaUrl,
+  fetchInstagramMedia,
+  INSTAGRAM_PILOT,
   instagramCsvCell,
   instagramPostUrl,
   instagramUsername,
@@ -59,4 +62,88 @@ Deno.test("untrusted captions and comments do not execute spreadsheet formulas",
   );
   assertEquals(instagramCsvCell("\t@SUM(1)"), '"\'\t@SUM(1)"');
   assertEquals(instagramCsvCell("Текст, с запятой"), '"Текст, с запятой"');
+});
+
+Deno.test("redirect to an internal server is rejected before a second request", async () => {
+  const original = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = () => {
+    requests++;
+    return Promise.resolve(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://127.0.0.1/private" },
+      }),
+    );
+  };
+  try {
+    await assertRejects(
+      () => fetchInstagramMedia("https://scontent.cdninstagram.com/reel.mp4"),
+      Error,
+      "invalid_media_url",
+    );
+    assertEquals(requests, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("stream size is bounded even when content-length is absent", async () => {
+  const original = globalThis.fetch;
+  let cancelled = false;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new Uint8Array(INSTAGRAM_PILOT.maxMediaBytes + 1),
+            );
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "content-type": "video/mp4" } },
+      ),
+    );
+  try {
+    await assertRejects(
+      () => fetchInstagramMedia("https://scontent.cdninstagram.com/reel.mp4"),
+      Error,
+      "media_too_large",
+    );
+    assertEquals(cancelled, true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("expired media error closes its stream and does not reveal the URL", async () => {
+  const original = globalThis.fetch;
+  let cancelled = false;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 403 },
+      ),
+    );
+  try {
+    await assertRejects(
+      () =>
+        fetchInstagramMedia(
+          "https://scontent.cdninstagram.com/reel.mp4?sig=redacted",
+        ),
+      Error,
+      "media_fetch_403",
+    );
+    assertEquals(cancelled, true);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
