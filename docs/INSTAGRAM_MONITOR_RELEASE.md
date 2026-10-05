@@ -106,3 +106,13 @@ APIFY_API_TOKEN через защищённый managed secret; GitHub checks/me
 точный SHA sync; managed migration и обе functions; реальный Gemini/E2E;
 Publish и две опубликованные UI проверки. До этого сервис не объявляется
 работающим в production.
+
+## Общая метка серверного пакета
+
+CI вычисляет CB21 release digest по всему `_shared`, поэтому новые helper и
+необязательный reel/timeout режим существующей транскрибации требуют обновления
+метки. Для согласованного runtime read-back дополнительно пересобрать без
+изменения конфигурации, очередей или отправок ровно `sales-runtime-worker`,
+`sales-runtime-control`, `telegram-webhook`, `telegram-media-worker`; их
+защищённые health probes должны вернуть новый digest. Никаких реальных
+сообщений для smoke. Это обязательная зависимость release, не новая CRM задача.
