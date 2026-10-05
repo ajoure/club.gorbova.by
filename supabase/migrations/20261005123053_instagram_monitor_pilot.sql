@@ -135,6 +135,10 @@ RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp
 DECLARE v_month date:=date_trunc('month',now())::date; v_total numeric; v_limit numeric; v_run numeric; BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('instagram-monitor-budget'));
   IF NOT EXISTS(SELECT 1 FROM public.instagram_monitor_runs WHERE id=_id AND lease_owner=_owner AND lease_expires_at>now() AND status='queued' AND kind IN ('reels','comments')) THEN RETURN false; END IF;
+  IF EXISTS(SELECT 1 FROM public.instagram_monitor_runs r WHERE r.id=_id AND r.kind='reels' AND NOT EXISTS(SELECT 1 FROM public.instagram_monitor_profiles p WHERE p.id=r.profile_id AND p.enabled)) THEN
+    UPDATE public.instagram_monitor_runs SET status='failed',error_code='profile_disabled',lease_owner=NULL,lease_expires_at=NULL WHERE id=_id;
+    RETURN false;
+  END IF;
   IF EXISTS(SELECT 1 FROM public.instagram_monitor_runs WHERE id<>_id AND kind IN ('reels','comments') AND status IN ('starting','waiting','processing')) THEN RETURN false; END IF;
   SELECT monthly_limit_usd,max_run_usd INTO v_limit,v_run FROM public.instagram_monitor_settings WHERE id AND enabled;
   IF v_limit IS NULL THEN RETURN false; END IF;
