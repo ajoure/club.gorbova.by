@@ -105,6 +105,32 @@ const statusLabels: Record<string, string> = {
   processing: "Расшифровка",
   partial: "Частичная выборка",
 };
+const runKinds: Record<string, string> = {
+  reels: "Сбор Reels",
+  comments: "Комментарии",
+  media: "Сохранение видео",
+  transcribe: "Расшифровка Gemini",
+};
+const errorLabels: Record<string, string> = {
+  monthly_budget_exhausted:
+    "Лимит бесплатного пилота исчерпан. Новые сборы остановлены.",
+  start_outcome_unknown:
+    "Ответ Apify не подтверждён. Проверьте список запусков вручную перед повтором.",
+  missing_apify_token: "Ключ Apify пока не подключён.",
+  missing_ai_key: "Gemini пока не подключён.",
+  ai_credits_exhausted: "Закончились отдельные AI-кредиты Lovable.",
+  ai_rate_limited:
+    "Gemini временно ограничил запросы. Повторите вручную позже.",
+  worker_interrupted:
+    "Обработка прервана. Для расшифровки доступен ручной повтор.",
+  provider_empty_result:
+    "Apify не вернул доступные публикации или комментарии.",
+  duration_not_supported:
+    "Не подтверждена длительность видео или она больше 5 минут.",
+  media_too_large: "Видео превышает лимит 30 МБ.",
+  media_fetch_403: "Источник видео больше недоступен. Нужен новый сбор.",
+  transcript_empty: "Gemini не вернул достаточный текст для расшифровки.",
+};
 const label = (status: string) => statusLabels[status] || status;
 const money = (amount: number) => `$${Number(amount || 0).toFixed(3)}`;
 
@@ -571,10 +597,11 @@ export default function AdminInstagramMonitor() {
                         <span className="text-sm">
                           {new Date(run.created_at).toLocaleString("ru-RU")} ·
                           {" "}
-                          {run.kind === "reels" ? "Reels" : "Комментарии"}
+                          {runKinds[run.kind] || "Обработка"}
                         </span>
                         <Badge
                           variant={run.status === "error" ||
+                              run.status === "failed" ||
                               run.status === "unknown"
                             ? "destructive"
                             : "outline"}
@@ -583,12 +610,23 @@ export default function AdminInstagramMonitor() {
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Расход Apify: {run.cost_usd === null
-                          ? "ожидается расчёт"
-                          : money(run.cost_usd)}
+                        {run.kind === "transcribe"
+                          ? "Используются отдельные AI-кредиты Lovable"
+                          : run.kind === "media"
+                          ? "Приватная копия видео"
+                          : `Расход Apify: ${
+                            run.cost_usd === null
+                              ? "ожидается расчёт"
+                              : money(run.cost_usd)
+                          }`}
                       </p>
                       {run.error_code && (
-                        <p className="text-sm">{run.error_code}</p>
+                        <p className="text-sm">
+                          {errorLabels[run.error_code] ||
+                            (run.status === "unknown"
+                              ? "Ответ Apify не подтверждён. Нужна ручная проверка запуска."
+                              : "Не удалось обработать материал. Проверьте доступность источника и повторите позже.")}
+                        </p>
                       )}
                       {run.provider_run_id && (
                         <a
