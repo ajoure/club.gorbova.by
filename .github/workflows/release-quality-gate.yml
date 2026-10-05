@@ -76,7 +76,7 @@ jobs:
       - name: Instagram monitor Edge types and media guards
         run: |
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts
-          deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts
+          deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts supabase/functions/instagram-monitor/release-health_test.ts
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build
