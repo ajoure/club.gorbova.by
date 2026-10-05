@@ -133,7 +133,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "documents", label: "Документы", path: "/admin/documents", icon: "FileText", order: 0, permission: "roles.view" },
       { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 1, permission: "entitlements.view" },
       { id: "sites", label: "Конструктор сайтов", path: "/admin/sites", icon: "PanelTop", order: 2, permission: "content.edit" },
-      { id: "instagram-monitor", label: "Мониторинг Instagram", path: "/admin/instagram-monitor", icon: "Video", order: 3 },
+      { id: "instagram-monitor", label: "Мониторинг Instagram", path: "/admin/instagram-monitor", icon: "Video", order: 3.5 },
       { id: "marketing", label: "Маркетинг-инсайты", path: "/admin/marketing", icon: "Target", order: 3 },
       { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 4, permission: "roles.view" },
       { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 5, permission: "entitlements.view" },

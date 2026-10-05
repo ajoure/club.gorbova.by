@@ -166,6 +166,11 @@ Deno.serve(async (req) => {
         ).select().single(),
       );
     } else if (["collect", "collect_comments", "transcribe"].includes(action)) {
+      const settings = checked(
+        await client.from("instagram_monitor_settings").select("enabled")
+          .single(),
+      );
+      if (!settings.enabled) throw new Error("monitor_disabled");
       const kind = action === "collect"
         ? "reels"
         : action === "collect_comments"

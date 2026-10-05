@@ -469,7 +469,7 @@ export default function AdminInstagramMonitor() {
                           {reel.transcript || label(reel.transcript_status)}
                         </p>
                         {canManage && reel.storage_path &&
-                          ["error", "pending"].includes(
+                          ["error", "failed", "pending"].includes(
                             reel.transcript_status,
                           ) && (
                           <Button

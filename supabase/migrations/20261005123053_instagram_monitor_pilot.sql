@@ -94,7 +94,7 @@ CREATE FUNCTION public.instagram_monitor_enqueue(_kind text,_profile_id uuid DEF
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE v_id uuid; BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('instagram-monitor-queue'));
-  IF NOT (SELECT enabled FROM public.instagram_monitor_settings WHERE id) THEN RAISE EXCEPTION 'monitor_disabled'; END IF;
+  IF _kind='reels' AND NOT (SELECT enabled FROM public.instagram_monitor_settings WHERE id) THEN RAISE EXCEPTION 'monitor_disabled'; END IF;
   IF _kind='reels' THEN
     IF NOT EXISTS(SELECT 1 FROM public.instagram_monitor_profiles WHERE id=_profile_id AND enabled) THEN RAISE EXCEPTION 'profile_disabled'; END IF;
     SELECT id INTO v_id FROM public.instagram_monitor_runs WHERE kind='reels' AND profile_id=_profile_id AND status NOT IN ('succeeded','failed') LIMIT 1;

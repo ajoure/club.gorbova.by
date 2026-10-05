@@ -14,6 +14,8 @@ import {
   transcribeAndSummarize,
 } from "../_shared/transcribe-audio.ts";
 
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
 const BUCKET = "instagram-monitor-media";
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -366,16 +368,7 @@ async function autoQueue() {
   );
   if (!recent.length) await enqueue("reels", profiles[0].id, null);
 }
-Deno.serve(async (req) => {
-  if (req.method !== "POST") {
-    return new Response("method_not_allowed", { status: 405 });
-  }
-  const auth = await client.rpc("verify_instagram_monitor_cron_secret", {
-    _candidate: req.headers.get("x-instagram-monitor-secret") || "",
-  });
-  if (auth.error || auth.data !== true) {
-    return new Response("unauthorized", { status: 401 });
-  }
+async function tick() {
   let job: any;
   const owner = crypto.randomUUID();
   try {
@@ -385,12 +378,10 @@ Deno.serve(async (req) => {
     );
     job = jobs[0];
     if (job) await processJob(job, owner);
-    return Response.json({ ok: true, claimed: !!job });
   } catch (e) {
     const code = safeCode(e);
     if (job) {
       try {
-        // Safe polling retries never restart Apify. Local interrupted AI needs manual retry.
         const status = job.status === "waiting" && job.attempts < 20
           ? "waiting"
           : job.kind === "media" && job.attempts < 3
@@ -404,9 +395,23 @@ Deno.serve(async (req) => {
           );
         }
         await finish(job, owner, status, code);
-      } catch { /* Expired lease recovery owns the next transition. */ }
+      } catch { /* Lease recovery owns interrupted jobs. */ }
     }
     console.warn("[instagram-monitor-worker]", { code });
-    return Response.json({ ok: false, code }, { status: 500 });
   }
+}
+Deno.serve(async (req) => {
+  if (req.method !== "POST") {
+    return new Response("method_not_allowed", { status: 405 });
+  }
+  const auth = await client.rpc("verify_instagram_monitor_cron_secret", {
+    _candidate: req.headers.get("x-instagram-monitor-secret") || "",
+  });
+  if (auth.error || auth.data !== true) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  // pg_net can finish its HTTP request while the bounded job continues.
+  // Durable leases recover a worker terminated by the platform wall-clock limit.
+  EdgeRuntime.waitUntil(tick());
+  return Response.json({ accepted: true }, { status: 202 });
 });
