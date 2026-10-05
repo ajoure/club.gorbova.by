@@ -93,6 +93,9 @@ const statusLabels: Record<string, string> = {
   queued: "В очереди",
   starting: "Запуск",
   running: "Сбор",
+  waiting: "Сбор / ожидание результата",
+  succeeded: "Готово",
+  failed: "Ошибка",
   importing: "Сохранение",
   done: "Готово",
   error: "Ошибка",
@@ -350,7 +353,7 @@ export default function AdminInstagramMonitor() {
                                 action: "settings",
                                 auto_monitor,
                               })}
-                          />Проверять включённые профили раз в сутки
+                          />Проверять первый включённый профиль раз в сутки
                         </Label>
                         <p className="text-xs text-muted-foreground">
                           При исчерпании бюджета новые запуски останавливаются.

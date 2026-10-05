@@ -69,20 +69,40 @@ merged SHA → managed миграция/functions/secrets → read-back/RLS/runt
 Проверить anonymous/student отказ, stale lease, provider failure, бюджет,
 навигацию меню, длинные русские тексты, ошибки и пустое состояние на mobile.
 
-## Текущая граница
+## PLAN-ONLY и ревизия Codex — 05.10.2026
 
-05.10: отдельный чистый worktree создан от origin/main SHA
-`657d94c1c47200b8b8cfec17e821c5c87a0f1544`.
-Каноническая вкладка Lovable занята другой задачей; plan-only не отправлен.
-Production не изменён. Серверный API токен Apify пока не подключён.
+Lovable подтвердил Cloud ref hdjgkjceownmmnrqqtuz; существующий Gemini key,
+отсутствие APIFY key и monitor schema. Проверка не меняла production данные.
+Режим Plan автоматически записал `.lovable/plan.md` в GitHub: этот служебный
+побочный эффект восстанавливается в PR до исходного текста.
 
-## Проверки локального черновика
+Корректировки к предложению Lovable:
+- Не хранить raw provider JSON/подписанные media URL.
+- Резерв остаётся до реального terminal usageTotalUsd; получение run ID ещё
+  не подтверждает окончательную стоимость. UNKNOWN переносится через месяц.
+- Gemini использует отдельные кредиты: после прерванного AI запроса только
+  ручной повтор, без автоматических затрат и обещаний бесплатного Gemini.
+- Один worker объединяет cron/tick; отдельный instagram-monitor API совпадает
+  с UI контрактом. Таблицы settings/profiles/reels/comments/runs (5).
+- Доступ наследует существующий admin/super_admin bypass RBAC v3; другие роли
+  не получают нового grant автоматически. Нет новых Storage policies.
+- До 2 роликов; первый enabled профиль для daily pilot. Общий cap $4 включает
+  три проверенных исходных Apify запуска ($0.245). Auto-monitor по умолчанию off.
+- Gateway input_audio mp4 — обязательный реальный acceptance до Publish.
 
-- `npm ci` по существующему lockfile; `npm run build` PASS.
-- `tsc -p tsconfig.app.json --noEmit` PASS.
-- ESLint новой страницы PASS, `git diff --check` PASS.
-- Deno: три security-контрактных теста PASS.
-- Backend/миграция/серверный секрет/production E2E ещё не реализованы.
-- Lovable backend теперь agentFinished=true, но отправка PLAN-ONLY через
-  коннектор отклонена: отсутствует `projects:write`. Каноническая вкладка
-  всё ещё удерживается другим чатом Codex. Никакого запроса не отправлено.
+## Проверки
+
+- Browser application types, сборка и ESLint страницы — PASS.
+- Deno check API/worker — PASS; 9 медиа/provider security tests — PASS.
+- `node scripts/tests/instagram-monitor-db.mjs`: исполняет реальную миграцию
+  в локальном PostgreSQL/PGlite с фикстурами только внешних auth/Vault/cron/net.
+  Проверяет idempotency, exclusive lease, fencing, stale start UNKNOWN,
+  месячный cap, rollover UNKNOWN, RLS anon/student/admin, private bucket и RPC
+  grants. Это локальный контракт, не production E2E.
+
+## Не выполненные release gates
+
+APIFY_API_TOKEN через защищённый managed secret; GitHub checks/merge;
+точный SHA sync; managed migration и обе functions; реальный Gemini/E2E;
+Publish и две опубликованные UI проверки. До этого сервис не объявляется
+работающим в production.

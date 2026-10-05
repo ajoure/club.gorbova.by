@@ -278,3 +278,9 @@ verify_jwt = false
 
 [functions.referral-redemption-worker]
 verify_jwt = false
+
+[functions.instagram-monitor]
+verify_jwt = false
+
+[functions.instagram-monitor-worker]
+verify_jwt = false
