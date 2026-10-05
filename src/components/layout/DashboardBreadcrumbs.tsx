@@ -90,6 +90,7 @@ const routeLabels: Record<string, string> = {
   "/admin/training-modules": "Учебные модули",
   "/admin/editorial": "Редакция",
   "/admin/legislation": "Законодательство",
+  "/admin/instagram-monitor": "Мониторинг Instagram",
   "/admin/marketing": "Маркетинг",
   "/admin/bepaid-archive-import": "Импорт архива bePaid",
 };

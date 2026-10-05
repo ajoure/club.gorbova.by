@@ -21,6 +21,7 @@ interface AdminLayoutProps {
 
 // Map admin routes to page titles
 const routeToTitle: Record<string, string> = {
+  '/admin/instagram-monitor': 'Мониторинг Instagram',
   '/admin/communication': 'Контакт-центр',
   '/admin/contacts': 'Контакты',
   '/admin/companies': 'Компании',
