@@ -110,10 +110,10 @@ async function importReels(job: any, items: any[], token: string) {
       duration_seconds: Number(item.videoDuration) || null,
       source_run_id: job.provider_run_id,
     };
-    // Preserve a previously stored source/media/transcript. Only refresh public counters.
+    // Keep stored media/transcript; refresh the source of a failed or pending download.
     const existing = checked(
       await client.from("instagram_monitor_reels").select(
-        "id,storage_path,source_run_id,profile_id",
+        "id,storage_path,source_run_id,profile_id,duration_seconds",
       ).eq("shortcode", shortcode).maybeSingle(),
     );
     if (existing && existing.profile_id !== job.profile_id) continue;
@@ -123,6 +123,14 @@ async function importReels(job: any, items: any[], token: string) {
         await client.from("instagram_monitor_reels").update({
           likes_count: values.likes_count,
           comments_count: values.comments_count,
+          caption: values.caption,
+          ...(!existing.storage_path
+            ? {
+              source_run_id: job.provider_run_id,
+              duration_seconds: values.duration_seconds ??
+                existing.duration_seconds,
+            }
+            : {}),
         }).eq("id", existing.id),
       );
       reel = existing;
@@ -153,10 +161,10 @@ async function importComments(job: any, items: any[]) {
       job.reel_id,
     ).single(),
   );
-  const rows = items.slice(0, INSTAGRAM_PILOT.maxComments).filter((x) =>
+  const rows = items.filter((x) =>
     x.id && typeof x.text === "string" &&
     (!x.postUrl || instagramPostUrl(x.postUrl) === reel.post_url)
-  ).map((x) => ({
+  ).slice(0, INSTAGRAM_PILOT.maxComments).map((x) => ({
     reel_id: job.reel_id,
     provider_comment_id: String(x.id).slice(0, 128),
     username: String(x.ownerUsername || x.owner?.username || "").slice(0, 100),
