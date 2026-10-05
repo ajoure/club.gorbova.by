@@ -8,6 +8,8 @@ import {
 
 import { apifyConnection, apifyRequest } from "../_shared/instagram-apify.ts";
 
+import { instagramReleaseHealth } from "./release-health.ts";
+
 const db = () =>
   createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -65,6 +67,29 @@ Deno.serve(async (req) => {
     }
     const body = JSON.parse(raw);
     const action = body.action;
+    if (action === "release_health") {
+      const root = checked(
+        await client.rpc("has_role_v2", {
+          _user_id: userId,
+          _role_code: "super_admin",
+        }),
+      );
+      if (root !== true) {
+        return jsonResponse({
+          ok: false,
+          message: "Нужны права суперадминистратора",
+        }, 403);
+      }
+      const health = await instagramReleaseHealth(
+        Deno.env.get("SUPABASE_URL")!,
+        req.headers.get("Authorization") || "",
+        {
+          webhook: Deno.env.get("TELEGRAM_WEBHOOK_SECRET"),
+          media: Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN"),
+        },
+      );
+      return jsonResponse({ ok: true, result: health });
+    }
     const integrationAction = [
       "integration_status",
       "integration_save",

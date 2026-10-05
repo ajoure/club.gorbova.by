@@ -134,3 +134,31 @@ integration_save и integration_check. Ключ только вводится; �
 production-истории. Пользователь разрешил механическое применение проверенного SQL
 инструментом Lovable, автоматически создающим файл новой даты; после применения
 сверить SQL и оставить в GitHub только одну применённую миграцию.
+
+## Подтверждённое серверное применение — 05.10.2026
+
+PR #594 merged SHA f6f1d37c0f34811fb3ea50638e9d33cd3d175476; все GitHub checks PASS.
+Managed migration tool отказал до выполнения из-за запрета agent Vault access.
+Канонический Lovable Cloud SQL Editor оператора выполнил guarded rollback dry-run,
+после него таблицы/раздел/bucket/cron/journal 0/0/0/0/0. Затем атомарно применён
+точный SQL с исходной записью журнала 20261005123053:instagram_monitor_pilot.
+SHA256 journal statement 881df68fe68562ae58ef2e1ebd2337a42e302b60767cf65b26e42bbf06748db2
+совпал с GitHub. Read-back: 5 RLS tables, 9 service-only RPC, private bucket1,
+cron1, section1, journal1, historical runs3/$0.245, enabled=false/auto=false.
+Дополнительная миграция/дубль не создавались.
+
+Cloud автоматически сгенерировал 285 строк types.ts (8936df686). Codex проверил
+полный diff: только типы 5 новых таблиц и 9 функций, нет колонки с plaintext
+ключом, нет изменения supabase/ или логики приложения. Служебный 6e1cc85c2
+не меняет дерево. Это эффект managed schema sync, не авторство кода Lovable.
+
+Шесть functions deployed; anonymous API401 и worker401, integration_status
+под собственной существующей учётной записью200/key_configured=false. Два
+доступных CB21 probes вернули digest6b0149e9aec295056426b9c02c2d9d40262e75b0fcc922983a9fc3df3e053128.
+Для двух private probes добавлено super_admin-only release_health действие:
+внутренние фиксированные GET, ключи только из Edge env, без тела/redirects/
+побочных эффектов. В ответе только HTTP status/matches и публичный expected digest,
+без raw responses, exceptions, headers или ключей. Функции Telegram не меняются.
+
+Ключ Apify ещё не сохранён. Для полного UI/E2E требуется обычный вход оператора
+в preview. Publish и опубликованные desktop/mobile proofs НЕ выполнены.
