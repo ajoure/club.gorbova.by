@@ -153,6 +153,7 @@ const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
 const AdminLegislation = lazy(() => import("./pages/admin/AdminLegislation"));
 const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 const AdminDocuments = lazy(() => import("./pages/admin/AdminDocuments"));
+const AdminInstagramMonitor = lazy(() => import("./pages/admin/AdminInstagramMonitor"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
@@ -385,6 +386,7 @@ const App = () => {
               <Route path="/admin/legislation" element={<ProtectedRoute><LazyRoute><AdminLegislation /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/ai" element={<ProtectedRoute><LazyRoute><AdminAI /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/documents" element={<ProtectedRoute><LazyRoute><AdminDocuments /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/instagram-monitor" element={<ProtectedRoute><LazyRoute><AdminInstagramMonitor /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/marketing" element={<ProtectedRoute><LazyRoute><AdminMarketingInsights /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/kb-import" element={<ProtectedRoute><LazyRoute><AdminKbImport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />

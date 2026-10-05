@@ -150,6 +150,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     ],
   },
   { code: "sites",                label: "Конструктор сайтов",   group: "service", routePrefix: "/admin/sites" },
+  { code: "instagram-monitor", label: "Мониторинг Instagram", group: "service", routePrefix: "/admin/instagram-monitor" },
   { code: "marketing",            label: "Маркетинг-инсайты",    group: "service", routePrefix: "/admin/marketing" },
   { code: "ai",                   label: "Нейросеть",            group: "service", routePrefix: "/admin/ai" },
   { code: "products",             label: "Продукты",             group: "service", routePrefix: "/admin/products-v2", altPrefixes: ["/admin/products"] },
