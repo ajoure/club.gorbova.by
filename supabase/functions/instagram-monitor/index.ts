@@ -6,6 +6,8 @@ import {
   instagramUsername,
 } from "../_shared/instagram-monitor.ts";
 
+import { apifyConnection, apifyRequest } from "../_shared/instagram-apify.ts";
+
 const db = () =>
   createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -17,8 +19,7 @@ const messages: Record<string, string> = {
   monthly_budget_exhausted: "Бесплатный лимит расходов исчерпан.",
   invalid_profile:
     "Введите имя публичного профиля Instagram или ссылку на него.",
-  missing_apify_token:
-    "Добавьте APIFY_API_TOKEN в защищённые настройки Lovable.",
+  missing_apify_token: "Добавьте API-ключ в Интеграции → Соцсети → Apify.",
   missing_ai_key: "Gemini пока не подключён.",
   video_missing: "Видео пока не сохранено.",
   profile_disabled: "Профиль выключен.",
@@ -49,16 +50,6 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, message: "Требуется вход" }, 401);
     }
     const client = db();
-    const view = checked(
-      await client.rpc("has_admin_section_access", {
-        _user_id: userId,
-        _section_code: "instagram-monitor",
-        _min_level: "view",
-      }),
-    );
-    if (view !== true) {
-      return jsonResponse({ ok: false, message: "Нет доступа к разделу" }, 403);
-    }
     if (Number(req.headers.get("content-length")) > 8192) {
       return jsonResponse(
         { ok: false, message: "Запрос слишком большой" },
@@ -74,8 +65,37 @@ Deno.serve(async (req) => {
     }
     const body = JSON.parse(raw);
     const action = body.action;
-    const readonly = ["status", "comments", "export", "video"].includes(action);
-    if (!readonly) {
+    const integrationAction = [
+      "integration_status",
+      "integration_save",
+      "integration_check",
+    ].includes(action);
+    const readonly = [
+      "status",
+      "comments",
+      "export",
+      "video",
+      "integration_status",
+    ].includes(action);
+    const access = checked(
+      await client.rpc(
+        integrationAction
+          ? "has_admin_resource_access"
+          : "has_admin_section_access",
+        {
+          _user_id: userId,
+          _section_code: integrationAction
+            ? "integrations"
+            : "instagram-monitor",
+          ...(integrationAction ? { _resource_code: "socials" } : {}),
+          _min_level: integrationAction && !readonly ? "edit" : "view",
+        },
+      ),
+    );
+    if (access !== true) {
+      return jsonResponse({ ok: false, message: "Нет доступа к разделу" }, 403);
+    }
+    if (!readonly && !integrationAction) {
       const manage = checked(
         await client.rpc("has_admin_section_access", {
           _user_id: userId,
@@ -91,7 +111,40 @@ Deno.serve(async (req) => {
       }
     }
     let result: unknown;
-    if (action === "status") {
+    if (integrationAction) {
+      if (action === "integration_save") {
+        if (
+          typeof body.enabled !== "boolean" || typeof body.alias !== "string" ||
+          (body.api_token !== undefined && typeof body.api_token !== "string")
+        ) throw new Error("invalid_setting");
+        checked(
+          await client.rpc("instagram_monitor_save_connection", {
+            _user_id: userId,
+            _enabled: body.enabled,
+            _alias: body.alias,
+            _token: body.api_token?.trim() || null,
+          }),
+        );
+      }
+      const connection = await apifyConnection(client);
+      const { token, ...safe } = connection;
+      if (action === "integration_check") {
+        if (!token) throw new Error("missing_apify_token");
+        let success = false;
+        try {
+          const account = await apifyRequest(token, "users/me");
+          success = typeof account?.data?.id === "string";
+        } catch { /* never echo provider response or token */ }
+        checked(
+          await client.from("integration_instances").update({
+            status: success ? "connected" : "error",
+            last_check_at: new Date().toISOString(),
+            error_message: success ? null : "Проверьте ключ Apify и его права.",
+          }).eq("id", connection.id).select("id"),
+        );
+        result = { success };
+      } else result = { ...safe, key_configured: !!token };
+    } else if (action === "status") {
       const [s, p, r, v, b] = await Promise.all([
         client.from("instagram_monitor_settings").select("*").single(),
         client.from("instagram_monitor_profiles").select("*").order(
@@ -115,7 +168,9 @@ Deno.serve(async (req) => {
       const settings = checked(s);
       result = {
         ...settings,
-        connected: !!Deno.env.get("APIFY_API_TOKEN"),
+        connected: !!(await apifyConnection(client)).token,
+        enabled: settings.enabled &&
+          (await apifyConnection(client)).enabled === true,
         ai_connected: !!Deno.env.get("LOVABLE_API_KEY"),
         profiles: checked(p),
         runs: checked(r),
@@ -148,7 +203,7 @@ Deno.serve(async (req) => {
       );
     } else if (action === "settings") {
       const update: Record<string, boolean> = {};
-      for (const key of ["enabled", "auto_monitor"]) {
+      for (const key of ["auto_monitor"]) {
         if (key in body) {
           if (typeof body[key] !== "boolean") {
             throw new Error("invalid_setting");
@@ -156,9 +211,7 @@ Deno.serve(async (req) => {
           update[key] = body[key];
         }
       }
-      if (update.enabled && !Deno.env.get("APIFY_API_TOKEN")) {
-        throw new Error("missing_apify_token");
-      }
+      if ("enabled" in body) throw new Error("invalid_setting");
       result = checked(
         await client.from("instagram_monitor_settings").update(update).eq(
           "id",
@@ -170,13 +223,16 @@ Deno.serve(async (req) => {
         await client.from("instagram_monitor_settings").select("enabled")
           .single(),
       );
-      if (!settings.enabled) throw new Error("monitor_disabled");
+      const connection = await apifyConnection(client);
+      if (!settings.enabled || !connection.enabled) {
+        throw new Error("monitor_disabled");
+      }
       const kind = action === "collect"
         ? "reels"
         : action === "collect_comments"
         ? "comments"
         : "transcribe";
-      if (kind !== "transcribe" && !Deno.env.get("APIFY_API_TOKEN")) {
+      if (kind !== "transcribe" && !connection.token) {
         throw new Error("missing_apify_token");
       }
       if (kind === "transcribe" && !Deno.env.get("LOVABLE_API_KEY")) {

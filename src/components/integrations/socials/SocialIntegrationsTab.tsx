@@ -1,3 +1,4 @@
+import { ApifyIntegrationCard } from "./ApifyIntegrationCard";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -143,6 +144,8 @@ export function SocialIntegrationsTab() {
           Добавить подключение
         </Button>
       </div>
+
+      <ApifyIntegrationCard />
 
       {/* Instagram DM Card */}
       <Card>
