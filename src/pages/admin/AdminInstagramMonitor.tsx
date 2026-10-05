@@ -176,6 +176,19 @@ export default function AdminInstagramMonitor() {
     },
     onError: (error) => toast.error(error.message),
   });
+  const downloadVideo = useMutation({
+    mutationFn: async (id: string) => {
+      const result = await api<{ url: string }>("video", {
+        reel_id: id,
+        download: true,
+      });
+      const link = document.createElement("a");
+      link.href = result.url;
+      link.download = "instagram-reel.mp4";
+      link.click();
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const play = useMutation({
     mutationFn: async (id: string) => {
       const result = await api<{ url: string }>("video", { reel_id: id });
@@ -421,7 +434,9 @@ export default function AdminInstagramMonitor() {
                             {item.comments_count}
                           </Badge>
                           <Badge
-                            variant={item.transcript_status === "error"
+                            variant={["error", "failed"].includes(
+                                item.transcript_status,
+                              )
                               ? "destructive"
                               : "outline"}
                           >
@@ -442,6 +457,15 @@ export default function AdminInstagramMonitor() {
                               onClick={() => play.mutate(item.id)}
                             >
                               Смотреть видео
+                            </Button>
+                          )}
+                          {item.storage_path && (
+                            <Button
+                              variant="outline"
+                              disabled={downloadVideo.isPending}
+                              onClick={() => downloadVideo.mutate(item.id)}
+                            >
+                              <Download className="mr-2 h-4 w-4" />Скачать MP4
                             </Button>
                           )}
                           <Button variant="ghost" asChild>

@@ -207,6 +207,9 @@ Deno.serve(async (req) => {
         await client.storage.from("instagram-monitor-media").createSignedUrl(
           reel.storage_path,
           300,
+          body.download === true
+            ? { download: `instagram-${uuid(body.reel_id)}.mp4` }
+            : undefined,
         ),
       );
       result = { url: signed.signedUrl };
