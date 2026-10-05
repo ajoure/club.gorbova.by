@@ -102,3 +102,24 @@ export async function apifyItems(
   if (!Array.isArray(result)) throw new Error("invalid_provider_dataset");
   return result;
 }
+
+/** Server-only RPC; callers must never serialize the token into a response. */
+export async function apifyConnection(
+  client: { rpc: (name: string) => PromiseLike<{ data: any; error: any }> },
+): Promise<
+  {
+    id?: string;
+    alias?: string;
+    enabled?: boolean;
+    token?: string;
+    status?: string;
+    last_check_at?: string;
+    error_message?: string;
+  }
+> {
+  const { data, error } = await client.rpc(
+    "instagram_monitor_apify_connection",
+  );
+  if (error) throw new Error("database_failed");
+  return data || {};
+}

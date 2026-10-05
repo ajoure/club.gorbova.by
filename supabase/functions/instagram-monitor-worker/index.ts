@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
+  apifyConnection,
   apifyItems,
   apifyRun,
   startApify,
@@ -193,7 +194,12 @@ async function importComments(job: any, items: any[]) {
 }
 async function processJob(job: any, owner: string) {
   if (["reels", "comments"].includes(job.kind)) {
-    const token = Deno.env.get("APIFY_API_TOKEN");
+    const connection = await apifyConnection(client);
+    const token = connection.token;
+    if (job.status === "queued" && !connection.enabled) {
+      await finish(job, owner, "queued", "monitor_disabled");
+      return;
+    }
     if (!token) {
       await finish(job, owner, "failed", "missing_apify_token");
       return;
@@ -281,6 +287,10 @@ async function processJob(job: any, owner: string) {
     );
     return;
   }
+  if (!(await apifyConnection(client)).enabled) {
+    await finish(job, owner, "queued", "monitor_disabled");
+    return;
+  }
   await markProcessing(job, owner);
   const reel = checked(
     await client.from("instagram_monitor_reels").select("*").eq(
@@ -294,7 +304,7 @@ async function processJob(job: any, owner: string) {
         !reel.duration_seconds ||
         reel.duration_seconds > INSTAGRAM_PILOT.maxDurationSeconds
       ) throw new Error("duration_not_supported");
-      const token = Deno.env.get("APIFY_API_TOKEN");
+      const token = (await apifyConnection(client)).token;
       if (!token) throw new Error("missing_apify_token");
       const items = await dataset(token, reel.source_run_id);
       const item = items.find((x) =>
@@ -368,7 +378,7 @@ async function autoQueue() {
   );
   if (
     !settings.enabled || !settings.auto_monitor ||
-    !Deno.env.get("APIFY_API_TOKEN")
+    !(await apifyConnection(client)).enabled
   ) return;
   // Free pilot: only the first enabled target. Budget reserve remains authoritative.
   const profiles = checked(

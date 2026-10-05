@@ -116,7 +116,7 @@ const errorLabels: Record<string, string> = {
     "Лимит бесплатного пилота исчерпан. Новые сборы остановлены.",
   start_outcome_unknown:
     "Ответ Apify не подтверждён. Проверьте список запусков вручную перед повтором.",
-  apify_http_401: "Проверьте API-ключ Apify в защищённых настройках Lovable.",
+  apify_http_401: "Проверьте API-ключ Apify в Интеграции → Соцсети → Apify.",
   apify_http_403: "Ключу Apify не хватает прав на запуск Actor.",
   profile_disabled: "Профиль выключен. Новый сбор не запускался.",
   missing_apify_token: "Ключ Apify пока не подключён.",
@@ -378,14 +378,7 @@ export default function AdminInstagramMonitor() {
                     ))}
                     {canManage && (
                       <div className="space-y-3 border-t pt-3">
-                        <Label className="flex gap-3 items-center">
-                          <Switch
-                            disabled={busy || !data.connected}
-                            checked={data.enabled}
-                            onCheckedChange={(enabled) =>
-                              mutation.mutate({ action: "settings", enabled })}
-                          />Разрешить сбор в пределах бюджета
-                        </Label>
+                        <Button variant="outline" asChild><a href="/admin/integrations/socials">Настройки подключения Apify</a></Button>
                         <Label className="flex gap-3 items-center">
                           <Switch
                             disabled={busy || !data.connected || !data.enabled}

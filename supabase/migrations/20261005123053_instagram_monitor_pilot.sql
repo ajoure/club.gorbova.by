@@ -90,11 +90,51 @@ VALUES ('instagram-monitor-media','instagram-monitor-media',false,31457280,ARRAY
 ON CONFLICT(id) DO NOTHING;
 -- No client Storage policy: issue short-lived signed URLs only behind server RBAC.
 
+-- Apify configuration lives in the existing integration registry. Keys use the
+-- same server-only Vault pattern as acquiring; never config/config_secrets.
+CREATE UNIQUE INDEX integration_apify_single ON public.integration_instances(provider) WHERE provider='apify';
+CREATE FUNCTION public.instagram_monitor_apify_connection()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,vault,pg_temp AS $$
+ SELECT coalesce((SELECT jsonb_build_object('id',i.id,'alias',i.alias,'enabled',coalesce((i.config->>'enabled')::boolean,false),'status',i.status,'last_check_at',i.last_check_at,'error_message',i.error_message,'token',coalesce((SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='integration:apify:'||i.id::text||':api_token' LIMIT 1),'')) FROM public.integration_instances i WHERE provider='apify' LIMIT 1),'{}'::jsonb);
+$$;
+CREATE FUNCTION public.instagram_monitor_apify_ready()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ SELECT coalesce((c->>'enabled')::boolean,false) AND length(coalesce(c->>'token',''))>0 FROM (SELECT public.instagram_monitor_apify_connection() c) x;
+$$;
+CREATE FUNCTION public.instagram_monitor_save_connection(_user_id uuid,_enabled boolean,_alias text,_token text DEFAULT NULL)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,vault,pg_temp AS $$
+DECLARE v_id uuid; v_secret uuid; v_name text; BEGIN
+ IF _user_id IS NULL OR NOT public.has_admin_resource_access(_user_id,'integrations','socials','edit') THEN RAISE EXCEPTION 'forbidden' USING ERRCODE='42501'; END IF;
+ IF _enabled IS NULL OR length(btrim(coalesce(_alias,''))) NOT BETWEEN 1 AND 100 OR (_token IS NOT NULL AND length(btrim(_token)) NOT BETWEEN 10 AND 2000) THEN RAISE EXCEPTION 'invalid_setting'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('instagram-monitor-connection'));
+ SELECT id INTO v_id FROM public.integration_instances WHERE provider='apify' FOR UPDATE;
+ IF v_id IS NULL THEN
+   INSERT INTO public.integration_instances(category,provider,alias,is_default,status,config,config_secrets) VALUES('socials','apify',btrim(_alias),false,'disconnected','{"enabled":false}'::jsonb,'{}'::jsonb) RETURNING id INTO v_id;
+ END IF;
+ v_name:='integration:apify:'||v_id::text||':api_token';
+ IF _token IS NOT NULL THEN
+   SELECT id INTO v_secret FROM vault.secrets WHERE name=v_name;
+   IF v_secret IS NULL THEN PERFORM vault.create_secret(btrim(_token),v_name,'Apify Instagram integration');
+   ELSE PERFORM vault.update_secret(v_secret,btrim(_token),v_name); END IF;
+ END IF;
+ IF _enabled AND NOT EXISTS(SELECT 1 FROM vault.decrypted_secrets WHERE name=v_name AND length(decrypted_secret)>0) THEN RAISE EXCEPTION 'missing_apify_token'; END IF;
+ UPDATE public.integration_instances SET alias=btrim(_alias),config=jsonb_build_object('enabled',_enabled,'key_configured',EXISTS(SELECT 1 FROM vault.secrets WHERE name=v_name)),config_secrets='{}'::jsonb,status=CASE WHEN _token IS NULL THEN status ELSE 'disconnected' END,error_message=NULL WHERE id=v_id;
+ UPDATE public.instagram_monitor_settings SET enabled=_enabled WHERE id;
+ INSERT INTO public.integration_logs(instance_id,event_type,payload_meta,result) VALUES(v_id,'configuration_updated',jsonb_build_object('enabled',_enabled,'key_replaced',_token IS NOT NULL,'actor_id',_user_id),'success');
+ RETURN true;
+END $$;
+DO $$ DECLARE sig text; BEGIN
+ FOREACH sig IN ARRAY ARRAY['instagram_monitor_apify_connection()','instagram_monitor_apify_ready()','instagram_monitor_save_connection(uuid,boolean,text,text)'] LOOP
+ EXECUTE 'REVOKE ALL ON FUNCTION public.'||sig||' FROM PUBLIC,anon,authenticated';
+ EXECUTE 'GRANT EXECUTE ON FUNCTION public.'||sig||' TO service_role';
+ END LOOP;
+END $$;
+
 CREATE FUNCTION public.instagram_monitor_enqueue(_kind text,_profile_id uuid DEFAULT NULL,_reel_id uuid DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE v_id uuid; BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('instagram-monitor-queue'));
-  IF _kind='reels' AND NOT (SELECT enabled FROM public.instagram_monitor_settings WHERE id) THEN RAISE EXCEPTION 'monitor_disabled'; END IF;
+  IF _kind='reels' AND (NOT public.instagram_monitor_apify_ready() OR NOT (SELECT enabled FROM public.instagram_monitor_settings WHERE id)) THEN RAISE EXCEPTION 'monitor_disabled'; END IF;
   IF _kind='reels' THEN
     IF NOT EXISTS(SELECT 1 FROM public.instagram_monitor_profiles WHERE id=_profile_id AND enabled) THEN RAISE EXCEPTION 'profile_disabled'; END IF;
     SELECT id INTO v_id FROM public.instagram_monitor_runs WHERE kind='reels' AND profile_id=_profile_id AND status NOT IN ('succeeded','failed') LIMIT 1;
@@ -123,7 +163,7 @@ DECLARE v_id uuid; BEGIN
   SELECT id INTO v_id FROM public.instagram_monitor_runs
     WHERE status IN ('queued','waiting') AND next_run_at<=now()
       AND (lease_expires_at IS NULL OR lease_expires_at<now())
-      AND (status='waiting' OR (SELECT enabled FROM public.instagram_monitor_settings WHERE id))
+      AND (status='waiting' OR (public.instagram_monitor_apify_ready() AND (SELECT enabled FROM public.instagram_monitor_settings WHERE id)))
     ORDER BY CASE WHEN status='waiting' THEN 0 ELSE 1 END,created_at LIMIT 1 FOR UPDATE SKIP LOCKED;
   IF v_id IS NULL THEN RETURN; END IF;
   RETURN QUERY UPDATE public.instagram_monitor_runs SET lease_owner=_owner,lease_expires_at=now()+interval '10 minutes',attempts=attempts+1,updated_at=now()
@@ -140,7 +180,7 @@ DECLARE v_month date:=date_trunc('month',now())::date; v_total numeric; v_limit 
     RETURN false;
   END IF;
   IF EXISTS(SELECT 1 FROM public.instagram_monitor_runs WHERE id<>_id AND kind IN ('reels','comments') AND status IN ('starting','waiting','processing')) THEN RETURN false; END IF;
-  SELECT monthly_limit_usd,max_run_usd INTO v_limit,v_run FROM public.instagram_monitor_settings WHERE id AND enabled;
+  SELECT monthly_limit_usd,max_run_usd INTO v_limit,v_run FROM public.instagram_monitor_settings WHERE id AND enabled AND public.instagram_monitor_apify_ready();
   IF v_limit IS NULL THEN RETURN false; END IF;
   -- Unresolved reservations survive month rollover; late billing cannot reset the cap.
   SELECT coalesce(sum(reserved_usd),0)+coalesce(sum(CASE WHEN budget_month=v_month THEN cost_usd ELSE 0 END),0) INTO v_total FROM public.instagram_monitor_runs;
