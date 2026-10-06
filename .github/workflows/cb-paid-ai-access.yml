@@ -1,0 +1,26 @@
+name: CB paid AI access
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/20261006083514_cb_paid_installment_ai_access.sql'
+      - 'scripts/test-cb-paid-ai-access.mjs'
+      - '.github/workflows/cb-paid-ai-access.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paid-access:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install isolated PostgreSQL fixture runtime
+        run: npm install --prefix "$RUNNER_TEMP/cb-ai-fixtures" --no-audit --no-fund @electric-sql/pglite@0.5.8
+      - name: Check actual SQL access decisions
+        run: PGLITE_MODULE="$RUNNER_TEMP/cb-ai-fixtures/node_modules/@electric-sql/pglite/dist/index.js" node scripts/test-cb-paid-ai-access.mjs
