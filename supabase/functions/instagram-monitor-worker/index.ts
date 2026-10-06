@@ -1,10 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  apifyConnection,
-  apifyItems,
-  apifyRun,
-  startApify,
-} from "../_shared/instagram-apify.ts";
+import { apifyConnection, apifyRun } from "../_shared/instagram-apify.ts";
 import {
   fetchInstagramMedia,
   INSTAGRAM_PILOT,
@@ -14,6 +9,8 @@ import {
   base64FromBytes,
   transcribeAndSummarize,
 } from "../_shared/transcribe-audio.ts";
+
+import { coverageReason, datasetPage, startWorkspaceRun } from "./provider.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -85,7 +82,12 @@ async function dataset(token: string, runId: string): Promise<any[]> {
   if (!["SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"].includes(run.status)) {
     throw new Error("source_run_not_terminal");
   }
-  return await apifyItems(token, run.defaultDatasetId);
+  const items: any[] = [];
+  for (let offset = 0;; offset += 50) {
+    const page = await datasetPage(token, run.defaultDatasetId, offset);
+    items.push(...page);
+    if (page.length < 50) return items;
+  }
 }
 async function importReels(job: any, items: any[], token: string) {
   const profile = checked(
@@ -94,7 +96,8 @@ async function importReels(job: any, items: any[], token: string) {
       job.profile_id,
     ).single(),
   );
-  for (const item of items.slice(0, INSTAGRAM_PILOT.maxReels)) {
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
     if (String(item.ownerUsername || "").toLowerCase() !== profile.username) {
       continue;
     }
@@ -114,7 +117,7 @@ async function importReels(job: any, items: any[], token: string) {
     // Keep stored media/transcript; refresh the source of a failed or pending download.
     const existing = checked(
       await client.from("instagram_monitor_reels").select(
-        "id,storage_path,source_run_id,profile_id,duration_seconds",
+        "id,storage_path,source_run_id,profile_id,duration_seconds,comments_checked_at,comments_count",
       ).eq("shortcode", shortcode).maybeSingle(),
     );
     if (existing && existing.profile_id !== job.profile_id) continue;
@@ -147,7 +150,14 @@ async function importReels(job: any, items: any[], token: string) {
         "comments",
       ).eq("reel_id", reel.id).limit(1),
     );
-    if (!count.length) await enqueue("comments", job.profile_id, reel.id);
+    if (
+      !count.length || (existing &&
+        (!existing.comments_checked_at ||
+          Date.parse(existing.comments_checked_at) < Date.now() - 86400000 ||
+          values.comments_count > existing.comments_count))
+    ) {
+      await enqueue("comments", job.profile_id, reel.id);
+    }
   }
   checked(
     await client.from("instagram_monitor_profiles").update({
@@ -155,28 +165,39 @@ async function importReels(job: any, items: any[], token: string) {
     }).eq("id", job.profile_id),
   );
 }
-async function importComments(job: any, items: any[]) {
+async function importComments(
+  job: any,
+  items: any[],
+  run: any,
+  complete: boolean,
+) {
   const reel = checked(
-    await client.from("instagram_monitor_reels").select("post_url").eq(
+    await client.from("instagram_monitor_reels").select(
+      "post_url,comments_count",
+    ).eq(
       "id",
       job.reel_id,
     ).single(),
   );
   const rows = items.filter((x) =>
-    x.id && typeof x.text === "string" &&
+    x && x.id && typeof x.text === "string" &&
     (!x.postUrl || instagramPostUrl(x.postUrl) === reel.post_url)
-  ).slice(0, INSTAGRAM_PILOT.maxComments).map((x) => ({
+  ).map((x) => ({
     reel_id: job.reel_id,
     provider_comment_id: String(x.id).slice(0, 128),
     username: String(x.ownerUsername || x.owner?.username || "").slice(0, 100),
     text: x.text.slice(0, 20000),
     posted_at: date(x.timestamp),
+    parent_comment_id: x.parentCommentId
+      ? String(x.parentCommentId).slice(0, 128)
+      : null,
+    likes_count: num(x.likesCount),
   }));
   if (rows.length) {
     checked(
       await client.from("instagram_monitor_comments").upsert(rows, {
         onConflict: "reel_id,provider_comment_id",
-        ignoreDuplicates: true,
+        ignoreDuplicates: false,
       }),
     );
   }
@@ -188,7 +209,24 @@ async function importComments(job: any, items: any[]) {
   checked(
     await client.from("instagram_monitor_reels").update({
       collected_comments_count: response.count || 0,
-      comments_coverage: "partial",
+      comments_coverage: complete &&
+          coverageReason(
+              run,
+              response.count || 0,
+              reel.comments_count,
+              job.request_options?.include_replies === true,
+            ) === "provider_finished"
+        ? "available"
+        : "partial",
+      comments_checked_at: new Date().toISOString(),
+      coverage_reason: complete
+        ? coverageReason(
+          run,
+          response.count || 0,
+          reel.comments_count,
+          job.request_options?.include_replies === true,
+        )
+        : "importing",
     }).eq("id", job.reel_id),
   );
 }
@@ -236,7 +274,21 @@ async function processJob(job: any, owner: string) {
         return;
       }
       try {
-        const runId = await startApify(token, job.kind, source);
+        const options = checked(
+          await client.from("instagram_monitor_settings").select(
+            "reels_per_run,run_timeout_seconds,include_replies,max_run_usd",
+          ).single(),
+        );
+        const updated = checked(
+          await client.from("instagram_monitor_runs").update({
+            request_options: options,
+          }).eq("id", job.id).eq("lease_owner", owner).gt(
+            "lease_expires_at",
+            new Date().toISOString(),
+          ).select("id"),
+        );
+        if (updated.length !== 1) throw new Error("lease_lost");
+        const runId = await startWorkspaceRun(token, job.kind, source, options);
         await finish(job, owner, "waiting", null, runId);
       } catch (e) {
         const code = safeCode(e);
@@ -274,14 +326,33 @@ async function processJob(job: any, owner: string) {
       );
       return;
     }
-    const items = await apifyItems(token, run.defaultDatasetId);
+    const offset = Number(job.import_offset || 0);
+    const items = await datasetPage(token, run.defaultDatasetId, offset);
+    const complete = items.length < 50;
     if (job.kind === "reels") await importReels(job, items, token);
-    else await importComments(job, items);
+    else await importComments(job, items, run, complete);
+    const progress = checked(
+      await client.from("instagram_monitor_runs").update({
+        import_offset: offset + items.length,
+      }).eq("id", job.id).eq("lease_owner", owner).gt(
+        "lease_expires_at",
+        new Date().toISOString(),
+      ).select("id"),
+    );
+    if (progress.length !== 1) throw new Error("lease_lost");
+    if (!complete) {
+      await finish(job, owner, "waiting", null, null, cost);
+      return;
+    }
     await finish(
       job,
       owner,
-      items.length ? "succeeded" : "failed",
-      items.length ? null : "provider_empty_result",
+      items.length || offset || job.kind === "comments"
+        ? "succeeded"
+        : "failed",
+      items.length || offset || job.kind === "comments"
+        ? null
+        : "provider_empty_result",
       null,
       cost,
     );
@@ -371,31 +442,9 @@ async function processJob(job: any, owner: string) {
   await finish(job, owner, "succeeded");
 }
 async function autoQueue() {
-  const settings = checked(
-    await client.from("instagram_monitor_settings").select(
-      "enabled,auto_monitor",
-    ).single(),
+  checked(
+    await client.rpc("instagram_monitor_queue_profiles", { _force: false }),
   );
-  if (
-    !settings.enabled || !settings.auto_monitor ||
-    !(await apifyConnection(client)).enabled
-  ) return;
-  // Free pilot: only the first enabled target. Budget reserve remains authoritative.
-  const profiles = checked(
-    await client.from("instagram_monitor_profiles").select("id").eq(
-      "enabled",
-      true,
-    ).order("created_at").limit(1),
-  );
-  if (!profiles.length) return;
-  const recent = checked(
-    await client.from("instagram_monitor_runs").select("id").eq("kind", "reels")
-      .eq("profile_id", profiles[0].id).gte(
-        "created_at",
-        new Date(Date.now() - 86400000).toISOString(),
-      ).limit(1),
-  );
-  if (!recent.length) await enqueue("reels", profiles[0].id, null);
 }
 async function tick() {
   let job: any;
