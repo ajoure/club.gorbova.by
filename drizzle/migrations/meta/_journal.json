@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791277598886,
+      "tag": "0000_cb_paid_installment_ai_access",
+      "breakpoints": true
+    }
+  ]
+}
