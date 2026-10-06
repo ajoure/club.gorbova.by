@@ -67,11 +67,11 @@ BEGIN
         AND s.access_start_at <= now() AND s.access_end_at > now()
         AND o.user_id = p_user AND o.product_id = s.product_id
         AND o.tariff_id = s.tariff_id AND o.status::text = 'paid' AND o.currency = 'BYN'
-        AND NOT (o.meta @> '{"manual_review":true}'::jsonb)
+        AND COALESCE(o.meta->'manual_review', 'null'::jsonb) IN ('null'::jsonb, 'false'::jsonb)
         AND o.meta->'installment'->>'model' = 'bepaid_finite_subscription'
         AND o.meta->'installment'->>'infinite' = 'false'
         AND o.meta->'installment'->>'original_order_id' = o.id::text
-        AND NOT (s.meta @> '{"manual_review":true}'::jsonb)
+        AND COALESCE(s.meta->'manual_review', 'null'::jsonb) IN ('null'::jsonb, 'false'::jsonb)
         AND s.meta->'installment'->>'model' = o.meta->'installment'->>'model'
         AND s.meta->'installment'->>'infinite' = o.meta->'installment'->>'infinite'
         AND s.meta->'installment'->>'original_order_id' = o.meta->'installment'->>'original_order_id'

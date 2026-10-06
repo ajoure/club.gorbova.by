@@ -58,6 +58,7 @@ await test('inactive section denies fallback',"UPDATE app_sections SET is_active
 await test('invalid agreement metadata denies without cast errors',"UPDATE orders_v2 SET meta=jsonb_set(meta,'{installment,billing_cycles}','\"oops\"')",false);
 await test('recurring subscription does not gain access',"UPDATE orders_v2 SET meta=jsonb_set(meta,'{installment,infinite}','true')",false);
 await test('manual review denies',"UPDATE orders_v2 SET meta=meta || '{\"manual_review\":true}'::jsonb",false);
+await test('legacy string manual review denies',"UPDATE orders_v2 SET meta=meta || '{\"manual_review\":\"yes\"}'::jsonb",false);
 await test('subscription agreement mismatch denies',"UPDATE subscriptions_v2 SET meta=jsonb_set(meta,'{installment,billing_cycles}','3')",false);
 await test('deleted refund still denies',"UPDATE payments_v2 SET is_deleted=true,refunded_amount=1 WHERE provider_payment_id='fixture2'",false);
 await test('existing active branch preserved',"UPDATE subscriptions_v2 SET status='active'; DELETE FROM payments_v2",true);
