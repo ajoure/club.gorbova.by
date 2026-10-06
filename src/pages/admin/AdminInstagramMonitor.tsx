@@ -185,10 +185,43 @@ export default function AdminInstagramMonitor() {
         reel_id: id,
         download: true,
       });
-      const link = document.createElement("a");
-      link.href = result.url;
-      link.download = "instagram-reel.mp4";
-      link.click();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 60_000);
+      let objectUrl: string | undefined;
+      try {
+        const response = await fetch(result.url, {
+          credentials: "omit",
+          redirect: "error",
+          signal: controller.signal,
+        });
+        const maxBytes = 30 * 1024 * 1024;
+        const contentType = response.headers.get("content-type")?.split(";")[0].trim();
+        if (!response.ok || contentType !== "video/mp4" ||
+            Number(response.headers.get("content-length")) > maxBytes) {
+          controller.abort();
+          throw new Error("video_download_failed");
+        }
+        const blob = await response.blob();
+        if (!blob.size || blob.size > maxBytes) throw new Error("video_download_failed");
+        objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = "instagram-reel.mp4";
+        document.body.appendChild(link);
+        try {
+          link.click();
+        } finally {
+          link.remove();
+        }
+      } catch {
+        throw new Error("Не удалось скачать видео. Проверьте подключение и попробуйте ещё раз.");
+      } finally {
+        window.clearTimeout(timeout);
+        if (objectUrl) {
+          const downloadUrl = objectUrl;
+          window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 60_000);
+        }
+      }
     },
     onError: (error) => toast.error(error.message),
   });
