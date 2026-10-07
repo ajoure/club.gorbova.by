@@ -1,349 +1,75 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE, mnsReplyNeedsClarification } from '../gorbova-ai-chat/mns-current-law.ts';
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-
-const SYSTEM_PROMPT = `Ты — юридический ассистент по подготовке официальных ответов на запросы налоговых органов Республики Беларусь (ст. 107 НК).
-
-Твоя задача — на основании запроса налогового органа (текст / PDF / изображение) подготовить юридически обоснованный, логичный, официальный ответ в русскоязычном деловом стиле, полностью готовый для вставки в Word или PDF.
-
-
-1. Входные данные
-
-Пользователь может предоставить:
-- текст запроса;
-- PDF-файл;
-- изображение (скан/фото).
-
-Ты обязан:
-- извлечь содержание;
-- определить тип запроса;
-- сформировать письменный ответ.
-
-
-2. Что извлекать из запроса
-
-Определи (если указано):
-- Налоговый орган.
-- Номер и дату запроса.
-- Организацию / ИП.
-- Требования:
-  - документы / информация;
-  - вызов;
-  - комбинированный запрос;
-  - иное.
-- Период.
-- Указание на проверку (если есть).
-- Указанные нормы права.
-
-Если номер, дата или орган отсутствуют — задай один короткий вопрос со списком недостающих данных.
-Иное — допускается оставить заполнителями.
-
-
-3. БАЗОВЫЙ ПРАВОВОЙ ПРИНЦИП (ОБЯЗАТЕЛЕН)
-
-Каждый ответ должен строиться строго по логике:
-
-право → условия реализации → отсутствие условий → вывод
-
-Запрещено делать выводы без объяснения условий.
-
-
-4. ОБЯЗАТЕЛЬНАЯ ПРАВОВАЯ ЛОГИКА
-
-
-4.1. Признание права (ВСЕГДА первым)
-
-Всегда начинай правовую часть с признания права налогового органа:
-
-«В соответствии со статьёй 107 Налогового кодекса Республики Беларусь налоговые органы вправе…»
-
-Цель — зафиксировать, что право в принципе существует.
-
-
-4.2. Разграничение норм
-
-Обязательно укажи:
-- ст. 107 НК — общая норма, не регулирует порядок истребования;
-- специальная норма — ст. 79 НК, которая допускает истребование документов только при проведении проверки.
-
-Используй формулировки:
-- «является общей нормой»;
-- «порядок регулируется специальной нормой».
-
-
-4.3. Ключевое условие — ПРОВЕРКА
-
-Всегда прямо указывай:
-
-«Истребование документов и вызов плательщика возможны только при проведении проверки.»
-
-
-4.4. Условия начала проверки (ВСЕГДА, если речь о документах или вызове)
-
-Проверка возможна только при наличии ОДНОВРЕМЕННО:
-1. Предписания руководителя налогового органа (ст. 74, 75 НК, Указ №510);
-2. Записи в книге учёта проверок (п. 17 Положения №510).
-
-
-4.5. Проверка факта
-
-Обязательно сопоставь закон с реальностью:
-
-«Из содержания запроса / личного кабинета плательщика не усматривается информация о проведении проверки…»
-
-
-4.6. Юридический вывод
-
-Используй ТОЛЬКО нейтральные формулы:
-- «правовые основания отсутствуют»;
-- «не соответствует установленному порядку».
-
-
-5. DECISION-TREE (ЕСЛИ / ТО)
-
-
-ЕСЛИ в запросе требуют ДОКУМЕНТЫ
-
-ТО:
-- применяй ст. 107 НК → ст. 79 НК;
-- раскрывай условия проверки;
-- при отсутствии проверки делай вывод об отсутствии оснований;
-- блок про вызов — удалить.
-
-
-ЕСЛИ в запросе ТОЛЬКО ВЫЗОВ
-
-ТО:
-- применяй ст. 80 НК + Указ №510;
-- указывай, что вызов возможен только при проверке;
-- описывай требования к уведомлению (цель, время, адрес);
-- при отсутствии проверки/уведомления — вывод об отсутствии оснований.
-
-
-ЕСЛИ запрос КОМБИНИРОВАННЫЙ
-
-ТО:
-- применяй оба блока (документы + вызов);
-- единый вывод: отсутствие правовых оснований при отсутствии проверки.
-
-
-ЕСЛИ нет документов и нет вызова
-
-ТО:
-- краткий официальный ответ;
-- без придумывания требований;
-- при необходимости — просьба уточнить правовые основания.
-
-
-ЕСЛИ подтверждено, что организация < 2 лет
-
-И одновременно:
-- речь идёт о проверке,
-
-ТО:
-- добавь абзац о п. 7 Указа №510 (мораторий 2 года).
-
-ИНАЧЕ:
-- этот абзац НЕ добавлять.
-
-
-6. ЗАПРЕТЫ
-
-Запрещено:
-- придумывать проверку;
-- ссылаться на нормы вне шаблона;
-- писать «незаконно» без объяснения;
-- добавлять эмоции или угрозы.
-
-
-7. ШАБЛОН ОТВЕТА (ИСПОЛЬЗУЙ ВСЕГДА)
-
-Фирменный бланк организации
-
-В ____________________________________
-(наименование налогового органа)
-
-Исх. № ________
-от «_» __________ 20__ г.
-
-
-О рассмотрении запроса
-
-
-В ответ на запрос ____________________________________
-№ ________ от «_» __________ 20__ г. сообщаем следующее.
-
-[Далее строго применяй правовую логику и decision-tree выше]
-
-С уважением,
-
-
-(должность)
-
-
-(Ф.И.О.)
-
-
-8. ФОРМАТ ВЫВОДА
-
-Выводи ТОЛЬКО готовый текст ответа.
-Без пояснений, комментариев и описаний логики.
-Язык: русский.
-Стиль: официальный, деловой.
-
-9. ДОПОЛНИТЕЛЬНО
-
-Пользователь может добавлять входные данные через загрузку файлов, Drag & Drop или вставку из буфера обмена (включая скриншоты).
-Все такие данные считай равнозначными и анализируй совместно, как единый запрос налогового органа.`;
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
+function reply(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// Compatibility endpoint for the audits page and already-open old clients.
+// No second legal prompt, model call, access bypass, or document-history write.
+Deno.serve(async req => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method !== 'POST') return reply({ error: 'Метод не поддерживается' }, 405);
   try {
-    // Validate JWT
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) return reply({ error: 'Необходима авторизация' }, 401);
+    const url = Deno.env.get('SUPABASE_URL')!;
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const userClient = createClient(url, anonKey, { global: { headers: { Authorization: authHeader } } });
+    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    if (authError || !user) return reply({ error: 'Неавторизованный доступ' }, 401);
+
+    let body: any;
+    try { body = await req.json(); } catch { return reply({ error: 'Некорректный запрос' }, 400); }
+    if (!body || typeof body !== 'object') return reply({ error: 'Некорректный запрос' }, 400);
+    const { requestText, conversationHistory, imageBase64, originalRequest, conversation_id } = body;
+    if ((requestText != null && typeof requestText !== 'string')
+      || (originalRequest != null && typeof originalRequest !== 'string')
+      || (imageBase64 != null && typeof imageBase64 !== 'string')
+      || (conversation_id != null && (typeof conversation_id !== 'string' || !/^[0-9a-f-]{36}$/i.test(conversation_id)))
+      || (conversationHistory != null && (!Array.isArray(conversationHistory) || conversationHistory.length > 100
+        || conversationHistory.some((m: any) => !m || !['user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || m.content.length > 100000)))) {
+      return reply({ error: 'Некорректные данные диалога' }, 400);
+    }
+    const messages = [...(conversationHistory || [])];
+    if (requestText?.trim()) messages.push({ role: 'user', content: requestText.trim() });
+    if (!messages.length && imageBase64?.trim()) messages.push({ role: 'user', content: 'Подготовь ответ на приложенный запрос МНС по авторскому сценарию 107НК.' });
+    if (!messages.length || messages.at(-1)?.role !== 'user') return reply({ error: 'Введите текст запроса или загрузите файл' }, 400);
+    if (imageBase64 && !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=\s]+$/.test(imageBase64)) {
+      return reply({ error: 'Недопустимое изображение запроса' }, 400);
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await (supabase.auth as any).getClaims(token);
-    if (claimsError || !claimsData?.claims) {
-      return new Response(
-        JSON.stringify({ error: "Invalid token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const { requestText, conversationHistory, imageBase64 } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
-    }
-
-    const messages: any[] = [{ role: "system", content: SYSTEM_PROMPT }];
-
-    // Add conversation history if exists
-    if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-      messages.push(...conversationHistory);
-    }
-
-    // Build optional new user message content
-    const trimmedRequestText = typeof requestText === "string" ? requestText.trim() : "";
-    const userContent: any[] = [];
-
-    if (trimmedRequestText) {
-      userContent.push({ type: "text", text: trimmedRequestText });
-    }
-
-    if (typeof imageBase64 === "string" && imageBase64.trim()) {
-      userContent.push({
-        type: "image_url",
-        image_url: { url: imageBase64 },
-      });
-    }
-
-    // If we have new content, append it as the last user message.
-    // Otherwise, rely on the provided conversationHistory (it already includes the latest user message).
-    if (userContent.length > 0) {
-      messages.push({
-        role: "user",
-        content:
-          userContent.length === 1 && userContent[0].type === "text"
-            ? userContent[0].text
-            : userContent,
-      });
-    } else if (!conversationHistory || !Array.isArray(conversationHistory) || conversationHistory.length === 0) {
-      throw new Error("No request content provided");
-    }
-
-    console.log("Sending request to Lovable AI Gateway...");
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+    const serviceClient = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: prompts, error } = await serviceClient.from('ai_user_prompts').select('id')
+      .eq('code', MNS_SCENARIO_CODE).eq('is_active', true).eq('is_archived', false).eq('is_visible_in_chat', true);
+    if (error || prompts?.length !== 1) return reply({ error: MNS_UNAVAILABLE, code: 'mns_corpus_unavailable' }, 503);
+    const imageMatch = imageBase64 ? /^data:([^;]+);base64,(.*)$/s.exec(imageBase64) : null;
+    const response = await fetch(`${url}/functions/v1/gorbova-ai-chat`, {
+      method: 'POST', headers: { Authorization: authHeader, apikey: anonKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages,
-        stream: false,
+        mode: 'prompt', prompt_id: prompts[0].id, messages, conversation_id,
+        // Original text must survive follow-ups; old clients fall back to their
+        // first user turn. Canonical handler also restores its owned context.
+        fileContents: originalRequest?.trim() || requestText?.trim() || messages.find(m => m.role === 'user')?.content,
+        ...(imageMatch ? { images: [{ base64: imageMatch[2], mimeType: imageMatch[1], filename: 'request-image.' + (imageMatch[1].endsWith('jpeg') ? 'jpg' : imageMatch[1].split('/')[1]) }] } : {}),
       }),
+      signal: AbortSignal.timeout(110000),
     });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Превышен лимит запросов. Попробуйте позже." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Требуется пополнение баланса." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      return new Response(
-        JSON.stringify({ error: "Ошибка AI-сервиса" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const data = await response.json();
-    const generatedText = data.choices?.[0]?.message?.content || "";
-
-    // Determine if AI is asking for clarification
-    const needsClarification = generatedText.includes("?") && 
-      (generatedText.includes("уточн") || 
-       generatedText.includes("укаж") || 
-       generatedText.includes("сообщ") ||
-       generatedText.includes("предостав"));
-
-    // Try to extract metadata from the response
-    let requestType = "unknown";
-    if (generatedText.includes("статьёй 79") && generatedText.includes("статьёй 80")) {
-      requestType = "combined";
-    } else if (generatedText.includes("статьёй 79")) {
-      requestType = "documents";
-    } else if (generatedText.includes("статьёй 80")) {
-      requestType = "summons";
-    } else if (needsClarification) {
-      requestType = "clarification";
-    }
-
-    return new Response(
-      JSON.stringify({ 
-        responseText: generatedText,
-        needsClarification,
-        requestType,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error) {
-    console.error("Error in mns-response-generator:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Неизвестная ошибка" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    const result = await response.json();
+    if (!response.ok) return reply(result, response.status);
+    if (result.blocked || result.metadata?.blocked) return reply({ error: result.content, code: 'mns_input_unreadable' }, 422);
+    if (typeof result.content !== 'string' || !result.content.trim()) return reply({ error: 'ИИ не вернул ответ. Повторите запрос.' }, 502);
+    const responseText = result.content;
+    const needsClarification = mnsReplyNeedsClarification(responseText);
+    const documents = /стать[а-яё]*\s+79\b|ст\.?\s*79\b/i.test(responseText);
+    const summons = /стать[а-яё]*\s+80\b|ст\.?\s*80\b/i.test(responseText);
+    return reply({ responseText, needsClarification, requestType: documents && summons ? 'combined' : documents ? 'documents' : summons ? 'summons' : needsClarification ? 'clarification' : 'unknown', conversation_id: result.conversation_id, metadata: result.metadata });
+  } catch {
+    return reply({ error: 'Не удалось подготовить ответ МНС. Проверьте историю перед повторным запросом.' }, 503);
   }
 });

@@ -31,6 +31,8 @@ export default function MnsResponseService() {
   const { toast } = useToast();
   const { generateResponse, saveDocument, isGenerating } = useMnsDocuments();
   
+  const [conversationId, setConversationId] = useState<string>();
+  const [requestImage, setRequestImage] = useState<string>();
   const [inputText, setInputText] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -141,15 +143,19 @@ export default function MnsResponseService() {
 
     // Get first image for AI if available
     const imageFile = uploadedFiles.find((f) => f.type === "image");
-    const imageBase64 = isFirstMessage ? imageFile?.preview : undefined;
+    const imageBase64 = isFirstMessage ? imageFile?.preview : requestImage;
+    if (isFirstMessage) setRequestImage(imageBase64);
 
     const result = await generateResponse({
       requestText: isFirstMessage ? (effectiveRequestText || undefined) : undefined,
       imageBase64,
       conversationHistory: !isFirstMessage ? conversationHistory : undefined,
+      originalRequest: isFirstMessage ? effectiveRequestText : originalRequest,
+      conversationId,
     });
 
     if (result) {
+      setConversationId(result.conversationId);
       const assistantMessage: Message = { role: "assistant", content: result.responseText };
       setMessages([...newMessages, assistantMessage]);
 
@@ -159,11 +165,16 @@ export default function MnsResponseService() {
       }
     }
 
+    if (!result) {
+      setMessages(messages);
+      setInputText(currentInputText);
+    }
+
     // Clear files after first submission
-    if (uploadedFiles.length > 0) {
+    if (result && uploadedFiles.length > 0) {
       setUploadedFiles([]);
     }
-  }, [inputText, uploadedFiles, messages, generateResponse, toast]);
+  }, [inputText, uploadedFiles, messages, generateResponse, toast, originalRequest, conversationId, requestImage]);
 
   const handleCopy = useCallback(async () => {
     if (!finalResponse) return;
@@ -232,6 +243,8 @@ export default function MnsResponseService() {
     setInputText("");
     setUploadedFiles([]);
     setMessages([]);
+    setConversationId(undefined);
+    setRequestImage(undefined);
     setFinalResponse(null);
     setRequestType("unknown");
     setOriginalRequest("");
@@ -259,7 +272,7 @@ export default function MnsResponseService() {
                 Ответ на запрос МНС по ст. 107 НК РБ
               </h1>
               <p className="text-muted-foreground">
-                Подготовка официального ответа на запрос налогового органа
+                Подготовка ответа по ст. 107 НК РБ с учётом Указа № 227
               </p>
             </div>
           </div>

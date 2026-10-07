@@ -77,6 +77,8 @@ jobs:
         run: |
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts
           deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts supabase/functions/instagram-monitor/release-health_test.ts supabase/functions/instagram-monitor-worker/provider_test.ts
+      - name: MNS current-law Edge types
+        run: deno check --no-lock supabase/functions/gorbova-ai-chat/index.ts supabase/functions/mns-response-generator/index.ts
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build

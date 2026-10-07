@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 
 export interface MnsDocument {
   id: string;
@@ -21,6 +22,8 @@ export interface MnsDocument {
 interface GenerateResponseParams {
   requestText?: string;
   imageBase64?: string;
+  originalRequest?: string;
+  conversationId?: string;
   conversationHistory?: Array<{ role: string; content: string }>;
 }
 
@@ -45,7 +48,7 @@ export function useMnsDocuments() {
   });
 
   const generateResponse = useCallback(
-    async ({ requestText, imageBase64, conversationHistory }: GenerateResponseParams) => {
+    async ({ requestText, imageBase64, conversationHistory, originalRequest, conversationId }: GenerateResponseParams) => {
       if (!user) {
         toast({
           title: "Ошибка",
@@ -61,13 +64,15 @@ export function useMnsDocuments() {
           requestText: typeof requestText === "string" && requestText.trim() ? requestText.trim() : undefined,
           imageBase64: typeof imageBase64 === "string" && imageBase64.trim() ? imageBase64.trim() : undefined,
           conversationHistory,
+          originalRequest,
+          conversation_id: conversationId,
         };
 
         const { data, error } = await supabase.functions.invoke("mns-response-generator", {
           body: payload,
         });
 
-        if (error) throw error;
+        if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
 
         if (data.error) {
           toast({
@@ -82,12 +87,13 @@ export function useMnsDocuments() {
           responseText: data.responseText as string,
           needsClarification: data.needsClarification as boolean,
           requestType: data.requestType as string,
+          conversationId: data.conversation_id as string | undefined,
         };
       } catch (err) {
         console.error("Generate response error:", err);
         toast({
           title: "Ошибка",
-          description: "Не удалось сгенерировать ответ",
+          description: err instanceof Error ? err.message : "Не удалось сгенерировать ответ",
           variant: "destructive",
         });
         return null;
