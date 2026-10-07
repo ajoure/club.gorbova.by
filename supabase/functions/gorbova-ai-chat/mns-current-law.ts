@@ -52,19 +52,22 @@ export function mnsCheckDecreeCitations(content: string, sources: MnsNumberedSou
   const text = content.normalize('NFKC').replace(/[\u200b-\u200d\ufeff*_\x60]/g, '');
   const clauses = text.split(/\n+|[!?]\s+|\.(?=\s+[А-ЯЁA-Z])/u);
   const reference = /(?<![\p{L}\p{N}_])(?:подпункт[а-яё]*|пункт[а-яё]*|пп?\.)\s*(\d+(?:\.\d+)*(?:\s*(?:,|и|–|—|-)\s*\d+(?:\.\d+)*)*)/giu;
+  let lastAct = '';
+  const marker = (part: string, last = false, legalOnly = false) => {
+    let items = [...part.matchAll(/НК(?![\p{L}])|Налогов[а-яё\s]*кодекс[а-яё]*|ст(?:ать[а-яё]*|\.)\s*\d+|Положени[а-яё]*(?:\s+о\s+[^.!?\n()]{0,120})?|Указ[а-яё]*[^.!?\n]{0,80}?(?:№|No?\.?)?\s*227(?!\d)|запрос[а-яё]*|письм[а-яё]*/giu)];
+    if (legalOnly) items = items.filter(m => !/^(?:запрос|письм)/iu.test(m[0]));
+    return (last ? items.at(-1) : items[0])?.[0] || '';
+  };
   for (const clause of clauses) {
     const refs = [...clause.matchAll(reference)];
     for (let i = 0; i < refs.length; i++) {
       const ref = refs[i];
       const after = clause.slice(ref.index! + ref[0].length, refs[i + 1]?.index);
       const before = clause.slice(i ? refs[i - 1].index! + refs[i - 1][0].length : 0, ref.index);
-      const marker = (part: string, last = false) => {
-        const items = [...part.matchAll(/НК(?![\p{L}])|Налогов[а-яё\s]*кодекс[а-яё]*|ст(?:ать[а-яё]*|\.)\s*\d+|Положени[а-яё]*(?:\s+о\s+[^.!?\n()]{0,120})?|Указ[а-яё]*[^.!?\n]{0,80}?(?:№|No?\.?)?\s*227(?!\d)|запрос[а-яё]*|письм[а-яё]*/giu)];
-        return (last ? items.at(-1) : items[0])?.[0] || '';
-      };
-      const governing = marker(after) || marker(before, true);
+      const compoundAct = /^[\s,и]*$/iu.test(after) ? marker(clause.slice(ref.index! + ref[0].length)) : '';
+      const governing = marker(after) || compoundAct || marker(before, true) || lastAct || (decree227.test(content) ? 'Положение' : '');
       if (!/Положени|Указ/iu.test(governing)) continue;
-      if (/Положени/iu.test(governing) && /(?:Указ[а-яё]*[^.!?\n]{0,70}(?:№|No?\.?)\s*(?!227\b)\d+|постановлени[а-яё]*)/iu.test(after)) continue;
+      if (/Положени/iu.test(governing) && !decree227.test(after) && /(?:Указ[а-яё]*[^.!?\n]{0,70}(?:№|No?\.?)\s*(?!227\b)\d+|Положени[а-яё]*[^.!?\n]{0,100}утвержд[а-яё]*[^.!?\n]{0,60}постановлени[а-яё]*[^.!?\n]{0,60}(?:№|No?\.?)\s*\d+)/iu.test(after)) continue;
       const isProvision = /Положени/iu.test(governing);
       const explicitTitle = /Положени[а-яё]*\s+о\s+/iu.test(governing);
       const inspectionAlias = /Положени[а-яё]*\s+о\s+порядке\s+организации\s+и\s+проведения\s+проверок[^\n]{0,180}далее[\s—:()\-]*Положение/iu.test(text);
@@ -82,6 +85,7 @@ export function mnsCheckDecreeCitations(content: string, sources: MnsNumberedSou
         if (!unambiguous || !allowed.has(n)) rejected.push(n);
       }
     }
+    lastAct = marker(clause, true, true) || lastAct;
   }
   return { status: rejected.length ? 'rejected' : 'passed', numbered_norms_available: sources.decree.size + sources.inspections.size, cited, rejected };
 }

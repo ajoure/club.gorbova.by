@@ -68,6 +68,12 @@ describe('canonical 107NK handler', () => {
     const response = await h.call();
     expect((await response.json()).metadata.mns_citation_check).toEqual({ status: 'passed', numbered_norms_available: 0, cited: [] });
   });
+  it('keeps the actual compound Tax Code citation in a 227 document', async () => {
+    const h = harness({ output: 'По подпункту 1.1 пункта 1 статьи 107 НК РБ. Согласно Указу №227 сообщаем...' });
+    const response = await h.call();
+    expect(response.status).toBe(200);
+    expect((await response.json()).metadata.mns_citation_check.cited).toEqual([]);
+  });
   it('does not apply decree citation validation to other scenarios', async () => {
     const h = harness({ scenario: 'balance_analysis', output: 'Согласно пункту 31 Положения. Баланс 100 200.' });
     const response = await h.call({ fileContents: 'Баланс 100 200 300 400 500 600 700 800 900 1000.' });
