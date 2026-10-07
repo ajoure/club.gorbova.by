@@ -107,3 +107,15 @@ export function withinRunWindow(item: any, options: WorkspaceOptions): boolean {
   return Number.isFinite(at) && at >= Date.parse(options.window_start) &&
     (!options.window_end || at < Date.parse(options.window_end));
 }
+
+export function reelOutcome(
+  seen: number,
+  imported: number,
+  hasWindow: boolean,
+) {
+  if (hasWindow || imported > 0) return { status: "succeeded", error: null };
+  return {
+    status: "failed",
+    error: seen ? "provider_profile_mismatch" : "provider_empty_result",
+  };
+}

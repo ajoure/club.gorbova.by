@@ -14,6 +14,7 @@ import {
   belongsToProfile,
   coverageReason,
   datasetPage,
+  reelOutcome,
   startWorkspaceRun,
   withinRunWindow,
 } from "./provider.ts";
@@ -364,18 +365,14 @@ async function processJob(job: any, owner: string) {
       await finish(job, owner, "waiting", null, null, cost);
       return;
     }
-    await finish(
-      job,
-      owner,
-      items.length || offset || job.kind === "comments"
-        ? "succeeded"
-        : "failed",
-      items.length || offset || job.kind === "comments"
-        ? null
-        : "provider_empty_result",
-      null,
-      cost,
-    );
+    const outcome = job.kind === "reels"
+      ? reelOutcome(
+        offset + items.length,
+        Number(job.imported_reels || 0) + imported,
+        !!job.request_options?.window_start,
+      )
+      : { status: "succeeded", error: null };
+    await finish(job, owner, outcome.status, outcome.error, null, cost);
     return;
   }
   if (!(await apifyConnection(client)).enabled) {

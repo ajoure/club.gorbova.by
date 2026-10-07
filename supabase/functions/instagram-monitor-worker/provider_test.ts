@@ -150,3 +150,18 @@ Deno.test("coauthors are accepted but unrelated and missing owners are excluded"
     window.window_start,
   );
 });
+
+Deno.test("a day without Reels is success; an unfiltered unmatched dataset is not", async () => {
+  const { reelOutcome } = await import("./provider.ts");
+  assertEquals(reelOutcome(0, 0, true), { status: "succeeded", error: null });
+  assertEquals(reelOutcome(2, 0, true), { status: "succeeded", error: null });
+  assertEquals(reelOutcome(2, 0, false), {
+    status: "failed",
+    error: "provider_profile_mismatch",
+  });
+  assertEquals(reelOutcome(0, 0, false), {
+    status: "failed",
+    error: "provider_empty_result",
+  });
+  assertEquals(reelOutcome(2, 2, false), { status: "succeeded", error: null });
+});
