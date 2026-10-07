@@ -272,7 +272,7 @@ export default function MnsResponseService() {
                 Ответ на запрос МНС по ст. 107 НК РБ
               </h1>
               <p className="text-muted-foreground">
-                Единый сценарий 107НК с актуальными инструкциями и базой Указа № 227
+                Подготовка ответа по ст. 107 НК РБ с учётом Указа № 227
               </p>
             </div>
           </div>
