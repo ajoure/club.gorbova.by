@@ -53,6 +53,27 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
 }
 
 describe('canonical 107NK handler', () => {
+  it('rejects the observed unverified paragraph numbers before history/quota', async () => {
+    const h = harness({ output: 'Согласно пункту 11 Положения, утвержденного Указом №227, право возникает при проверке. Пункт 31 Положения требует предписания.' });
+    const response = await h.call();
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: 'mns_unverified_citation' });
+    expect(h.saved).toHaveLength(0);
+    expect(h.writes.map(w => w.table)).toEqual(['audit_logs']);
+    const system = JSON.parse(h.fetch.mock.calls[0][1].body).messages[0].content;
+    expect(system).toContain('БЕЗ номеров пунктов');
+  });
+  it('accepts an author document without source paragraph numbers and records the check', async () => {
+    const h = harness();
+    const response = await h.call();
+    expect((await response.json()).metadata.mns_citation_check).toEqual({ status: 'passed', numbered_norms_available: 0, cited: [] });
+  });
+  it('does not apply decree citation validation to other scenarios', async () => {
+    const h = harness({ scenario: 'balance_analysis', output: 'Согласно пункту 31 Положения. Баланс 100 200.' });
+    const response = await h.call({ fileContents: 'Баланс 100 200 300 400 500 600 700 800 900 1000.' });
+    expect(response.status).toBe(200);
+    expect((await response.json()).metadata.mns_citation_check).toBeUndefined();
+  });
   it('loads the production decree filename with underscores before calling the model', async () => {
     const file_name = 'Указ_Президента_Республики_Беларусь_от_06_06_2025_N_227_ред_от_17.docx';
     const h = harness({ attachments: [{ ...attachment, file_name }] });
