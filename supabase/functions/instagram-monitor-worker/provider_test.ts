@@ -25,7 +25,11 @@ Deno.test("full comments request keeps paid replies opt-in and budget fenced", a
     const u = new URL(String(input));
     assertEquals(u.searchParams.get("maxTotalChargeUsd"), "0.25");
     assertEquals(u.searchParams.has("token"), false);
-    assertEquals(JSON.parse(String(init?.body)).includeNestedComments, false);
+    assertEquals(
+      JSON.parse(String((init as RequestInit | undefined)?.body))
+        .includeNestedComments,
+      false,
+    );
     return Promise.resolve(Response.json({ data: { id: "fixtureRun" } }));
   };
   try {
