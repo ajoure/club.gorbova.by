@@ -1,4 +1,4 @@
-import { hasCurrentMnsCorpus, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsCorpusFingerprint, MNS_SCENARIO_CODE, MNS_LAW_BASELINE, MNS_UNAVAILABLE, MNS_REJECTED } from '../_shared/mns-current-law.ts';
+import { hasCurrentMnsCorpus, mnsReplyFollowsLaw, mnsReplyNeedsClarification, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsCorpusFingerprint, MNS_SCENARIO_CODE, MNS_LAW_BASELINE, MNS_UNAVAILABLE, MNS_REJECTED } from '../_shared/mns-current-law.ts';
 import { persistAiChatExchange } from '../_shared/ai-chat-persistence.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
@@ -445,6 +445,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (scenarioCode === MNS_SCENARIO_CODE && processedFileContents.length > MAX_TEXT_CHARS) {
+      return new Response(JSON.stringify({ error: 'Текст запроса МНС слишком большой. Разделите документы; неполный текст не анализируется.', code: 'mns_request_too_large' }), { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // 7. Unsupported files guard (BEFORE quality gate)
 
 
@@ -749,13 +753,14 @@ Deno.serve(async (req) => {
     const assistantContent = aiResult.choices?.[0]?.message?.content || 'Нет ответа от AI';
 
     if (scenarioCode === MNS_SCENARIO_CODE) {
-      if (!mnsOutputIsCurrent(aiResult.choices?.[0]?.message?.content)) {
+      if (!mnsOutputIsCurrent(aiResult.choices?.[0]?.message?.content) || !mnsReplyFollowsLaw(assistantContent)) {
         await writeAccessAudit(serviceClient, user.id, 'ai_chat.mns_law_rejected', {
           prompt_id: promptData.id, baseline: MNS_LAW_BASELINE, corpus_sha256: metadata.mns_corpus_sha256,
         });
         return new Response(JSON.stringify({ error: MNS_REJECTED, code: 'mns_law_validation_failed' }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       metadata.mns_law_validation = 'passed';
+      metadata.mns_response_kind = mnsReplyNeedsClarification(assistantContent) ? 'clarification' : 'document';
     }
 
     // 12. Save messages

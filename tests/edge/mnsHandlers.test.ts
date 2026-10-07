@@ -58,7 +58,7 @@ describe('canonical 107NK handler', () => {
     expect(request.messages[0].content).not.toContain('Построй ответ по структуре');
     expect(h.saved).toHaveLength(2);
   });
-  it.each(['Указ №510 применяется.', 'Запись в книге учёта проверок обязательна.', '', null])('blocks invalid generation before response/history/quota: %s', async output => {
+  it.each(['Указ №510 применяется.', 'Запись в книге учёта проверок обязательна.', 'О рассмотрении запроса. Согласно ст.107 сообщаем...', '', null])('blocks invalid generation before response/history/quota: %s', async output => {
     const h = harness({ output }); const response = await h.call(); expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: 'mns_law_validation_failed' }); expect(h.saved).toHaveLength(0);
     expect(h.writes.map(w => w.table)).toEqual(['audit_logs']);
@@ -109,6 +109,10 @@ describe('legacy adapter routes every call to canonical 107NK', () => {
     const body = await (await h.call({ requestText: undefined, originalRequest: 'Распознанный документ', conversationHistory: [{ role: 'user', content: 'Первый вопрос' }, { role: 'assistant', content: 'Уточните?' }, { role: 'user', content: 'Ответ' }] })).json();
     expect(body).toMatchObject({ needsClarification: true, requestType: 'clarification' });
     const payload = JSON.parse(h.fetch.mock.calls[0][1].body); expect(payload.messages).toHaveLength(3); expect(payload.fileContents).toBe('Распознанный документ');
+  });
+  it('recognizes the author missing-data format even without a question mark', async () => {
+    const h = harness({ adapter: true, upstreamBody: { content: 'Для подготовки точного ответа нужны:\n1. Название организации.\n2. Кто подписывает ответ.' } });
+    expect(await (await h.call()).json()).toMatchObject({ needsClarification: true, requestType: 'clarification' });
   });
   it.each([401, 403, 429, 422, 503])('preserves canonical failure status/message without a successful draft: %i', async status => {
     const h = harness({ adapter: true, upstreamStatus: status, upstreamBody: { error: 'Содержательный отказ', code: 'specific' } });

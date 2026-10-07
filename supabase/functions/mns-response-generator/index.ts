@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE } from '../_shared/mns-current-law.ts';
+import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE, mnsReplyNeedsClarification } from '../_shared/mns-current-law.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,8 +65,7 @@ Deno.serve(async req => {
     if (result.blocked || result.metadata?.blocked) return reply({ error: result.content, code: 'mns_input_unreadable' }, 422);
     if (typeof result.content !== 'string' || !result.content.trim()) return reply({ error: 'ИИ не вернул ответ. Повторите запрос.' }, 502);
     const responseText = result.content;
-    const lower = responseText.toLowerCase();
-    const needsClarification = responseText.includes('?') && /уточн|укаж|сообщ|предостав/.test(lower);
+    const needsClarification = mnsReplyNeedsClarification(responseText);
     const documents = /стать[а-яё]*\s+79\b|ст\.?\s*79\b/i.test(responseText);
     const summons = /стать[а-яё]*\s+80\b|ст\.?\s*80\b/i.test(responseText);
     return reply({ responseText, needsClarification, requestType: documents && summons ? 'combined' : documents ? 'documents' : summons ? 'summons' : needsClarification ? 'clarification' : 'unknown', conversation_id: result.conversation_id, metadata: result.metadata });
