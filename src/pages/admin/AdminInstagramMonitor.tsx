@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -135,6 +136,7 @@ const statusLabels: Record<string, string> = {
   processing: "Обработка",
   partial: "Неполные данные",
   available: "Результат Apify загружен",
+  not_collected: "Ещё не собраны",
 };
 const runKinds: Record<string, string> = {
   reels: "Сбор Reels",
@@ -245,6 +247,7 @@ export default function AdminInstagramMonitor() {
         reels_page: reelsPage,
         runs_page: runsPage,
       }),
+    placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   });
   const comments = useQuery({
@@ -1009,19 +1012,17 @@ export default function AdminInstagramMonitor() {
                   </p>
                 )}
                 {reel && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex justify-between gap-2 items-center text-base">
-                        {reel.shortcode}
-                        <Button
-                          variant="ghost"
-                          onClick={() => setSelected(null)}
-                        >
-                          Закрыть
-                        </Button>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
+                  <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
+                    <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto min-w-0">
+                    <DialogHeader>
+                      <DialogTitle className="break-all pr-6">
+                        Текст и комментарии · @{data.profiles.find((profile) => profile.id === reel.profile_id)?.username} · {reel.shortcode}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Тексты появляются после сбора. Обработка идёт в фоне; окно обновляется каждые 15 секунд.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 min-w-0">
                       <div>
                         <h2 className="font-medium mb-2">
                           Дословная расшифровка
@@ -1161,8 +1162,9 @@ export default function AdminInstagramMonitor() {
                           Комментарии ещё не собраны или недоступны.
                         </p>
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                    </DialogContent>
+                  </Dialog>
                 )}
               </TabsContent>
               <TabsContent value="runs" className="space-y-3">
