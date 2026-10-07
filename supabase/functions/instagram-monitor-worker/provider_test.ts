@@ -109,3 +109,42 @@ Deno.test("invalid provider settings cannot remove the price guard", async () =>
     "invalid_provider_options",
   );
 });
+
+Deno.test("coauthors are accepted but unrelated and missing owners are excluded", async () => {
+  const { belongsToProfile, withinRunWindow } = await import("./provider.ts");
+  assertEquals(
+    belongsToProfile({
+      ownerUsername: "expert",
+      coauthors: [{ username: "TARGET" }],
+    }, "target"),
+    true,
+  );
+  assertEquals(
+    belongsToProfile({ owner: { username: "target" } }, "target"),
+    true,
+  );
+  assertEquals(
+    belongsToProfile({ coauthorProducers: [{ username: "target" }] }, "target"),
+    true,
+  );
+  assertEquals(belongsToProfile({ ownerUsername: "other" }, "target"), false);
+  assertEquals(belongsToProfile({}, "target"), false);
+  const window = {
+    ...options,
+    window_start: "2026-10-05T21:00:00Z",
+    window_end: "2026-10-06T21:00:00Z",
+  };
+  assertEquals(
+    withinRunWindow({ timestamp: window.window_start }, window),
+    true,
+  );
+  assertEquals(
+    withinRunWindow({ timestamp: window.window_end }, window),
+    false,
+  );
+  assertEquals(withinRunWindow({ timestamp: "invalid" }, window), false);
+  assertEquals(
+    (workspaceInput("reels", "target", window) as { onlyPostsNewerThan?: string }).onlyPostsNewerThan,
+    window.window_start,
+  );
+});

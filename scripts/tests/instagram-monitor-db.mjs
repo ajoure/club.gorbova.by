@@ -106,4 +106,20 @@ for(let i=0;i<2;i++) await db.exec(`INSERT INTO instagram_monitor_comments(reel_
 assert.equal(Number((await one("SELECT count(*) n FROM instagram_monitor_comments")).n),1,'crash replay of imported page cannot duplicate comments');
 assert.equal(Number((await one("SELECT import_offset FROM instagram_monitor_runs LIMIT 1")).import_offset),0);
 console.log('PASS: daily all profiles, concurrent/daily dedupe, manual refresh, budget preflight, private RPC and free defaults');
+await db.exec(fs.readFileSync(new URL('../../supabase/migrations/20261007081532_instagram_calendar_schedule.sql',import.meta.url),'utf8'));
+await db.exec("TRUNCATE instagram_monitor_runs; UPDATE instagram_monitor_settings SET schedule_time='00:00',last_schedule_date=null,period='previous_day'");
+assert.equal(Number((await one("SELECT instagram_monitor_queue_profiles(false) n")).n),2,'calendar queues all profiles');
+const window=(await one("SELECT request_options FROM instagram_monitor_runs LIMIT 1")).request_options;
+assert.equal(window.period,'previous_day');
+assert.equal(Date.parse(window.window_end)-Date.parse(window.window_start),86400000,'Minsk local day UTC bounds');
+await db.exec("UPDATE instagram_monitor_runs SET status='succeeded'");
+assert.equal(Number((await one("SELECT instagram_monitor_queue_profiles(false) n")).n),0,'completed daily jobs never repeat same calendar date');
+assert.equal(Number((await one("SELECT instagram_monitor_queue_profiles(true) n")).n),2,'manual bypasses schedule with active dedupe');
+await db.exec("UPDATE instagram_monitor_runs SET status='succeeded'; UPDATE instagram_monitor_settings SET last_schedule_date=null,schedule_time='23:59'");
+if ((await one("SELECT (clock_timestamp() AT TIME ZONE 'Europe/Minsk')::time < '23:59'::time AS early")).early)
+ assert.equal(Number((await one("SELECT instagram_monitor_queue_profiles(false) n")).n),0,'does not enqueue before selected local time');
+assert.equal((await one("SELECT has_function_privilege('authenticated','public.instagram_monitor_profile_status()','EXECUTE') ok")).ok,false);
+assert.equal((await query("SELECT * FROM instagram_monitor_profile_status()")).length,2);
+assert.equal(Number((await one("SELECT extract(epoch FROM ((timestamp '2026-03-30' AT TIME ZONE 'Europe/Warsaw')-(timestamp '2026-03-29' AT TIME ZONE 'Europe/Warsaw'))) seconds")).seconds), 82800, 'calendar window respects DST');
+console.log('PASS: calendar time, day dedupe, UTC window, DST and private status RPC');
 await db.close();

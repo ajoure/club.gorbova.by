@@ -188,13 +188,13 @@ Deno.serve(async (req) => {
       if (body.profile_id) reelQuery.eq("profile_id", uuid(body.profile_id));
       const query = searchText(body.search);
       if (query) reelQuery.ilike("caption", `%${query}%`);
-      const [s, p, r, v, budget] = await Promise.all([
+      const [s, p, r, v, budget, profileStatus] = await Promise.all([
         client.from("instagram_monitor_settings").select("*").single(),
         allRows(() =>
           client.from("instagram_monitor_profiles").select("*").order("id")
         ),
         client.from("instagram_monitor_runs").select(
-          "id,kind,status,created_at,cost_usd,error_code,provider_run_id,profile_id,reel_id,import_offset,reel:instagram_monitor_reels(shortcode,profile_id)",
+          "id,kind,status,created_at,cost_usd,error_code,provider_run_id,profile_id,reel_id,import_offset,imported_reels,reel:instagram_monitor_reels(shortcode,profile_id)",
           { count: "exact" },
         ).order("created_at", { ascending: false }).order("id").range(
           runPage * 20,
@@ -213,7 +213,9 @@ Deno.serve(async (req) => {
             }-01`,
           ).order("id")
         ),
+        client.rpc("instagram_monitor_profile_status"),
       ]);
+      const statuses = checked(profileStatus);
       const settings = checked(s);
       result = {
         ...settings,
@@ -221,7 +223,10 @@ Deno.serve(async (req) => {
         enabled: settings.enabled &&
           (await apifyConnection(client)).enabled === true,
         ai_connected: !!Deno.env.get("LOVABLE_API_KEY"),
-        profiles: p,
+        profiles: p.map((profile: any) => ({
+          ...profile,
+          ...statuses.find((x: any) => x.profile_id === profile.id),
+        })),
         runs: checked(r),
         reels: checked(v),
         reels_total: v.count || 0,
@@ -253,7 +258,7 @@ Deno.serve(async (req) => {
         }).eq("id", uuid(body.profile_id)).select("id"),
       );
     } else if (action === "settings") {
-      const update: Record<string, boolean | number> = {};
+      const update: Record<string, boolean | number | string> = {};
       for (const key of ["auto_monitor", "include_replies"]) {
         if (key in body) {
           if (typeof body[key] !== "boolean") {
@@ -277,6 +282,18 @@ Deno.serve(async (req) => {
           update[key] = body[key];
         }
       }
+      for (const key of ["schedule_time", "timezone", "period"]) {
+        if (!(key in body)) continue;
+        const value = body[key];
+        const valid = typeof value === "string" &&
+          (key === "schedule_time"
+            ? /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value)
+            : key === "timezone"
+            ? ["Europe/Minsk", "Europe/Warsaw", "UTC"].includes(value)
+            : ["previous_day", "recent"].includes(value));
+        if (!valid) throw new Error("invalid_setting");
+        update[key] = value;
+      }
       if ("enabled" in body) throw new Error("invalid_setting");
       result = checked(
         await client.from("instagram_monitor_settings").update(update).eq(
@@ -295,7 +312,8 @@ Deno.serve(async (req) => {
             : "queue_failed",
         );
       }
-      result = { queued: queued.data };
+      const kick = await client.rpc("invoke_instagram_monitor_worker");
+      result = { queued: queued.data, worker_notified: !kick.error };
     } else if (action === "export_page") {
       const entity = body.entity;
       if (!EXPORT_ENTITIES.includes(entity)) throw new Error("invalid_entity");
@@ -352,7 +370,8 @@ Deno.serve(async (req) => {
           ) || "queue_failed",
         );
       }
-      result = { id: queued.data };
+      const kick = await client.rpc("invoke_instagram_monitor_worker");
+      result = { id: queued.data, worker_notified: !kick.error };
     } else if (action === "video") {
       const reel = checked(
         await client.from("instagram_monitor_reels").select("storage_path").eq(

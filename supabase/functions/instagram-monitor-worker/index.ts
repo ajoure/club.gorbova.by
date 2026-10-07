@@ -10,7 +10,13 @@ import {
   transcribeAndSummarize,
 } from "../_shared/transcribe-audio.ts";
 
-import { coverageReason, datasetPage, startWorkspaceRun } from "./provider.ts";
+import {
+  belongsToProfile,
+  coverageReason,
+  datasetPage,
+  startWorkspaceRun,
+  withinRunWindow,
+} from "./provider.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -96,9 +102,13 @@ async function importReels(job: any, items: any[], token: string) {
       job.profile_id,
     ).single(),
   );
+  let imported = 0;
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
-    if (String(item.ownerUsername || "").toLowerCase() !== profile.username) {
+    if (
+      !belongsToProfile(item, profile.username) ||
+      !withinRunWindow(item, job.request_options || {})
+    ) {
       continue;
     }
     const postUrl = instagramPostUrl(item.url);
@@ -143,7 +153,10 @@ async function importReels(job: any, items: any[], token: string) {
           "id,storage_path",
         ).single(),
       );}
-    if (!reel.storage_path) await enqueue("media", job.profile_id, reel.id);
+    imported++;
+    if (!reel.storage_path && (item.downloadedVideo || item.videoUrl)) {
+      await enqueue("media", job.profile_id, reel.id);
+    }
     const count = checked(
       await client.from("instagram_monitor_runs").select("id").eq(
         "kind",
@@ -164,6 +177,7 @@ async function importReels(job: any, items: any[], token: string) {
       last_checked_at: new Date().toISOString(),
     }).eq("id", job.profile_id),
   );
+  return imported;
 }
 async function importComments(
   job: any,
@@ -274,11 +288,14 @@ async function processJob(job: any, owner: string) {
         return;
       }
       try {
-        const options = checked(
-          await client.from("instagram_monitor_settings").select(
-            "reels_per_run,run_timeout_seconds,include_replies,max_run_usd",
-          ).single(),
-        );
+        const options = {
+          ...(job.request_options || {}),
+          ...checked(
+            await client.from("instagram_monitor_settings").select(
+              "reels_per_run,run_timeout_seconds,include_replies,max_run_usd",
+            ).single(),
+          ),
+        };
         const updated = checked(
           await client.from("instagram_monitor_runs").update({
             request_options: options,
@@ -329,11 +346,14 @@ async function processJob(job: any, owner: string) {
     const offset = Number(job.import_offset || 0);
     const items = await datasetPage(token, run.defaultDatasetId, offset);
     const complete = items.length < 50;
-    if (job.kind === "reels") await importReels(job, items, token);
-    else await importComments(job, items, run, complete);
+    const imported = job.kind === "reels"
+      ? await importReels(job, items, token)
+      : 0;
+    if (job.kind !== "reels") await importComments(job, items, run, complete);
     const progress = checked(
       await client.from("instagram_monitor_runs").update({
         import_offset: offset + items.length,
+        imported_reels: Number(job.imported_reels || 0) + imported,
       }).eq("id", job.id).eq("lease_owner", owner).gt(
         "lease_expires_at",
         new Date().toISOString(),
@@ -450,7 +470,11 @@ async function tick() {
   let job: any;
   const owner = crypto.randomUUID();
   try {
-    await autoQueue();
+    try {
+      await autoQueue();
+    } catch (e) {
+      console.warn("[instagram-monitor-autoqueue]", { code: safeCode(e) });
+    }
     const jobs = checked(
       await client.rpc("instagram_monitor_claim", { _owner: owner }),
     );

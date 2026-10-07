@@ -34,6 +34,10 @@ interface Profile {
   username: string;
   enabled: boolean;
   last_checked_at: string | null;
+  latest_status: string | null;
+  latest_error: string | null;
+  imported_reels: number | null;
+  reels_total: number;
 }
 interface Run {
   id: string;
@@ -79,6 +83,10 @@ interface Snapshot {
   ai_connected: boolean;
   enabled: boolean;
   auto_monitor: boolean;
+  schedule_time: string;
+  timezone: string;
+  period: string;
+  last_schedule_date: string | null;
   monthly_limit_usd: number;
   reserved_usd: number;
   actual_usd: number;
@@ -124,7 +132,7 @@ const statusLabels: Record<string, string> = {
   unknown: "Нужна проверка запуска",
   skipped: "Пропущено",
   pending: "Ожидает расшифровки",
-  processing: "Расшифровка",
+  processing: "Обработка",
   partial: "Неполные данные",
   available: "Результат Apify загружен",
 };
@@ -170,15 +178,19 @@ const coverageLabels: Record<string, string> = {
     "Часть комментариев недоступна или относится к платным ответам в ветках.",
   importing: "Продолжается импорт результата Apify.",
 };
-function InstagramPager(
-  { name, page, total, size, change }: {
-    name: string;
-    page: number;
-    total: number;
-    size: number;
-    change: (value: number) => void;
-  },
-) {
+function InstagramPager({
+  name,
+  page,
+  total,
+  size,
+  change,
+}: {
+  name: string;
+  page: number;
+  total: number;
+  size: number;
+  change: (value: number) => void;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
       <Button
@@ -190,10 +202,8 @@ function InstagramPager(
         Назад
       </Button>
       <span>
-        {total ? Math.min(page * size + 1, total) : 0}–{Math.min(
-          (page + 1) * size,
-          total,
-        )} из {total}
+        {total ? Math.min(page * size + 1, total) : 0}–
+        {Math.min((page + 1) * size, total)} из {total}
       </span>
       <Button
         variant="outline"
@@ -251,24 +261,45 @@ export default function AdminInstagramMonitor() {
     enabled: !!selected,
   });
   const mutation = useMutation({
-    mutationFn: (
-      { action, ...values }: { action: string; [key: string]: unknown },
-    ) => api<unknown>(action, values),
-    onSuccess: () => {
+    mutationFn: ({
+      action,
+      ...values
+    }: {
+      action: string;
+      [key: string]: unknown;
+    }) => api<{ queued?: number; worker_notified?: boolean }>(action, values),
+    onSuccess: (result, variables) => {
       client.invalidateQueries({ queryKey: ["instagram-monitor"] });
       client.invalidateQueries({ queryKey: ["instagram-monitor-comments"] });
-      toast.success("Изменения сохранены");
+      if (
+        ["collect", "collect_all", "collect_comments", "transcribe"].includes(
+          variables.action,
+        )
+      ) {
+        toast.success(
+          variables.action === "collect_all"
+            ? `Поставлено в очередь: ${
+              result.queued || 0
+            }. Прогресс — во вкладке «Запуски».`
+            : "Запрос в очереди. Прогресс — во вкладке «Запуски».",
+        );
+        if (result.worker_notified === false) {
+          toast.info("Обработка начнётся на следующей минуте.");
+        }
+      } else toast.success("Изменения сохранены");
     },
     onError: (error) => toast.error(error.message),
   });
   const downloading = useMutation({
-    mutationFn: async (
-      { format, entity, reelId }: {
-        format: "csv" | "xlsx";
-        entity?: string;
-        reelId?: string;
-      },
-    ) => {
+    mutationFn: async ({
+      format,
+      entity,
+      reelId,
+    }: {
+      format: "csv" | "xlsx";
+      entity?: string;
+      reelId?: string;
+    }) => {
       exportCancel.current = false;
       setExportProgress(0);
       const entities = entity ? [entity] : instagramExportEntities;
@@ -301,21 +332,19 @@ export default function AdminInstagramMonitor() {
           ...new Set(Object.values(exported).flatMap((value) => value.headers)),
         ];
         const rows = Object.entries(exported).flatMap(([key, value]) =>
-          value.rows.map(
-            (row) => [
-              instagramExportLabels[key as keyof typeof instagramExportLabels],
-              ...headers.map((header) => {
-                const index = value.headers.indexOf(header);
-                return index < 0 ? "" : row[index];
-              }),
-            ],
-          )
+          value.rows.map((row) => [
+            instagramExportLabels[key as keyof typeof instagramExportLabels],
+            ...headers.map((header) => {
+              const index = value.headers.indexOf(header);
+              return index < 0 ? "" : row[index];
+            }),
+          ])
         );
         saveInstagramFile(
-          new Blob([
-            "\uFEFF",
-            instagramExportCsv(["Тип данных", ...headers], rows),
-          ], { type: "text/csv;charset=utf-8" }),
+          new Blob(
+            ["\uFEFF", instagramExportCsv(["Тип данных", ...headers], rows)],
+            { type: "text/csv;charset=utf-8" },
+          ),
           "instagram-workspace.csv",
         );
       }
@@ -339,10 +368,13 @@ export default function AdminInstagramMonitor() {
           signal: controller.signal,
         });
         const maxBytes = 30 * 1024 * 1024;
-        const contentType = response.headers.get("content-type")?.split(";")[0]
+        const contentType = response.headers
+          .get("content-type")
+          ?.split(";")[0]
           .trim();
         if (
-          !response.ok || contentType !== "video/mp4" ||
+          !response.ok ||
+          contentType !== "video/mp4" ||
           Number(response.headers.get("content-length")) > maxBytes
         ) {
           controller.abort();
@@ -397,7 +429,8 @@ export default function AdminInstagramMonitor() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold flex items-center gap-2">
-              <Instagram className="h-6 w-6 shrink-0" />Мониторинг Instagram
+              <Instagram className="h-6 w-6 shrink-0" />
+              Мониторинг Instagram
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               Reels, вопросы аудитории и материалы для своих видео
@@ -408,12 +441,14 @@ export default function AdminInstagramMonitor() {
             onClick={() => snapshot.refetch()}
             disabled={snapshot.isFetching}
           >
-            <RefreshCw className="mr-2 h-4 w-4" />Обновить
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Обновить
           </Button>
         </div>
         {snapshot.isLoading && (
           <div role="status" className="flex gap-2">
-            <Loader2 className="animate-spin h-5 w-5" />Загрузка мониторинга…
+            <Loader2 className="animate-spin h-5 w-5" />
+            Загрузка мониторинга…
           </div>
         )}
         {snapshot.isError && (
@@ -480,8 +515,10 @@ export default function AdminInstagramMonitor() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Раз в 24 часа проверяем все включённые страницы по очереди.
-                  При исчерпании бюджета сбор останавливается.
+                  Все включённые страницы собираются по очереди. Один профиль
+                  может занимать несколько минут. Состояние обновляется каждые
+                  15 секунд; результаты появляются во вкладке Reels. При
+                  исчерпании бюджета сбор останавливается.
                 </p>
                 {canManage && (
                   <div className="flex flex-wrap gap-3 items-end">
@@ -494,10 +531,70 @@ export default function AdminInstagramMonitor() {
                             action: "settings",
                             auto_monitor: value,
                           })}
-                      />Ежедневно
+                      />
+                      Ежедневно
                     </Label>
                     <Label className="space-y-1">
-                      Роликов за сбор<Input
+                      Время ежедневного запуска
+                      <Input
+                        aria-label="Время ежедневного запуска"
+                        type="time"
+                        defaultValue={data.schedule_time}
+                        key={data.schedule_time}
+                        disabled={busy}
+                        onBlur={(event) => {
+                          if (
+                            event.target.value &&
+                            event.target.value !== data.schedule_time
+                          ) {
+                            mutation.mutate({
+                              action: "settings",
+                              schedule_time: event.target.value,
+                            });
+                          }
+                        }}
+                      />
+                    </Label>
+                    <Label className="space-y-1">
+                      Часовой пояс
+                      <select
+                        aria-label="Часовой пояс"
+                        className="h-10 w-full rounded-md border bg-background px-3"
+                        value={data.timezone}
+                        disabled={busy}
+                        onChange={(e) =>
+                          mutation.mutate({
+                            action: "settings",
+                            timezone: e.target.value,
+                          })}
+                      >
+                        <option value="Europe/Minsk">Минск (UTC+3)</option>
+                        <option value="Europe/Warsaw">Варшава</option>
+                        <option value="UTC">UTC</option>
+                      </select>
+                    </Label>
+                    <Label className="space-y-1">
+                      Период по расписанию
+                      <select
+                        aria-label="Период по расписанию"
+                        className="h-10 w-full rounded-md border bg-background px-3"
+                        value={data.period}
+                        disabled={busy}
+                        onChange={(e) =>
+                          mutation.mutate({
+                            action: "settings",
+                            period: e.target.value,
+                          })}
+                      >
+                        <option value="previous_day">
+                          Предыдущий календарный день
+                        </option>
+                        <option value="recent">Последние ролики</option>
+                      </select>
+                    </Label>
+                    <Label className="space-y-1">
+                      Роликов за сбор
+                      <Input
                         aria-label="Роликов за сбор"
                         type="number"
                         min={1}
@@ -516,7 +613,8 @@ export default function AdminInstagramMonitor() {
                       />
                     </Label>
                     <Label className="space-y-1">
-                      Таймаут, секунд<Input
+                      Таймаут, секунд
+                      <Input
                         aria-label="Таймаут, секунд"
                         type="number"
                         min={60}
@@ -549,10 +647,20 @@ export default function AdminInstagramMonitor() {
                             action: "settings",
                             include_replies: value,
                           })}
-                      />Ответы в ветках — платная возможность Apify
+                      />
+                      Ответы в ветках — платная возможность Apify
                     </Label>
                   </div>
                 )}
+                <p className="text-sm text-muted-foreground">
+                  {data.auto_monitor
+                    ? `Расписание включено: ежедневно в ${data.schedule_time}, ${data.timezone}.`
+                    : "Расписание выключено."} Последняя дата расписания:{" "}
+                  {data.last_schedule_date || "ещё не запускалось"}. Ручная
+                  кнопка собирает последние ролики независимо от периода
+                  расписания. Лимит «Роликов за сбор» ограничивает объём одного
+                  профиля, в том числе за предыдущий день.
+                </p>
                 <p className="text-xs text-muted-foreground">
                   Ответы в ветках на бесплатном тарифе Apify недоступны. Платный
                   тариф здесь не подключается. Счётчик Instagram может включать
@@ -622,9 +730,12 @@ export default function AdminInstagramMonitor() {
                         className="flex flex-wrap gap-2"
                         onSubmit={(event) => {
                           event.preventDefault();
-                          mutation.mutate({ action: "add_profile", username }, {
-                            onSuccess: () => setUsername(""),
-                          });
+                          mutation.mutate(
+                            { action: "add_profile", username },
+                            {
+                              onSuccess: () => setUsername(""),
+                            },
+                          );
                         }}
                       >
                         <Label htmlFor="instagram-profile" className="sr-only">
@@ -657,61 +768,74 @@ export default function AdminInstagramMonitor() {
                         Добавьте публичный профиль Катерины или конкурента.
                       </p>
                     )}
-                    {filteredProfiles.slice(
-                      profilesPage * 20,
-                      profilesPage * 20 + 20,
-                    ).map((profile) => (
-                      <div
-                        key={profile.id}
-                        className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-3"
-                      >
-                        <div className="min-w-0">
-                          <a
-                            className="font-medium break-all hover:underline"
-                            href={`https://www.instagram.com/${profile.username}/`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            @{profile.username}
-                          </a>
-                          <p className="text-xs text-muted-foreground">
-                            Последняя проверка: {profile.last_checked_at
-                              ? new Date(profile.last_checked_at)
-                                .toLocaleString("ru-RU")
-                              : "ещё не запускалась"}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2 items-center">
-                          {canManage && (
-                            <>
-                              <Label className="flex gap-2 items-center">
-                                <Switch
-                                  checked={profile.enabled}
-                                  disabled={busy}
-                                  onCheckedChange={(enabled) =>
+                    {filteredProfiles
+                      .slice(profilesPage * 20, profilesPage * 20 + 20)
+                      .map((profile) => (
+                        <div
+                          key={profile.id}
+                          className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-3"
+                        >
+                          <div className="min-w-0">
+                            <a
+                              className="font-medium break-all hover:underline"
+                              href={`https://www.instagram.com/${profile.username}/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              @{profile.username}
+                            </a>
+                            <p className="text-xs text-muted-foreground">
+                              {profile.latest_status
+                                ? `${
+                                  label(profile.latest_status)
+                                } · Обработано в последнем сборе: ${
+                                  profile.imported_reels || 0
+                                }. `
+                                : ""}
+                              Сохранено роликов:{" "}
+                              {profile.reels_total || 0}. Последняя проверка:
+                              {" "}
+                              {profile.last_checked_at
+                                ? new Date(
+                                  profile.last_checked_at,
+                                ).toLocaleString("ru-RU")
+                                : "ещё не запускалась"}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2 items-center">
+                            {canManage && (
+                              <>
+                                <Label className="flex gap-2 items-center">
+                                  <Switch
+                                    checked={profile.enabled}
+                                    disabled={busy}
+                                    onCheckedChange={(enabled) =>
+                                      mutation.mutate({
+                                        action: "profile_enabled",
+                                        profile_id: profile.id,
+                                        enabled,
+                                      })}
+                                  />
+                                  Включён
+                                </Label>
+                                <Button
+                                  disabled={busy ||
+                                    !data.connected ||
+                                    !data.enabled ||
+                                    !profile.enabled}
+                                  onClick={() =>
                                     mutation.mutate({
-                                      action: "profile_enabled",
+                                      action: "collect",
                                       profile_id: profile.id,
-                                      enabled,
                                     })}
-                                />Включён
-                              </Label>
-                              <Button
-                                disabled={busy || !data.connected ||
-                                  !data.enabled || !profile.enabled}
-                                onClick={() =>
-                                  mutation.mutate({
-                                    action: "collect",
-                                    profile_id: profile.id,
-                                  })}
-                              >
-                                Собрать Reels
-                              </Button>
-                            </>
-                          )}
+                                >
+                                  Собрать Reels
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
                     <InstagramPager
                       name="Страницы"
                       page={profilesPage}
@@ -752,7 +876,9 @@ export default function AdminInstagramMonitor() {
                   >
                     <option value="">Все страницы</option>
                     {data.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>@{p.username}</option>
+                      <option key={p.id} value={p.id}>
+                        @{p.username}
+                      </option>
                     ))}
                   </select>
                   <Input
@@ -773,15 +899,17 @@ export default function AdminInstagramMonitor() {
                   onClick={() =>
                     downloading.mutate({ format: "csv", entity: "reels" })}
                 >
-                  <Download className="mr-2 h-4 w-4" />Выгрузить ролики CSV
+                  <Download className="mr-2 h-4 w-4" />
+                  Выгрузить ролики CSV
                 </Button>
                 <div className="grid gap-3 lg:grid-cols-2">
                   {data.reels.map((item) => (
                     <Card key={item.id}>
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base break-all">
-                          @{data.profiles.find((profile) =>
-                            profile.id === item.profile_id
+                          @
+                          {data.profiles.find(
+                            (profile) => profile.id === item.profile_id,
                           )?.username} · {item.shortcode}
                         </CardTitle>
                       </CardHeader>
@@ -833,7 +961,8 @@ export default function AdminInstagramMonitor() {
                               disabled={downloadVideo.isPending}
                               onClick={() => downloadVideo.mutate(item.id)}
                             >
-                              <Download className="mr-2 h-4 w-4" />Скачать MP4
+                              <Download className="mr-2 h-4 w-4" />
+                              Скачать MP4
                             </Button>
                           )}
                           <Button variant="ghost" asChild>
@@ -842,7 +971,8 @@ export default function AdminInstagramMonitor() {
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              <ExternalLink className="h-4 w-4 mr-2" />Instagram
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              Instagram
                             </a>
                           </Button>
                         </div>
@@ -896,7 +1026,8 @@ export default function AdminInstagramMonitor() {
                         <p className="whitespace-pre-wrap break-words text-sm">
                           {reel.transcript || label(reel.transcript_status)}
                         </p>
-                        {canManage && reel.storage_path &&
+                        {canManage &&
+                          reel.storage_path &&
                           ["error", "failed", "pending"].includes(
                             reel.transcript_status,
                           ) && (

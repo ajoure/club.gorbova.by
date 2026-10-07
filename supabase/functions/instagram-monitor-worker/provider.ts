@@ -5,6 +5,8 @@ export interface WorkspaceOptions {
   run_timeout_seconds: number;
   include_replies: boolean;
   max_run_usd: number;
+  window_start?: string;
+  window_end?: string;
 }
 export function workspaceInput(
   kind: string,
@@ -18,6 +20,9 @@ export function workspaceInput(
       includeDownloadedVideo: true,
       includeTranscript: false,
       skipPinnedPosts: true,
+      ...(options.window_start
+        ? { onlyPostsNewerThan: options.window_start }
+        : {}),
     }
     : {
       directUrls: [source],
@@ -79,4 +84,26 @@ export function coverageReason(
     return replies ? "instagram_inaccessible" : "replies_not_requested";
   }
   return "provider_finished";
+}
+
+// Require a real ownership signal; a requested profile is not sufficient evidence.
+export function belongsToProfile(item: any, username: string): boolean {
+  const authors = [
+    item.ownerUsername,
+    item.owner?.username,
+    ...[item.coauthors, item.coauthorProducers].flatMap((xs) =>
+      Array.isArray(xs)
+        ? xs.map((x) => typeof x === "string" ? x : x?.username)
+        : []
+    ),
+  ];
+  return authors.some((name) =>
+    typeof name === "string" && name.toLowerCase() === username.toLowerCase()
+  );
+}
+export function withinRunWindow(item: any, options: WorkspaceOptions): boolean {
+  if (!options.window_start) return true;
+  const at = Date.parse(String(item.timestamp));
+  return Number.isFinite(at) && at >= Date.parse(options.window_start) &&
+    (!options.window_end || at < Date.parse(options.window_end));
 }
