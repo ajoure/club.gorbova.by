@@ -17,7 +17,7 @@ const decree227 = /(?:[№N]\s*227\b|Указ[а-яё]*[^\n]{0,100}\b227\b)/iu;
 export function hasCurrentMnsCorpus(prompt: string, attachments: MnsAttachment[], queryFailed: boolean): boolean {
   return !queryFailed && decree227.test(prompt || '') && attachments.length > 0
     && attachments.every(a => a.extraction_status === 'ready' && !!a.extracted_text?.trim())
-    && attachments.some(a => decree227.test(a.file_name) && decree227.test(a.extracted_text || ''));
+    && attachments.some(a => decree227.test(a.file_name.replace(/_/g, ' ')) && decree227.test(a.extracted_text || ''));
 }
 
 export function mnsCurrentLawInstruction(now = new Date()): string {

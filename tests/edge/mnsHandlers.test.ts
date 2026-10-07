@@ -53,6 +53,15 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
 }
 
 describe('canonical 107NK handler', () => {
+  it('loads the production decree filename with underscores before calling the model', async () => {
+    const file_name = 'Указ_Президента_Республики_Беларусь_от_06_06_2025_N_227_ред_от_17.docx';
+    const h = harness({ attachments: [{ ...attachment, file_name }] });
+    const response = await h.call();
+    expect(response.status).toBe(200);
+    expect((await response.json()).metadata).toMatchObject({ mns_law_validation: 'passed', knowledge_files_used: 1 });
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(h.fetch.mock.calls[0][1].body).messages[0].content).toContain(file_name);
+  });
   it('uses complete current author knowledge, manual text without digits and legal format', async () => {
     const h = harness(); const response = await h.call(); expect(response.status).toBe(200);
     const body = await response.json(); expect(body.metadata).toMatchObject({ scenario_code: '107NK', mns_law_validation: 'passed', knowledge_files_used: 1 });

@@ -36,4 +36,12 @@ describe('MNS law guard before persistence', () => {
     expect(await mnsCorpusFingerprint('Указ №227', null, [{ ...corpus[0], extracted_text: 'Изменённая редакция №227' }])).not.toBe(hash);
     expect(mnsCurrentLawInstruction(new Date('2026-10-07'))).toContain('2026-10-07');
   });
+  it.each([
+    ['Указ_Президента_Республики_Беларусь_от_06_06_2025_N_227_ред_от_17.docx', true],
+    ['Указ_N_227.docx', true],
+    ['Указ_N_2270.docx', false],
+    ['Указ_N_1227.docx', false],
+  ])('recognizes the decree filename without accepting a different number: %s', (file_name, expected) => {
+    expect(hasCurrentMnsCorpus('Применять Указ №227', [{ ...corpus[0], file_name }], false)).toBe(expected);
+  });
 });
