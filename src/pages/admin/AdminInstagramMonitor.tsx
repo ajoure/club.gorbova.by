@@ -228,6 +228,7 @@ export default function AdminInstagramMonitor() {
   const [profileSearch, setProfileSearch] = useState("");
   const [profilesPage, setProfilesPage] = useState(0);
   const [profileFilter, setProfileFilter] = useState("");
+  const [activeTab, setActiveTab] = useState("profiles");
   const [search, setSearch] = useState("");
   const [reelsPage, setReelsPage] = useState(0);
   const [runsPage, setRunsPage] = useState(0);
@@ -589,7 +590,7 @@ export default function AdminInstagramMonitor() {
                           })}
                       >
                         <option value="previous_day">
-                          Предыдущий календарный день
+                          За предыдущий день
                         </option>
                         <option value="recent">Последние ролики</option>
                       </select>
@@ -713,7 +714,7 @@ export default function AdminInstagramMonitor() {
                 )}
               </CardContent>
             </Card>
-            <Tabs defaultValue="profiles">
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="flex h-auto flex-wrap justify-start">
                 <TabsTrigger value="profiles">Профили</TabsTrigger>
                 <TabsTrigger value="reels">
