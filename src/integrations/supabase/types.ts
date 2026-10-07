@@ -10984,7 +10984,10 @@ export type Database = {
       }
       instagram_monitor_comments: {
         Row: {
+          created_at: string
           id: string
+          likes_count: number
+          parent_comment_id: string | null
           posted_at: string | null
           provider_comment_id: string
           reel_id: string
@@ -10992,7 +10995,10 @@ export type Database = {
           username: string
         }
         Insert: {
+          created_at?: string
           id?: string
+          likes_count?: number
+          parent_comment_id?: string | null
           posted_at?: string | null
           provider_comment_id: string
           reel_id: string
@@ -11000,7 +11006,10 @@ export type Database = {
           username?: string
         }
         Update: {
+          created_at?: string
           id?: string
+          likes_count?: number
+          parent_comment_id?: string | null
           posted_at?: string | null
           provider_comment_id?: string
           reel_id?: string
@@ -11045,8 +11054,10 @@ export type Database = {
         Row: {
           caption: string
           collected_comments_count: number
+          comments_checked_at: string | null
           comments_count: number
           comments_coverage: string
+          coverage_reason: string | null
           created_at: string
           duration_seconds: number | null
           id: string
@@ -11064,8 +11075,10 @@ export type Database = {
         Insert: {
           caption?: string
           collected_comments_count?: number
+          comments_checked_at?: string | null
           comments_count?: number
           comments_coverage?: string
+          coverage_reason?: string | null
           created_at?: string
           duration_seconds?: number | null
           id?: string
@@ -11083,8 +11096,10 @@ export type Database = {
         Update: {
           caption?: string
           collected_comments_count?: number
+          comments_checked_at?: string | null
           comments_count?: number
           comments_coverage?: string
+          coverage_reason?: string | null
           created_at?: string
           duration_seconds?: number | null
           id?: string
@@ -11117,6 +11132,8 @@ export type Database = {
           created_at: string
           error_code: string | null
           id: string
+          import_offset: number
+          imported_reels: number
           kind: string
           lease_expires_at: string | null
           lease_owner: string | null
@@ -11124,6 +11141,7 @@ export type Database = {
           profile_id: string | null
           provider_run_id: string | null
           reel_id: string | null
+          request_options: Json
           reserved_usd: number
           status: string
           updated_at: string
@@ -11135,6 +11153,8 @@ export type Database = {
           created_at?: string
           error_code?: string | null
           id?: string
+          import_offset?: number
+          imported_reels?: number
           kind: string
           lease_expires_at?: string | null
           lease_owner?: string | null
@@ -11142,6 +11162,7 @@ export type Database = {
           profile_id?: string | null
           provider_run_id?: string | null
           reel_id?: string | null
+          request_options?: Json
           reserved_usd?: number
           status?: string
           updated_at?: string
@@ -11153,6 +11174,8 @@ export type Database = {
           created_at?: string
           error_code?: string | null
           id?: string
+          import_offset?: number
+          imported_reels?: number
           kind?: string
           lease_expires_at?: string | null
           lease_owner?: string | null
@@ -11160,6 +11183,7 @@ export type Database = {
           profile_id?: string | null
           provider_run_id?: string | null
           reel_id?: string | null
+          request_options?: Json
           reserved_usd?: number
           status?: string
           updated_at?: string
@@ -11186,22 +11210,43 @@ export type Database = {
           auto_monitor: boolean
           enabled: boolean
           id: boolean
+          include_replies: boolean
+          last_schedule_date: string | null
           max_run_usd: number
           monthly_limit_usd: number
+          period: string
+          reels_per_run: number
+          run_timeout_seconds: number
+          schedule_time: string
+          timezone: string
         }
         Insert: {
           auto_monitor?: boolean
           enabled?: boolean
           id?: boolean
+          include_replies?: boolean
+          last_schedule_date?: string | null
           max_run_usd?: number
           monthly_limit_usd?: number
+          period?: string
+          reels_per_run?: number
+          run_timeout_seconds?: number
+          schedule_time?: string
+          timezone?: string
         }
         Update: {
           auto_monitor?: boolean
           enabled?: boolean
           id?: boolean
+          include_replies?: boolean
+          last_schedule_date?: string | null
           max_run_usd?: number
           monthly_limit_usd?: number
+          period?: string
+          reels_per_run?: number
+          run_timeout_seconds?: number
+          schedule_time?: string
+          timezone?: string
         }
         Relationships: []
       }
@@ -26845,6 +26890,8 @@ export type Database = {
           created_at: string
           error_code: string | null
           id: string
+          import_offset: number
+          imported_reels: number
           kind: string
           lease_expires_at: string | null
           lease_owner: string | null
@@ -26852,6 +26899,7 @@ export type Database = {
           profile_id: string | null
           provider_run_id: string | null
           reel_id: string | null
+          request_options: Json
           reserved_usd: number
           status: string
           updated_at: string
@@ -26877,6 +26925,20 @@ export type Database = {
           _status: string
         }
         Returns: boolean
+      }
+      instagram_monitor_profile_status: {
+        Args: never
+        Returns: {
+          imported_reels: number
+          latest_error: string
+          latest_status: string
+          profile_id: string
+          reels_total: number
+        }[]
+      }
+      instagram_monitor_queue_profiles: {
+        Args: { _force?: boolean }
+        Returns: number
       }
       instagram_monitor_reserve: {
         Args: { _id: string; _owner: string }
