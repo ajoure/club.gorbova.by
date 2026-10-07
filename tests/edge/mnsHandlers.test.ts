@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
-import * as law from '../../supabase/functions/_shared/mns-current-law';
+import * as law from '../../supabase/functions/gorbova-ai-chat/mns-current-law';
 import * as access from '../../supabase/functions/_shared/ai-access';
 import { persistAiChatExchange } from '../../supabase/functions/_shared/ai-chat-persistence';
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasCurrentMnsCorpus, mnsCorpusFingerprint, mnsCurrentLawInstruction, mnsOutputIsCurrent } from '../../supabase/functions/_shared/mns-current-law';
+import { hasCurrentMnsCorpus, mnsCorpusFingerprint, mnsCurrentLawInstruction, mnsOutputIsCurrent } from '../../supabase/functions/gorbova-ai-chat/mns-current-law';
 
 const corpus = [{ id: 'decree', file_name: 'Указ N 227 от 06.06.2025', extracted_text: 'Указ Президента Республики Беларусь №227', extraction_status: 'ready' }];
 describe('MNS law guard before persistence', () => {

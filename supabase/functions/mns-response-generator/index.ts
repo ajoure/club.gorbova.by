@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE, mnsReplyNeedsClarification } from '../_shared/mns-current-law.ts';
+import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE, mnsReplyNeedsClarification } from '../gorbova-ai-chat/mns-current-law.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

@@ -51,7 +51,8 @@ https://nalog.gov.by/news/33009/ . Номер на предоставленно�
 Lovable read-only ревизия завершена: `main:agent#00000013041139#ast:GYCKRCF2`;
 одна консолидированная сверка Codex: `main:agent#00000013041198#ast:F3K2ZM54`.
 Данные промпта и вложений не меняются. Миграции не нужны. Общий ai-access
-не меняется. Развернуть только `mns-response-generator` и `gorbova-ai-chat`.
+не меняется. Проверка закона находится в gorbova-ai-chat/mns-current-law.ts:
+она не изменяет область контрольной суммы опубликованного ЦБ21. Развернуть только `mns-response-generator` и `gorbova-ai-chat`.
 
 До execute: GitHub checks PASS, точный merged SHA, свободная каноническая
 очередь Lovable, отпечатки/число старых документов и авторской базы.
