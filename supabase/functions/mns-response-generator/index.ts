@@ -1,5 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MNS_SCENARIO_CODE, MNS_UNAVAILABLE, mnsReplyNeedsClarification } from '../gorbova-ai-chat/mns-current-law.ts';
+// Cloud packages only this directory and _shared. Legal validation stays
+// inside the canonical handler; the adapter consumes its verified outcome.
+const MNS_SCENARIO_CODE = '107NK';
+const MNS_UNAVAILABLE = 'Не удалось проверить актуальную инструкцию и базу законодательства для ответа МНС. Обратитесь к администратору; устаревший ответ не сформирован.';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,8 +67,14 @@ Deno.serve(async req => {
     if (!response.ok) return reply(result, response.status);
     if (result.blocked || result.metadata?.blocked) return reply({ error: result.content, code: 'mns_input_unreadable' }, 422);
     if (typeof result.content !== 'string' || !result.content.trim()) return reply({ error: 'ИИ не вернул ответ. Повторите запрос.' }, 502);
+    if (result.metadata?.mns_law_validation !== 'passed'
+      || result.metadata?.scenario_code !== MNS_SCENARIO_CODE
+      || result.metadata?.prompt_id !== prompts[0].id
+      || !['document', 'clarification'].includes(result.metadata?.mns_response_kind)) {
+      return reply({ error: MNS_UNAVAILABLE, code: 'mns_canonical_contract_unavailable' }, 503);
+    }
     const responseText = result.content;
-    const needsClarification = mnsReplyNeedsClarification(responseText);
+    const needsClarification = result.metadata.mns_response_kind === 'clarification';
     const documents = /стать[а-яё]*\s+79\b|ст\.?\s*79\b/i.test(responseText);
     const summons = /стать[а-яё]*\s+80\b|ст\.?\s*80\b/i.test(responseText);
     return reply({ responseText, needsClarification, requestType: documents && summons ? 'combined' : documents ? 'documents' : summons ? 'summons' : needsClarification ? 'clarification' : 'unknown', conversation_id: result.conversation_id, metadata: result.metadata });

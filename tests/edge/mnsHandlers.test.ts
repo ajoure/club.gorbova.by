@@ -33,10 +33,17 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
       return q;
     },
   };
+  const canonicalReply = {
+    content: 'В соответствии со статьёй 79 НК и Указом №227 сообщаем...',
+    conversation_id: '00000000-0000-4000-8000-000000000001',
+    metadata: { scenario_code: '107NK', prompt_id: 'current', mns_law_validation: 'passed',
+      mns_response_kind: law.mnsReplyNeedsClarification(options.upstreamBody?.content || '') ? 'clarification' : 'document' },
+    ...options.upstreamBody,
+  };
   const fetch = vi.fn(async (_url: string, _init: any) => options.adapter
-    ? Response.json(options.upstreamBody || { content: 'В соответствии со статьёй 79 НК и Указом №227 сообщаем...', conversation_id: '00000000-0000-4000-8000-000000000001', metadata: { mns_law_validation: 'passed' } }, { status: options.upstreamStatus || 200 })
+    ? Response.json((options.upstreamStatus || 200) >= 400 ? options.upstreamBody : canonicalReply, { status: options.upstreamStatus || 200 })
     : Response.json({ choices: [{ message: { content: options.output === undefined ? 'Согласно Указу №227 сообщаем...' : options.output } }] }));
-  const injected: Record<string, any> = { ...access, ...law, persistAiChatExchange, createClient: () => db, fetch,
+  const injected: Record<string, any> = { ...access, ...(options.adapter ? {} : law), persistAiChatExchange, createClient: () => db, fetch,
     resolveAiAccess: async () => ({ tier: 'full', is_admin: true }), isModeAllowed: () => ({ allowed: options.allowed !== false, reason: '107NK_not_in_tier' }) };
   const source = readFileSync(`supabase/functions/${options.adapter ? 'mns-response-generator' : 'gorbova-ai-chat'}/index.ts`, 'utf8').replace(/^import[^;]+;\s*/gm, '');
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
@@ -121,6 +128,11 @@ describe('legacy adapter routes every call to canonical 107NK', () => {
   it.each([401, 403, 429, 422, 503])('preserves canonical failure status/message without a successful draft: %i', async status => {
     const h = harness({ adapter: true, upstreamStatus: status, upstreamBody: { error: 'Содержательный отказ', code: 'specific' } });
     const response = await h.call(); expect(response.status).toBe(status); expect(await response.json()).toEqual({ error: 'Содержательный отказ', code: 'specific' });
+  });
+  it.each([null, {}, { scenario_code: 'other', prompt_id: 'current', mns_law_validation: 'passed', mns_response_kind: 'document' }, { scenario_code: '107NK', prompt_id: 'foreign', mns_law_validation: 'passed', mns_response_kind: 'document' }])('never releases an unverified or mismatched canonical outcome', async metadata => {
+    const h = harness({ adapter: true, upstreamBody: { content: 'Согласно Указу №227...', metadata } });
+    const response = await h.call(); expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: 'mns_canonical_contract_unavailable' });
   });
   it.each([{ prompts: [] }, { prompts: [{ ...prompt, id: 'one' }, { ...prompt, id: 'two' }] }])('fails closed when canonical scenario is missing or ambiguous', async ({ prompts }) => {
     const h = harness({ adapter: true, prompts }); expect((await h.call()).status).toBe(503); expect(h.fetch).not.toHaveBeenCalled();
