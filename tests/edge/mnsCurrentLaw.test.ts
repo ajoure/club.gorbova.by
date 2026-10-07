@@ -1,7 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { hasCurrentMnsCorpus, mnsCorpusFingerprint, mnsCurrentLawInstruction, mnsOutputIsCurrent } from '../../supabase/functions/gorbova-ai-chat/mns-current-law';
+import { hasCurrentMnsCorpus, mnsCorpusFingerprint, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsNumberedDecreeSources, mnsNumberedSourceInstruction, mnsCheckDecreeCitations } from '../../supabase/functions/gorbova-ai-chat/mns-current-law';
 
 const corpus = [{ id: 'decree', file_name: 'Указ N 227 от 06.06.2025', extracted_text: 'Указ Президента Республики Беларусь №227', extraction_status: 'ready' }];
+const unnumbered = mnsNumberedDecreeSources([{ ...corpus[0], extracted_text: 'Указ №227\nПОЛОЖЕНИЕ\nо порядке организации и проведения проверок\nГлава 4\nПроверка проводится на основании предписания.\nВ порядке, установленном частью девятой пункта 31 настоящего Положения.' }]);
+const numbered = mnsNumberedDecreeSources([{ ...corpus[0], extracted_text: 'Указ №227\n1. Установить порядок.\nПОЛОЖЕНИЕ\nо порядке организации и проведения проверок\n11. Требовать документы по вопросам проверки.\n12. Продолжение нормы.\n13. Другая норма.\n31. Проверка проводится на основании предписания.' }]);
+describe('MNS source paragraph citations', () => {
+  it('does not treat dates, chapters or cross-references as source labels', () => {
+    expect(unnumbered.decree.size + unnumbered.inspections.size).toBe(0);
+    expect(mnsNumberedSourceInstruction(unnumbered)).toContain('БЕЗ номеров пунктов');
+  });
+  it.each([
+    'Согласно пункту 11 Положения, утвержденного Указом №227, сообщаем...',
+    'Проверка по пункту 31 Положения.',
+    'По части девятой пункта 31 настоящего Положения.',
+    'Положения (пункт 31).',
+    'Пункты 11 и 31 Положения.',
+    'Пп. 11, 31 Положения.',
+    'Пункты 11–13 Положения.',
+    'Пункт **31** Положения.',
+    'П.\u00a031 Положения.',
+    'Пункт\u200b 31 Положения.',
+    'Указ №227 (пункт 31).',
+    'Пп.1.1 п.1 ст.107 НК, а согласно пункту 31 Положения проверка...',
+    'Согласно Положению. Пунктом 31 предусмотрено предписание.',
+    'Согласно Указу №227 сообщаем. В соответствии с п.31 необходимо предписание.',
+    'Пункт 31 Положения требует предписания, постановление суда отсутствует.',
+  ])('rejects an unverified decree/provision reference: %s', content => {
+    expect(mnsCheckDecreeCitations(content, unnumbered).status).toBe('rejected');
+  });
+  it.each([
+    'О рассмотрении запроса. Согласно Указу №227 сообщаем...',
+    'Пп.1.1 п.1 ст.107 НК РБ.',
+    'По подпункту 1.1 пункта 1 статьи 107 НК РБ. Согласно Указу №227 сообщаем...',
+    'Запрос №31 от 07.10.2026. Сумма 31 рубль.',
+    'Указ №227. Глава 31.',
+    'Пункт 31 Положения, утверждённого Указом №550.',
+    'Пункт 31 запроса налогового органа.',
+    'Согласно ст.107 НК. Пунктом 1 предусмотрено право. Указ №227.',
+    'Пункт 31 Положения, утверждённого постановлением Совета Министров №123.',
+  ])('keeps unrelated references and author documents usable: %s', content => {
+    expect(mnsCheckDecreeCitations(content, unnumbered).status).toBe('passed');
+  });
+  it('distinguishes the decree from its inspections provision and validates ranges', () => {
+    expect(mnsCheckDecreeCitations('Пункт 31 Положения.', numbered).status).toBe('passed');
+    expect(mnsCheckDecreeCitations('Пункт 31 Указа №227.', numbered).status).toBe('rejected');
+    expect(mnsCheckDecreeCitations('Пункты 11–13 Положения.', numbered).status).toBe('passed');
+    expect(mnsCheckDecreeCitations('Пункты 11–31 Положения.', numbered).status).toBe('rejected');
+    expect(mnsCheckDecreeCitations('Пункт 31 Положения о мониторингах.', numbered).status).toBe('rejected');
+    const ambiguous = { ...numbered, provisionsCount: 2 };
+    expect(mnsCheckDecreeCitations('Пункт 31 Положения.', ambiguous).status).toBe('rejected');
+    expect(mnsCheckDecreeCitations('Пункт 31 Положения о порядке организации и проведения проверок.', ambiguous).status).toBe('passed');
+  });
+});
 describe('MNS law guard before persistence', () => {
   it.each([
     'В соответствии с Указом №510 проверка проводится...',

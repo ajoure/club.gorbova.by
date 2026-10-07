@@ -1,4 +1,4 @@
-import { hasCurrentMnsCorpus, mnsReplyFollowsLaw, mnsReplyNeedsClarification, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsCorpusFingerprint, MNS_SCENARIO_CODE, MNS_LAW_BASELINE, MNS_UNAVAILABLE, MNS_REJECTED } from './mns-current-law.ts';
+import { hasCurrentMnsCorpus, mnsReplyFollowsLaw, mnsReplyNeedsClarification, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsCorpusFingerprint, mnsNumberedDecreeSources, mnsNumberedSourceInstruction, mnsCheckDecreeCitations, MNS_SCENARIO_CODE, MNS_LAW_BASELINE, MNS_UNAVAILABLE, MNS_REJECTED } from './mns-current-law.ts';
 import { persistAiChatExchange } from '../_shared/ai-chat-persistence.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
@@ -567,6 +567,7 @@ Deno.serve(async (req) => {
 
     // 8.1 Load and inject knowledge base from prompt attachments
     let knowledgeContext = '';
+    let mnsNumberedSources = mnsNumberedDecreeSources([]);
     if (promptData) {
       const { data: kbAttachments, error: kbError } = await serviceClient
         .from('ai_prompt_attachments')
@@ -583,6 +584,7 @@ Deno.serve(async (req) => {
         metadata.mns_law_baseline = MNS_LAW_BASELINE;
         metadata.mns_law_checked_on = new Date().toISOString().slice(0, 10);
         metadata.mns_corpus_sha256 = await mnsCorpusFingerprint(promptData.prompt_text, promptData.response_format, kbAttachments || []);
+        mnsNumberedSources = mnsNumberedDecreeSources(kbAttachments || []);
       }
       if (kbAttachments?.length) {
         const kbParts: string[] = [];
@@ -620,7 +622,7 @@ Deno.serve(async (req) => {
         systemPrompt += '\n\nФормат ответа (следуй этой структуре):\n' + JSON.stringify(promptData.response_format, null, 2);
       }
 
-      if (scenarioCode === MNS_SCENARIO_CODE) systemPrompt += mnsCurrentLawInstruction();
+      if (scenarioCode === MNS_SCENARIO_CODE) systemPrompt += mnsCurrentLawInstruction() + mnsNumberedSourceInstruction(mnsNumberedSources);
       else if (scenarioCode !== 'accounting_regulations') systemPrompt += ANTI_HALLUCINATION_SUFFIX;
 
       // Partial analysis mode for low quality in file scenarios
@@ -764,6 +766,14 @@ Deno.serve(async (req) => {
         });
         return new Response(JSON.stringify({ error: MNS_REJECTED, code: 'mns_law_validation_failed' }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
+      const citationCheck = mnsCheckDecreeCitations(assistantContent, mnsNumberedSources);
+      if (citationCheck.status !== 'passed') {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.mns_citation_rejected', {
+          prompt_id: promptData.id, corpus_sha256: metadata.mns_corpus_sha256, rejected_count: citationCheck.rejected.length,
+        });
+        return new Response(JSON.stringify({ error: 'Не удалось подтвердить номера пунктов в источниках. Непроверенный текст не выдан и не сохранён. Повторите запрос; ответ будет подготовлен без неподтверждённых номеров.', code: 'mns_unverified_citation' }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      metadata.mns_citation_check = { status: citationCheck.status, numbered_norms_available: citationCheck.numbered_norms_available, cited: citationCheck.cited };
       metadata.mns_law_validation = 'passed';
       metadata.mns_response_kind = mnsReplyNeedsClarification(assistantContent) ? 'clarification' : 'document';
     }
