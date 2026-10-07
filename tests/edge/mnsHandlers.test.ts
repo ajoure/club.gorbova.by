@@ -66,6 +66,10 @@ describe('canonical 107NK handler', () => {
   it.each([{ corpusError: true }, { attachments: [] }, { attachments: [{ ...attachment, extraction_status: 'truncated' }] }])('never calls model with unavailable corpus: %j', async options => {
     const h = harness(options); expect((await h.call()).status).toBe(503); expect(h.fetch).not.toHaveBeenCalled(); expect(h.saved).toHaveLength(0);
   });
+  it('rejects an ambiguous active 107NK even through the modern direct endpoint', async () => {
+    const h = harness({ prompts: [prompt, { ...prompt, id: 'duplicate' }] });
+    expect((await h.call()).status).toBe(503); expect(h.fetch).not.toHaveBeenCalled();
+  });
   it('retains original source text beyond the balance cap and restores it on follow-up', async () => {
     const text = 'Исходный запрос МНС ' + 'документы '.repeat(1000) + 'КОНЕЦ ИСХОДНОГО ЗАПРОСА';
     const h = harness(); const first = await (await h.call({ fileContents: text })).json();

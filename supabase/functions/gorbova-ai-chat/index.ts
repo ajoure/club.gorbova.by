@@ -408,6 +408,11 @@ Deno.serve(async (req) => {
     // Numeric density is a balance heuristic, not a legal-document quality test.
     let mnsHasPriorContext = false;
     if (scenarioCode === MNS_SCENARIO_CODE) {
+      const { data: currentPrompts, error: currentPromptError } = await serviceClient.from('ai_user_prompts').select('id')
+        .eq('code', MNS_SCENARIO_CODE).eq('is_active', true).eq('is_archived', false).eq('is_visible_in_chat', true);
+      if (currentPromptError || currentPrompts?.length !== 1 || currentPrompts[0].id !== promptData.id) {
+        return new Response(JSON.stringify({ error: MNS_UNAVAILABLE, code: 'mns_corpus_unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       if (typeof fileContents !== 'undefined' && typeof fileContents !== 'string') {
         return new Response(JSON.stringify({ error: 'Некорректный текст запроса МНС' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
