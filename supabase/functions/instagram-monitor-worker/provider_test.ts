@@ -144,7 +144,9 @@ Deno.test("coauthors are accepted but unrelated and missing owners are excluded"
   );
   assertEquals(withinRunWindow({ timestamp: "invalid" }, window), false);
   assertEquals(
-    (workspaceInput("reels", "target", window) as { onlyPostsNewerThan?: string }).onlyPostsNewerThan,
+    (workspaceInput("reels", "target", window) as {
+      onlyPostsNewerThan?: string;
+    }).onlyPostsNewerThan,
     window.window_start,
   );
 });
