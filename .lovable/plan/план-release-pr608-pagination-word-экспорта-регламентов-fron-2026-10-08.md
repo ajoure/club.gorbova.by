@@ -11,12 +11,21 @@
 
 Никаких изменений Auth, прав доступа, модели/промптов, истории чатов, данных, миграций, Edge Functions, секретов. Без новых пользователей, сообщений клиентам и платёжных действий.
 
+## Подтверждённое состояние публикации (на 2026-10-08)
+
+- Последний реальный Publish выполнен сегодня через интерфейс: «Publish changes» → «Updating project» → «Your website was updated».
+- Опубликованная версия: `a2e51db61c86a7b1227e83e9782b8dfead1fa2e0` (PR607, head `31d4450a…`), публичный чанк `index-TELcZs6s.js`, fingerprint 2026-10-08T10:37:46.710Z; проверены ПК и телефон.
+- Публикация `cb8c0507` (PR606) — более старая, уже не является текущей опубликованной версией.
+- Пропуск (Skip) ранее касался только прежнего tool approval до восстановления Preview и не отменяет последующую публикацию через интерфейс.
+- Статусы «Build unsuccessful / Preview out of date» у импортированных коммитов — история managed-сборок Preview; они не относятся к опубликованному frontend, факт публикации подтверждён публичным чанком и fingerprint.
+- PR608 не считается опубликованным до отдельного реального события Publish.
+
 ## Предусловия (read-only сверка перед execute)
 
 1. PR608 merged; зафиксировать exact merged SHA и сверить, что head = `b8f96cf29…`, чужих merge в main нет.
 2. Diff merged SHA против предыдущего main — ровно заявленные файлы (export, тест, release doc); любое расхождение → STOP.
 3. Все required GitHub checks PASS.
-4. Текущее состояние: последний реальный Publish = `a2e51db6…` (PR607), чанк `index-TELcZs6s.js`, fingerprint 2026-10-08T10:37:46.710Z. PR608 не считается опубликованным до реального события Publish.
+4. Точка отсчёта для сравнения и отката — опубликованная `a2e51db6` (чанк `index-TELcZs6s.js`).
 5. Security findings delta в scope: новых findings по файлам PR608 не ожидается; существующие старые findings (каталог от 2026-09-02, dependency follow-up proxy-addr / vitest-tinypool) не исправлять и не игнорировать — вне scope.
 
 ## Execute (только после отдельной команды с exact merged SHA)
@@ -37,9 +46,13 @@ STOP при: несовпадении exact merged SHA, чужих merge в main
 
 ## Rollback
 
-GitHub revert PR608 + Publish, возврат к a2e51db6 (чанк `index-TELcZs6s.js`) без изменений БД, функций, данных и истории.
+Только откат frontend PR608: GitHub revert-PR с изменениями PR608 + обычный Publish. Возврат к проверенной опубликованной версии `a2e51db6` (чанк `index-TELcZs6s.js`). Чужие изменения в main не откатывать. БД, функции, данные и история не затрагиваются.
 
 ## Технические детали
 
 - Изменения ограничены `src/utils/exportRegulation.ts` (параграфные свойства docx: `keepNext`, `keepLines`, `widowControl`, фильтрация пустых строк, цвет заголовков), `src/utils/exportRegulation.test.ts` и release-документом.
 - Никаких backend-артефактов: deploy functions, миграции, данные не входят в execute.
+
+## До команды на execute с exact merged SHA
+
+Ничего не менять: без кода, коммитов, миграций, изменений данных/Auth/functions, без deploy и без Publish. Повторную широкую ревизию не делать.
