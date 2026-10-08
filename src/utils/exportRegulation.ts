@@ -36,7 +36,8 @@ export function regulationDocument(content: string): Document {
   // Empty Markdown lines separate blocks; they are not blank Word paragraphs.
   // Otherwise a heading can bind to an empty paragraph rather than its text.
   const lines = regulationLines(content).filter(line => line.trim());
-  const approvalStart = lines.findLastIndex(line => /^#{1,3}\s+.*(?:Версия и утверждение|Утверждение)/i.test(line));
+  const approvalStart = lines.reduce((last, line, index) =>
+    /^#{1,3}\s+.*(?:Версия и утверждение|Утверждение)/i.test(line) ? index : last, -1);
   const compactApproval = approvalStart >= 0 && lines.length - approvalStart <= 12;
   const children = lines.map((line, index) => {
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
