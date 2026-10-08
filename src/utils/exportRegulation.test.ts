@@ -30,4 +30,19 @@ describe("Word regulation", () => {
     expect(xml).not.toContain("[ ]");
     expect(xml).not.toContain("[x]");
   });
+  it("keeps headings with content and a short approval block together without blank paragraphs", async () => {
+    const doc = regulationDocument("# Проект регламента\n\n## 1. Контроль\n\nПроверить документ\n\n## 10. Версия и утверждение\n\n- Версия: 1.0\n- Утверждаю:\n    Подпись\n    Дата");
+    const zip = unzipSync(new Uint8Array(await Packer.toBuffer(doc)));
+    const xml = strFromU8(zip["word/document.xml"]);
+    const paragraphs = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g)!;
+    expect(paragraphs).toHaveLength(8);
+    expect(paragraphs.slice(3, -1).every(p => p.includes("<w:keepNext"))).toBe(true);
+    expect(paragraphs[1]).toContain("<w:keepNext");
+    expect(paragraphs.every(p => p.includes("<w:keepLines"))).toBe(true);
+    const styles = strFromU8(zip["word/styles.xml"]);
+    for (const level of [1, 2, 3]) {
+      const heading = styles.match(new RegExp(`<w:style[^>]*w:styleId="Heading${level}"[\\s\\S]*?</w:style>`))![0];
+      expect(heading).toContain('w:color w:val="000000"');
+    }
+  });
 });

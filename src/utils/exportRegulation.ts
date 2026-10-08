@@ -33,21 +33,34 @@ export function regulationLines(content: string): string[] {
 }
 
 export function regulationDocument(content: string): Document {
-  const children = regulationLines(content).map(line => {
+  // Empty Markdown lines separate blocks; they are not blank Word paragraphs.
+  // Otherwise a heading can bind to an empty paragraph rather than its text.
+  const lines = regulationLines(content).filter(line => line.trim());
+  const approvalStart = lines.findLastIndex(line => /^#{1,3}\s+.*(?:Версия и утверждение|Утверждение)/i.test(line));
+  const compactApproval = approvalStart >= 0 && lines.length - approvalStart <= 12;
+  const children = lines.map((line, index) => {
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const text = heading?.[2] ?? bullet?.[1] ?? line;
     return new Paragraph({
       heading: heading ? [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3][heading[1].length - 1] : undefined,
       bullet: bullet ? { level: 0 } : undefined,
-      spacing: { after: 120 },
+      keepNext: Boolean(heading) || (compactApproval && index >= approvalStart && index < lines.length - 1),
+      keepLines: true,
+      widowControl: true,
+      spacing: { before: heading ? 180 : 0, after: 120 },
       children: text.split(/(\*\*[^*]+\*\*)/g).map(part => new TextRun({ text: part.startsWith("**") ? part.slice(2, -2) : part, bold: part.startsWith("**") })),
     });
   });
   return new Document({
     creator: "Gorbova AI",
     title: "Проект регламента бухгалтерии",
-    styles: { default: { document: { run: { font: "Calibri", size: 24 } } } },
+    styles: { default: {
+      document: { run: { font: "Calibri", size: 24, color: "000000" } },
+      heading1: { run: { color: "000000" }, paragraph: { keepNext: true, keepLines: true } },
+      heading2: { run: { color: "000000" }, paragraph: { keepNext: true, keepLines: true } },
+      heading3: { run: { color: "000000" }, paragraph: { keepNext: true, keepLines: true } },
+    } },
     sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } }, children }],
   });
 }
