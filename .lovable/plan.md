@@ -1,37 +1,45 @@
-План: read-only аудит доп. модулей 20-го потока «Ценный бухгалтер» (04.10.2026)
+# План: release PR608 — pagination Word-экспорта регламентов (frontend-only)
 
-Режим: только SELECT. Без изменений БД/кода/доступов, без deploy, Publish и сообщений.
+## Scope
 
-## Уже подтверждено чтением (предварительно)
+Только frontend Word export регламентов бухгалтерии (PR608, head `b8f96cf29`):
+- убрать пустые абзацы из экспорта;
+- `keepNext` для заголовков и короткого блока согласования (≤12 абзацев);
+- `keepLines` / `widowControl` для абзацев;
+- чёрные заголовки;
+- unit-тест и release-документ.
 
-- Курс CB20: product `3e43fb28-8322-41bc-bfee-714731bdc630`, корень обучения `2e5cbc7b-bbaf-4384-b894-bbd98d7f524e`, 5 тарифов. CB21 (`2b7bf6d4-…`, корень `4365e913-…`) исключён.
-- Доп. модули из offer_addons CB20 (product → корневой training_module):
-  - Производство `064dd768-…` → `a4a5102d-…`
-  - Грузо-/пассажироперевозки `64d9f812-…` → `8f71d4a8-…`
-  - Общепит `9187db54-…` → `841650a9-…`
-  - ПВТ `99f1f156-…` → `b1199440-…`
-  - Розница `abee24cd-…` → `1ede03b4-…`
-  - Маркетплейсы `d7effaf4-…` → `4c97d21c-…`
-  - Учёт у ИП `ea98d043-…` → `881d514f-…`
-  - Строительство `f833c846-…` → `b7bae7fd-…`
-  - Посредничество `aa11cb00-…0001` — **нет корня обучения** (сразу AMBIGUOUS/не доставляемый)
-- Сырые числа (до исключений): 59 пользователей с оплаченным base CB20; 29 из них имеют оплаченные addon-заказы; 159 заказов, 158 пар пользователь+модуль; по активным entitlements открыто ~151, без entitlement ~7 пар (Производство 1, Перевозки 1, Розница 1, Маркетплейсы 1, Учёт у ИП 2, Посредничество 1).
-- Риск: те же addon-продукты продаются и в CB21 — привязку addon к CB20 нужно доказывать родительским заказом/group_payment, а не просто фактом покупки.
+Никаких изменений Auth, прав доступа, модели/промптов, истории чатов, данных, миграций, Edge Functions, секретов. Без новых пользователей, сообщений клиентам и платёжных действий.
 
-## Шаги аудита
+## Предусловия (read-only сверка перед execute)
 
-1. **Когорта base CB20**: paid, не trial/test/sandbox/gift, не refunded/partial_refund, не удалён; исключить staff (user_roles admin/superadmin) и исторические hist-cb17-18 факты; дедуп по payment_id и order_id.
-2. **Addon CB20**: заказы на 9 addon-продуктов, связанные с CB20 через parent order / group_payment_id / offer_addons CB20 (вкл. split child orders, final_price 0 в группе); addon без доказанной связи с CB20 → AMBIGUOUS; refund/revoke → исключить.
-3. **Сверка доступа на каждую пару**: active entitlement; entitlement_sources; access_rules (training_content/product_access) и **открытие через тариф/правило без entitlement** (tariff-scoped rules CB20, section/module rules); historical_module_product_ids; дата открытия контента (lessons/модуль, month gate); видимость по контракту `useSidebarModules`.
-4. **Классификация**: ALREADY_OPEN, MISSING_ACCESS, SCHEDULE_LOCKED, AMBIGUOUS, плюс флаг NO_LINKED_TELEGRAM (нет привязанного telegram_user_id) — независимый от доступа.
-5. **Срок доступа**: только по действующему тарифу/заказу CB20 (access_end_at подписки/entitlement base), без исторических оснований.
+1. PR608 merged; зафиксировать exact merged SHA и сверить, что head = `b8f96cf29…`, чужих merge в main нет.
+2. Diff merged SHA против предыдущего main — ровно заявленные файлы (export, тест, release doc); любое расхождение → STOP.
+3. Все required GitHub checks PASS.
+4. Текущее состояние: main = `a2e51db6…` (PR607); его Publish не состоялся (пропущен пользователем), поэтому опубликованная версия остаётся прежней (чанк `index-CR3WLKb9.js`, cb8c0507). PR608 не считается опубликованным до реального события Publish.
+5. Security findings delta в scope: новых findings по файлам PR608 не ожидается; существующие старые findings (каталог от 2026-09-02, dependency follow-up proxy-addr / vitest-tinypool) не исправлять и не игнорировать — вне scope.
 
-## Результат
+## Execute (только после отдельной команды с exact merged SHA)
 
-- Внутренний файл `/mnt/documents/.lovable/audit/cb20-addons-2026-10-04.json` (UUID user/order/module, класс, причина; без имён/email/телефонов/ссылок).
-- В чате: агрегаты по людям/покупкам/модулям и классам; безличные персональные наборы («набор A: Розница+ИП — N человек»).
-- Dry-run repair plan только для MISSING_ACCESS: по каждой паре user_id/order_id/product_id/expires_at; канонический путь выдачи (grant по существующему order, idempotency_key = order_id), expected rowcount = число MISSING пар, before/after counts, транзакция с ROLLBACK, rollback = revoke по batch-метке, read-back + проверка видимости. Исполнение — отдельным разрешением.
+1. Синхронизировать exact merged SHA; проверить clean tree и ровно заявленный набор файлов.
+2. Managed build / tsc точного SHA — PASS (холодная сборка; не смешивать с состоянием dev Preview).
+3. Штатный Publish существующего проекта и домена https://gorbova.by из этой версии; аудитория и права прежние. Publish-инструмент не имитировать: если недоступен — явно сообщить.
+4. После Publish: доказательство release/version + observed public chunk/fingerprint; published SHA выводить только из самого события Publish, не из HEAD.
 
-## Стоп-условия
+## Проверка по публичному URL
 
-Расхождение когорты с привязкой к CB20, модуль без корня обучения, новые refund/дубли платежей, или признак выдачи CB21 — фиксировать как AMBIGUOUS и докладывать, не включать в repair.
+- Обновлённый чанк экспорта (новое имя/fingerprint).
+- Codex отдельно: реальный production Word download, render всех страниц, отсутствие orphan headings и подписи на почти пустой странице; ПК 1440×900 и mobile 390×844 скриншоты. Локальный регрессионный render 4 стр. уже проходит, но не заменяет production download.
+
+## Stop-guards
+
+STOP при: несовпадении exact merged SHA, чужих merge в main, diff вне заявленных файлов, падении checks/build/tsc, mismatch опубликованного чанка, новом critical finding, затронутых правах/модели/истории.
+
+## Rollback
+
+Повторный Publish предыдущей проверенной версии (cb8c0507 / чанк `index-CR3WLKb9.js`) без изменений БД, функций, данных и истории.
+
+## Технические детали
+
+- Изменения ограничены `src/utils/exportRegulation.ts` (параграфные свойства docx: `keepNext`, `keepLines`, `widowControl`, фильтрация пустых строк, цвет заголовков), `src/utils/exportRegulation.test.ts` и release-документом.
+- Никаких backend-артефактов: deploy functions, миграции, данные не входят в execute.
