@@ -1,0 +1,1 @@
+postgres|{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres,sandbox_exec_hdjgkjceownmmnrqqtuz=X/postgres}|s|t|{search_path=public}
