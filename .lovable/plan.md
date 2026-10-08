@@ -16,7 +16,7 @@
 1. PR608 merged; зафиксировать exact merged SHA и сверить, что head = `b8f96cf29…`, чужих merge в main нет.
 2. Diff merged SHA против предыдущего main — ровно заявленные файлы (export, тест, release doc); любое расхождение → STOP.
 3. Все required GitHub checks PASS.
-4. Текущее состояние: main = `a2e51db6…` (PR607); его Publish не состоялся (пропущен пользователем), поэтому опубликованная версия остаётся прежней (чанк `index-CR3WLKb9.js`, cb8c0507). PR608 не считается опубликованным до реального события Publish.
+4. Текущее состояние: последний реальный Publish = `a2e51db6…` (PR607), чанк `index-TELcZs6s.js`, fingerprint 2026-10-08T10:37:46.710Z. PR608 не считается опубликованным до реального события Publish.
 5. Security findings delta в scope: новых findings по файлам PR608 не ожидается; существующие старые findings (каталог от 2026-09-02, dependency follow-up proxy-addr / vitest-tinypool) не исправлять и не игнорировать — вне scope.
 
 ## Execute (только после отдельной команды с exact merged SHA)
