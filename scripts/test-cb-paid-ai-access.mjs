@@ -16,6 +16,17 @@ CREATE TABLE payments_v2(id uuid,order_id uuid,user_id uuid,currency text,provid
 await db.exec(migration);
 // Applying twice must preserve the same behavior.
 await db.exec(migration);
+const managedRegulationsMigration = process.argv.includes('--managed-regulations')
+  ? readFileSync(new URL('../supabase/migrations/20261008121522_regulations_managed_cohort_access.sql', import.meta.url), 'utf8')
+  : null;
+if (managedRegulationsMigration) {
+  await db.exec('CREATE ROLE authenticated; REVOKE EXECUTE ON FUNCTION public.user_has_access_to_rule(uuid,uuid) FROM PUBLIC; GRANT EXECUTE ON FUNCTION public.user_has_access_to_rule(uuid,uuid) TO authenticated;');
+  const attributesBefore = (await db.query("SELECT proowner, proacl::text, prosecdef, provolatile, proconfig FROM pg_proc WHERE oid='public.user_has_access_to_rule(uuid,uuid)'::regprocedure")).rows[0];
+  await db.exec(managedRegulationsMigration);
+  await db.exec(managedRegulationsMigration);
+  const attributesAfter = (await db.query("SELECT proowner, proacl::text, prosecdef, provolatile, proconfig FROM pg_proc WHERE oid='public.user_has_access_to_rule(uuid,uuid)'::regprocedure")).rows[0];
+  assert.deepEqual(attributesAfter, attributesBefore, 'owner, nontrivial ACL, definer, stability and search_path preserved');
+}
 const ids = {user:'00000000-0000-0000-0000-000000000001',rule:'00000000-0000-0000-0000-000000000002',tariff:'00000000-0000-0000-0000-000000000003',order:'00000000-0000-0000-0000-000000000004',section:'00000000-0000-0000-0000-000000000005',sub:'00000000-0000-0000-0000-000000000006',ent:'00000000-0000-0000-0000-000000000007',product:'3e43fb28-8322-41bc-bfee-714731bdc630'};
 async function reset() {
   await db.exec('TRUNCATE access_rules,app_sections,subscriptions_v2,orders_v2,entitlements,payments_v2;');
@@ -64,4 +75,42 @@ await test('deleted refund still denies',"UPDATE payments_v2 SET is_deleted=true
 await test('existing active branch preserved',"UPDATE subscriptions_v2 SET status='active'; DELETE FROM payments_v2",true);
 await test('existing product entitlement branch preserved',"UPDATE access_rules SET tariff_id=NULL; DELETE FROM subscriptions_v2",true);
 console.log(`${passed} PostgreSQL fixture cases passed`);
+if (managedRegulationsMigration) {
+  const futureProduct = '00000000-0000-0000-0000-000000000022';
+  async function futureTest(name, change, expected) {
+    await reset();
+    await db.query('UPDATE access_rules SET product_id=$1', [futureProduct]);
+    for (const table of ['subscriptions_v2', 'orders_v2', 'entitlements']) {
+      await db.query(`UPDATE ${table} SET product_id=$1`, [futureProduct]);
+    }
+    await db.exec("UPDATE app_sections SET code='ai_accounting_regulations'");
+    if (change) await db.exec(change);
+    const result = await db.query('SELECT user_has_access_to_rule($1,$2) AS allowed', [ids.user, ids.rule]);
+    assert.equal(result.rows[0].allowed, expected, name);
+    passed++; console.log(`PASS ${name}`);
+  }
+  await futureTest('configured future cohort fully paid finite access', null, true);
+  await futureTest('future cohort without explicit rule denies', 'DELETE FROM access_rules', false);
+  await futureTest('future cohort inactive rule denies', 'UPDATE access_rules SET is_active=false', false);
+  await futureTest('future cohort inactive section denies', 'UPDATE app_sections SET is_active=false', false);
+  for (const code of ['ai_asset_classifier', 'ai_bank_statement_analysis', 'ai_act_reconciliation', 'documents']) {
+    await futureTest(`future cohort cannot widen ${code}`, `UPDATE app_sections SET code='${code}'`, false);
+  }
+  await futureTest('future cohort missing final payment denies', "DELETE FROM payments_v2 WHERE provider_payment_id='fixture2'", false);
+  await futureTest('future cohort refund denies', 'UPDATE payments_v2 SET refunded_amount=1', false);
+  await futureTest('future cohort expired window denies', "UPDATE subscriptions_v2 SET access_end_at=now()-interval '1 day'", false);
+  await futureTest('future cohort foreign payer denies', 'UPDATE payments_v2 SET user_id=gen_random_uuid()', false);
+  await futureTest('future cohort manual review denies', "UPDATE orders_v2 SET meta=meta || '{\"manual_review\":true}'::jsonb", false);
+  await futureTest('future cohort wrong tariff denies', 'UPDATE subscriptions_v2 SET tariff_id=gen_random_uuid()', false);
+  await futureTest('future cohort missing product binding denies', 'UPDATE access_rules SET product_id=NULL', false);
+  // Drift must fail closed even on a repeat run; function ACL is not reset.
+  await db.exec('COMMENT ON FUNCTION public.user_has_access_to_rule(uuid,uuid) IS \'fixture\'');
+  const aclBefore = (await db.query("SELECT proacl::text FROM pg_proc WHERE oid='public.user_has_access_to_rule(uuid,uuid)'::regprocedure")).rows[0].proacl;
+  await db.exec(managedRegulationsMigration);
+  const aclAfter = (await db.query("SELECT proacl::text FROM pg_proc WHERE oid='public.user_has_access_to_rule(uuid,uuid)'::regprocedure")).rows[0].proacl;
+  assert.equal(aclAfter, aclBefore, 'function ACL preserved');
+  await db.exec("ALTER FUNCTION public.user_has_access_to_rule(uuid,uuid) VOLATILE");
+  await assert.rejects(db.exec(managedRegulationsMigration), /source_drifted/);
+  console.log(`${passed} combined PostgreSQL cases; ACL/idempotency/source-drift guards PASS`);
+}
 await db.close();
