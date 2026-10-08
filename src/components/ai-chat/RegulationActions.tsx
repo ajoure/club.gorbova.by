@@ -28,6 +28,7 @@ export function RegulationActions({ content }: { content: string }) {
       <Textarea aria-label="Редактор проекта регламента" className="min-h-[240px] text-base sm:text-sm" value={draft} onChange={event => setDraft(event.target.value)} maxLength={30000} />
       <p className="text-xs text-muted-foreground">Эти правки попадут только в Word. Для сохранения новой версии в истории попросите ИИ внести правки в чате. Не закрывайте страницу до скачивания.</p>
     </>}
+    <p className="text-xs text-muted-foreground">Если файл не сохранился, проверьте загрузки и разрешение на скачивание в браузере. Перед утверждением проверьте факты, сроки и предложения в проекте.</p>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </div>;
 }

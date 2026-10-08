@@ -1,8 +1,39 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { saveAs } from "file-saver";
 
+/** Models can still return GFM tables despite the scenario asking for lists.
+ * Export every cell as a labelled list rather than leaking pipe/separator syntax. */
+export function regulationLines(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex(line => /^#\s+Проект регламента\s*$/i.test(line.trim()));
+  const source = start < 0 ? lines : lines.slice(start);
+  const cells = (line: string) => line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "")
+    .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, "|"));
+  const result: string[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const line = source[i];
+    if (line.includes("|") && source[i + 1]?.includes("|") && cells(source[i + 1]).every(cell => /^:?-{3,}:?$/.test(cell))) {
+      const headers = cells(line);
+      i += 2;
+      let rowNumber = 0;
+      while (i < source.length && source[i].includes("|") && source[i].trim()) {
+        const row = cells(source[i]);
+        result.push(`### Шаг ${++rowNumber}`);
+        for (let column = 0; column < Math.max(headers.length, row.length); column++) {
+          result.push(`- **${headers[column] || `Поле ${column + 1}`}:** ${row[column] || ""}`);
+        }
+        i++;
+      }
+      i--;
+    } else if (!/^\s*(?:\*\s*){3,}$|^\s*(?:-\s*){3,}$|^\s*(?:_\s*){3,}$/.test(line)) {
+      result.push(line.replace(/^(\s*[-*]\s+)\[ \]\s*/, "$1☐ ").replace(/^(\s*[-*]\s+)\[[xX]\]\s*/, "$1☑ "));
+    }
+  }
+  return result;
+}
+
 export function regulationDocument(content: string): Document {
-  const children = content.split(/\r?\n/).map(line => {
+  const children = regulationLines(content).map(line => {
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const text = heading?.[2] ?? bullet?.[1] ?? line;
