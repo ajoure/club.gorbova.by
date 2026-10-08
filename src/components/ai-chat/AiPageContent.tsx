@@ -656,8 +656,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
   return (
     <div
-      className={`flex flex-col flex-1 min-h-0 gap-1 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02] ${mode === "user" ? "-mt-2 md:-mt-4" : ""}`}
-      style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET})`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET})` }}
+      className={`flex flex-col flex-1 min-h-0 gap-1 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02] ${mode === "user" ? "-mt-2 md:-mt-4 [--ai-bottom-clearance:calc(3.5rem+env(safe-area-inset-bottom,0px))] md:[--ai-bottom-clearance:0px]" : ""}`}
+      style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET} - var(--ai-bottom-clearance, 0px))`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET} - var(--ai-bottom-clearance, 0px))` }}
     >
 
       {/* ── Главные табы ── */}
