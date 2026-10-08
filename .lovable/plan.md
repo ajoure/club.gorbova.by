@@ -37,7 +37,7 @@ STOP при: несовпадении exact merged SHA, чужих merge в main
 
 ## Rollback
 
-Повторный Publish предыдущей проверенной версии (cb8c0507 / чанк `index-CR3WLKb9.js`) без изменений БД, функций, данных и истории.
+GitHub revert PR608 + Publish, возврат к a2e51db6 (чанк `index-TELcZs6s.js`) без изменений БД, функций, данных и истории.
 
 ## Технические детали
 
