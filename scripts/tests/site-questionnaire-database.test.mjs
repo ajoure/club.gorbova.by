@@ -64,7 +64,9 @@ async function fixture() {
     const safeRoles = schemaSQL.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;',
       () => "DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
     const seed = `INSERT INTO auth.users VALUES(${quote(id(1))},'buyer@example.invalid',now(),null,null);
-      INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone',123,$3,'active',now());
+      INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone',123,${quote(id(90))},'active',now());
+      INSERT INTO telegram_bots VALUES(${quote(id(90))},'active',true);
+      INSERT INTO telegram_access_audit VALUES(${quote(id(1))},123,'telegram_link_confirmed',${quote(JSON.stringify({bot_id:id(90)}))},now());
       INSERT INTO site_pages VALUES(${quote(id(3))},${quote(id(30))},'published',${quote(JSON.stringify([{id:id(8),type:'form',content}]))});
       INSERT INTO products_v2 VALUES(${quote(id(4))},true);
       INSERT INTO tariffs VALUES(${quote(id(5))},${quote(id(4))},true);
