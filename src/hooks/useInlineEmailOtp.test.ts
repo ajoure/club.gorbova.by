@@ -63,6 +63,27 @@ describe("useInlineEmailOtp", () => {
     functionsInvoke.mockReset();
   });
 
+  it("questionnaire email requests a code without password, identity lookup or answer metadata", async () => {
+    mockRequestOtp({ data: { ok: true } });
+    const { result } = renderHook(() => useInlineEmailOtp());
+    await act(async () => { await result.current.requestQuestionnaireCode("TEST@Example.com"); });
+    expect(functionsInvoke).toHaveBeenCalledTimes(1);
+    expect(functionsInvoke).toHaveBeenCalledWith("request-inline-otp", {
+      body: { email: "test@example.com", purpose: "auth", meta: undefined },
+    });
+    expect(updateUser).not.toHaveBeenCalled();
+    expect(result.current.step).toBe("sent");
+  });
+
+  it("questionnaire code failure keeps the answers flow unauthenticated", async () => {
+    mockRequestOtp({ data: { error: "smtp_unavailable" } });
+    const { result } = renderHook(() => useInlineEmailOtp());
+    await act(async () => { await result.current.requestQuestionnaireCode("test@example.com"); });
+    expect(result.current.step).toBe("email");
+    expect(result.current.error).toBeTruthy();
+    expect(verifyOtp).not.toHaveBeenCalled();
+  });
+
   it("submitEmail for NEW email → routes to details, does NOT request OTP", async () => {
     mockIdentify({ exists: false, hasPassword: false, profile_name: null });
     const { result } = renderHook(() => useInlineEmailOtp());

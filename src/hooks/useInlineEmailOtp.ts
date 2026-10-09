@@ -62,6 +62,8 @@ export interface UseInlineEmailOtpReturn {
   submitEmail: (email: string) => Promise<boolean>;
   /** Step 2 (new users only): submit collected meta and send OTP. */
   submitDetails: (meta: InlineOtpMeta) => Promise<boolean>;
+  /** Questionnaire already has contact fields; verify its email without password setup. */
+  requestQuestionnaireCode: (email: string) => Promise<boolean>;
   /** Step 3: verify 6-digit OTP; returns { userId } on success. */
   verifyCode: (code: string) => Promise<{ userId: string } | null>;
   /** Resend OTP for the current email (respects cooldown). */
@@ -237,6 +239,19 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     [email, sendOtpForEmail],
   );
 
+  const requestQuestionnaireCode = useCallback(async (targetEmail: string): Promise<boolean> => {
+    const trimmed = (targetEmail || "").toLowerCase().trim();
+    if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
+      setError("Введите корректный email.");
+      return false;
+    }
+    // Answers belong in the verified submission, not auth metadata. Sending
+    // them here would overwrite an existing contact in verify-inline-otp.
+    metaRef.current = undefined;
+    pendingPasswordRef.current = null;
+    return sendOtpForEmail(trimmed);
+  }, [sendOtpForEmail]);
+
   const resend = useCallback(async () => {
     if (resendIn > 0 || !email) return false;
     return sendOtpForEmail(email, metaRef.current);
@@ -355,6 +370,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     resendIn,
     submitEmail,
     submitDetails,
+    requestQuestionnaireCode,
     verifyCode,
     resend,
     changeEmail,
