@@ -42,6 +42,8 @@ describe("site-form-submit server form configuration", () => {
 
     expect(result).toEqual({
       authMode: false,
+      questionnaireFirst: false,
+      fields: undefined,
       productId: "product-a",
       tariffId: "tariff-a",
       dealCreationEnabled: true,
@@ -63,6 +65,8 @@ describe("site-form-submit server form configuration", () => {
       form("form-a", { auth_mode: true, product_binding_enabled: false }),
     ])).toEqual({
       authMode: true,
+      questionnaireFirst: false,
+      fields: undefined,
       productId: undefined,
       tariffId: undefined,
       dealCreationEnabled: false,
@@ -81,6 +85,8 @@ describe("site-form-submit server form configuration", () => {
       }),
     ], "form-a")).toEqual({
       authMode: false,
+      questionnaireFirst: false,
+      fields: undefined,
       productId: undefined,
       tariffId: undefined,
       dealCreationEnabled: false,

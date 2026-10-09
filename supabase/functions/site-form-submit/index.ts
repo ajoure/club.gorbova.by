@@ -1,5 +1,7 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { resolveServerFormSettings } from "./form_settings.ts";
+import { validateQuestionnaireAnswers } from "./questionnaire-fields.ts";
+import { parseQuestionnaireSource } from "./questionnaire-source.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,6 +71,9 @@ interface RequestBody {
   page_id: string;
   /** Stable ID of the form block rendered on the public page. */
   block_id?: string;
+  submission_key?: string;
+  source_code?: unknown;
+  privacy_consent?: { accepted?: boolean; version?: string };
   fields: FormField[];
   redirect_url?: string;
   // Embed support (add-only, optional)
@@ -106,7 +111,7 @@ Deno.serve(async (req) => {
     // auth/product settings must never be selected by an untrusted browser.
     const { data: page, error: pageError } = await admin
       .from("site_pages")
-      .select("id, workspace_id, blocks")
+      .select("id, workspace_id, blocks, status")
       .eq("id", page_id)
       .single();
 
@@ -118,6 +123,40 @@ Deno.serve(async (req) => {
     const formSettings = resolveServerFormSettings(page.blocks, body.block_id);
     if (!formSettings) {
       return json({ error: "Form configuration not found or ambiguous" }, 400);
+    }
+
+    if (formSettings.questionnaireFirst) {
+      if (page.status !== "published") return json({ error: "questionnaire_page_unavailable" }, 400);
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!body.block_id || !uuid.test(body.block_id) || !body.submission_key || !uuid.test(body.submission_key) ||
+          body.privacy_consent?.accepted !== true || body.privacy_consent.version !== "v2026-04-10") {
+        return json({ error: "questionnaire_request_invalid" }, 400);
+      }
+      const jwt = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!jwt) return json({ error: "questionnaire_identity_required" }, 401);
+      const { data: identity, error: identityError } = await admin.auth.getUser(jwt);
+      if (identityError || !identity.user?.email || !identity.user.email_confirmed_at) {
+        return json({ error: "questionnaire_identity_invalid" }, 401);
+      }
+      try {
+        validateQuestionnaireAnswers(formSettings.fields, fields, identity.user.email);
+      } catch {
+        return json({ error: "questionnaire_answers_invalid" }, 400);
+      }
+      // SQL rechecks the current published block, canonical profile, account ban,
+      // routing and answers under one transaction. No partial success or access grant.
+      const { data: result, error: transactionError } = await admin.rpc("submit_site_questionnaire", {
+        p_page_id: page_id, p_block_id: body.block_id, p_user_id: identity.user.id,
+        p_submission_key: body.submission_key, p_fields: fields,
+        p_source_code: parseQuestionnaireSource(body.source_code), p_consent_version: body.privacy_consent.version,
+      });
+      if (transactionError) {
+        // Only a stable code is logged; database messages may contain client data.
+        console.error("Questionnaire transaction failed", transactionError.code);
+        return json({ error: "questionnaire_submission_failed" }, transactionError.code === "42501" ? 403 : transactionError.code === "22023" ? 409 : 500);
+      }
+      if (!result?.success) return json({ error: "questionnaire_submission_failed" }, 500);
+      return json(result);
     }
 
     const {
@@ -452,7 +491,7 @@ Deno.serve(async (req) => {
 
 async function handleAuthModeSubmit(
   req: Request,
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   ctx: {
     pageId: string;
     workspaceId: string;
@@ -567,9 +606,9 @@ async function handleAuthModeSubmit(
   }
 
   // Build form_data from extra fields
-  const formData: Record<string, string> = {};
+  const formData: Record<string, unknown> = {};
   const fieldMapping: Record<string, string> = {};
-  const mappedValues: Record<string, string> = {};
+  const mappedValues: Record<string, unknown> = {};
 
   for (const field of fields) {
     const key = field.label || `field_${fields.indexOf(field)}`;
@@ -584,7 +623,7 @@ async function handleAuthModeSubmit(
   const profileUpdate: Record<string, unknown> = {};
 
   // Instagram: normalize server-side as source of truth, fill only if NULL
-  if (mappedValues.instagram_url) {
+  if (typeof mappedValues.instagram_url === "string" && mappedValues.instagram_url) {
     const normalizedIg = normalizeInstagramServer(mappedValues.instagram_url);
     if (normalizedIg) {
       const currentIg = existingProfile?.instagram_url;
@@ -728,7 +767,7 @@ async function handleAuthModeSubmit(
 // Never reuse paid/completed/cancelled.
 
 async function handleDealCreation(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   ctx: {
     submissionId: string;
     profileId: string;
