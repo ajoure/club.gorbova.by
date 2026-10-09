@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {renderSelection} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
+import {renderSelection,policyInput} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
 const facts=[{id:'topic',text:'В уроке разбираются виды имущества.',classification:'sales_safe',source:'verified-source'}, {id:'private',text:'Платное решение',classification:'paid_private',source:'source'}];
 const select={action:'reply',fact_ids:['topic'],question_id:'goals',bridge_id:'none'};
 test('only exact server facts and one bank question reach the customer',()=>{
@@ -16,4 +16,13 @@ test('resume does not repeat greeting or ask known experience',()=>{
 test('handoff and opt-out produce no customer message',()=>{
  assert.deepEqual(renderSelection({action:'handoff'},facts),{action:'handoff',reason:'needs_human'});
  assert.deepEqual(renderSelection({action:'stop'},facts),{action:'stop',reason:'customer_opt_out'});
+});
+test('customer policy approval needs a successful server questionnaire identity check',()=>{
+ const p={mode:'questionnaire_customer'},c={id:'chat'},job={},business={};
+ assert.equal(policyInput(p,c,job,business,{},'2026-10-09T12:00Z').policy.approved,false);
+ assert.equal(policyInput({...p,questionnaire_verified:'true'},c,job,business,{},'2026-10-09T12:00Z').policy.approved,false);
+ const verified=policyInput({...p,questionnaire_verified:true},c,job,business,{},'2026-10-09T12:00Z');
+ assert.equal(verified.policy.approved,true);assert.equal(verified.policy.owner_test,false);
+ const owner=policyInput({mode:'owner_test'},c,job,business,{},'2026-10-09T12:00Z');
+ assert.equal(owner.policy.approved,true);assert.equal(owner.policy.owner_test,true);
 });

@@ -1,16 +1,25 @@
 import test,{before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
-import {readFile} from 'node:fs/promises';
+import {readFile,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 let db;
+const fixtureSql=[];
+let captureFixture=process.env.CB21_EXPORT_RUNTIME_FIXTURE==='1';
+const sqlLiteral=v=>v===null?'NULL':typeof v==='number'?String(v):typeof v==='boolean'?String(v):"'"+(typeof v==='object'?JSON.stringify(v):String(v)).replaceAll("'","''")+"'";
 const defaultTestNow='2026-09-12T12:00:00Z';
 let testNow=defaultTestNow;
 const owner=randomUUID(), stranger=randomUUID(), bot=randomUUID(), connection=randomUUID(), product=randomUUID();
 const one=async(s,a=[]) => (await db.query(s,a)).rows[0];
 const rpc=async(name,args=[]) => (await one(`SELECT ${name}(${args.map((_,i)=>'$'+(i+1)).join(',')}) r`,args)).r;
 before(async()=>{
- db=new PGlite();await db.exec(`
+ db=new PGlite();
+ if(captureFixture){
+  const exec=db.exec.bind(db),query=db.query.bind(db);
+  db.exec=async(sql,...args)=>{if(captureFixture)fixtureSql.push(sql);return exec(sql,...args)};
+  db.query=async(sql,args=[])=>{if(captureFixture)fixtureSql.push(sql.replace(/\$(\d+)\b/g,(_,n)=>sqlLiteral(args[Number(n)-1]))+';');return query(sql,args)};
+ }
+ await db.exec(`
  -- These clocks exist only in the disposable offline database. Production
  -- migrations and the real Minsk delivery window remain unchanged.
  SELECT set_config('test.sales_now','${defaultTestNow}',false);
@@ -43,11 +52,43 @@ before(async()=>{
  for(const name of ['20260912103149_6c915c55-929b-42ba-9cc0-a8d2b4950c1b.sql','20260912103321_bdea673d-1fb3-4974-958c-72349e73c6e0.sql','20260912105739_sales_context_ai.sql','20260912112411_sales_consultation_products.sql','20260912112527_21624fbd-6791-42e7-95f8-6ded9de89bd7.sql'])
   await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../../supabase/migrations/20260930101631_cb21_conversation_delay.sql',import.meta.url),'utf8'));
+ await db.exec(`CREATE TABLE course_transcription_sources(id uuid PRIMARY KEY,provider text,video_id uuid,source_revision text,enabled boolean);
+ CREATE TABLE course_transcripts(source_id uuid PRIMARY KEY,source_revision text,content_sha256 text,quality_status text,transcript_text text);
+ CREATE TABLE course_caption_gap_audits(source_id uuid,source_revision text,status text);
+ CREATE TABLE training_modules(id uuid PRIMARY KEY,product_id uuid,parent_module_id uuid,is_active boolean);
+ CREATE TABLE training_lessons(id uuid PRIMARY KEY,module_id uuid);
+ CREATE TABLE lesson_blocks(id uuid PRIMARY KEY,lesson_id uuid,updated_at timestamptz,content jsonb,block_type text);
+ CREATE TABLE course_transcription_bindings(source_id uuid,block_id uuid,lesson_id uuid,product_id uuid,block_updated_at timestamptz);`);
+ for(const name of ['20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql','20260912175835_f1784ad8-aa21-4407-ac1c-72260894cf6f.sql'])
+  await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
+
+ await db.exec(`CREATE TABLE site_pages(id uuid PRIMARY KEY,status text,blocks jsonb);
+ ALTER TABLE auth.users ADD COLUMN email_confirmed_at timestamptz DEFAULT now(),ADD COLUMN deleted_at timestamptz,ADD COLUMN banned_until timestamptz;
+ ALTER TABLE profiles ADD COLUMN status text DEFAULT 'active',ADD COLUMN is_archived boolean DEFAULT false,
+  ADD COLUMN merged_to_profile_id uuid,ADD COLUMN telegram_user_id bigint,ADD COLUMN telegram_link_bot_id uuid,
+  ADD COLUMN telegram_link_status text DEFAULT 'active',ADD COLUMN telegram_linked_at timestamptz DEFAULT now();
+ ALTER TABLE telegram_bots ADD COLUMN status text DEFAULT 'active',ADD COLUMN is_primary boolean DEFAULT true;
+ CREATE TABLE telegram_access_audit(user_id uuid,telegram_user_id bigint,event_type text,meta jsonb,created_at timestamptz DEFAULT now());
+ CREATE TABLE site_form_submissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),profile_id uuid,page_id uuid,status text,source text,metadata jsonb);`);
+ const atomic=await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql',import.meta.url),'utf8');
+ await db.exec(atomic.slice(0,atomic.indexOf('-- Questionnaire-first submission')));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20261009120000_questionnaire_sales_identity.sql',import.meta.url),'utf8'));
+ const legacy=randomUUID();
+ await db.query(`INSERT INTO sales_campaigns(id,code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version)
+  VALUES($1,'upgrade-fixture',$2,$3,$4,$4,$5,'Legacy phrase','v1','k1')`,[legacy,bot,connection,owner,product]);
+ await db.query("INSERT INTO sales_conversations(campaign_id,state,human_hold,stage,revision,answered_seq) VALUES($1,'HUMAN_HOLD',true,'offer',7,8)",[legacy]);
+ await db.exec(await readFile(new URL('../../supabase/migrations/20261009121000_sales_customer_conversations.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20261009122000_sales_questionnaire_route.sql',import.meta.url),'utf8'));
+ const upgraded=await one('SELECT * FROM sales_conversations WHERE campaign_id=$1',[legacy]);
+ assert.equal(upgraded.user_id,owner);assert.equal(upgraded.state,'HUMAN_HOLD');assert.equal(upgraded.stage,'offer');
+ assert.equal(Number(upgraded.revision),7);assert.equal(Number(upgraded.answered_seq),8);
+ if(captureFixture){captureFixture=false;await writeFile('/tmp/cb21-sales-runtime-fixture.sql',fixtureSql.join('\n'));}
 });
 after(async()=>{await db.close()});
 async function fixture(now=defaultTestNow){
  testNow=now;await db.query("SELECT set_config('test.sales_now',$1,false)",[testNow]);
  await db.exec('DELETE FROM sales_checkout_operations; DELETE FROM payments_v2; DELETE FROM orders_v2; DELETE FROM live_event_sessions; DELETE FROM live_events; DELETE FROM sales_events; DELETE FROM sales_jobs; DELETE FROM sales_conversations; DELETE FROM sales_campaigns; DELETE FROM contact_center_message_assignments; DELETE FROM ai_handoffs; DELETE FROM notification_outbox; DELETE FROM telegram_messages;');
+ await db.exec(`DELETE FROM site_form_submissions; DELETE FROM telegram_access_audit; DELETE FROM site_pages; DELETE FROM profiles WHERE user_id<>'${owner}';`);
  const p=(await one(`INSERT INTO sales_campaigns(code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version,knowledge) VALUES('pilot',$1,$2,$3,$3,$4,'Хочу программу курса ЦБ','v1','k1','{"release_mode":"owner_test","facts":[{"id":"topic"}]}') RETURNING id`,[bot,connection,owner,product])).id;
  await rpc('sales_control',[p,'enable',owner]);return p;
 }
@@ -349,4 +390,200 @@ test('failed unnumbered CRM send cannot replace the Telegram history boundary',a
  const boundary=await one('SELECT message_id FROM telegram_messages WHERE message_id IS NOT NULL ORDER BY message_id DESC NULLS LAST LIMIT 1');assert.equal(boundary.message_id,600);
  const rows=(await db.query('SELECT message_id FROM telegram_messages WHERE message_id<=$1 ORDER BY message_id',[boundary.message_id])).rows;
  assert.deepEqual(rows.map(r=>r.message_id),[600]);
+});
+
+async function customerFixture() {
+ await fixture();const page=randomUUID(),block=randomUUID(),bob=randomUUID();
+ await db.query('INSERT INTO auth.users(id) VALUES($1)',[bob]);
+ await db.query("INSERT INTO site_pages VALUES($1,'published',$2)",[page,[{id:block,type:'form',content:{auth_mode:true,questionnaire_first:true}}]]);
+ const phrase='Я заполнила анкету, готова получить бонус🔥';
+ const p=(await one(`INSERT INTO sales_campaigns(code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,
+  mode,trigger_phrase,policy_version,knowledge_version,knowledge,enabled_at,source_page_id,source_block_id)
+  VALUES('customers',$1,$2,null,$3,$4,'questionnaire_customer',$5,'cb21-v2','k1',$6,now(),$7,$8) RETURNING id`,
+  [bot,connection,owner,product,phrase,{release_mode:'questionnaire_customer',client_release_approved:true,checkout_enabled:true,facts:[{id:'topic'}]},page,block])).id;
+ const users=[{id:stranger,tg:1001},{id:bob,tg:1002}];
+ for(const user of users) {
+  const profile=(await one('INSERT INTO profiles(user_id,telegram_user_id,telegram_link_bot_id) VALUES($1,$2,$3) RETURNING id',[user.id,user.tg,bot])).id;
+  await db.query("INSERT INTO telegram_access_audit VALUES($1,$2,'telegram_link_confirmed',$3,now())",[user.id,user.tg,{bot_id:bot}]);
+  await db.query("INSERT INTO site_form_submissions(profile_id,page_id,status,source,metadata) VALUES($1,$2,'processed','site_form_auth',$3)",
+   [profile,page,{questionnaire_first:true,block_id:block,user_id:user.id}]);
+ }
+ const send=(user,seq,text=phrase,extra={})=>msg(seq,text,{user_id:user.id,telegram_user_id:user.tg,...extra});
+ const chat=user=>one('SELECT * FROM sales_conversations WHERE campaign_id=$1 AND user_id=$2',[p,user.id]);
+ return {p,page,block,phrase,users,send,chat};
+}
+
+test('two questionnaire customers have separate states, queues, outbox recipients and pause controls',async()=>{
+ const f=await customerFixture();const [alice,bob]=f.users;
+ await f.send(alice,701);await f.send(bob,702);
+ const ca=await f.chat(alice),cb=await f.chat(bob);assert.notEqual(ca.id,cb.id);
+ assert.equal(ca.started,true);assert.equal(cb.started,true);
+ const originalDue=(await db.query('SELECT id,due_at FROM sales_jobs ORDER BY id')).rows;
+ await rpc('sales_configure_followup_delay',[f.p,owner,3,7]);
+ assert.deepEqual((await db.query('SELECT id,due_at FROM sales_jobs ORDER BY id')).rows,originalDue);
+ await rpc('sales_control_conversation',[f.p,alice.id,'pause',owner]);
+ assert.equal((await f.chat(alice)).state,'HUMAN_HOLD');assert.equal((await f.chat(bob)).state,'READY');
+ const job=await due();assert.equal(job.conversation_id,cb.id);
+ assert.equal(await rpc('sales_begin_send',[job.id,job.claim_token,{stage:'goals',text:'Synthetic reply',question_id:'none'}]),true);
+ assert.equal((await one('SELECT user_id FROM notification_outbox')).user_id,bob.id);
+ await rpc('sales_finish_send',[job.id,job.claim_token,703]);
+ assert.equal((await one("SELECT user_id FROM telegram_messages WHERE message_origin='bot_automation'")).user_id,bob.id);
+ assert.equal((await f.chat(bob)).state,'WAIT_CUSTOMER');assert.equal((await f.chat(alice)).state,'HUMAN_HOLD');
+ await assert.rejects(rpc('sales_control',[f.p,'resume',owner]),/conversation_user_required/);
+});
+
+test('missing questionnaire, support link, wrong Telegram ID and historical webhook do not start customer sales',async()=>{
+ const f=await customerFixture(),alice=f.users[0];
+ for(const change of [
+  'DELETE FROM site_form_submissions',
+  'DELETE FROM telegram_access_audit',
+  "UPDATE profiles SET status='blocked'",
+  "UPDATE auth.users SET banned_until=now()+interval '1 day'",
+  "UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,questionnaire_first}','false')",
+ ]) {
+  await db.exec('BEGIN');try {await db.exec(change);await f.send(alice,710);assert.equal(await f.chat(alice),undefined);}finally{await db.exec('ROLLBACK')}
+ }
+ await f.send(alice,711,f.phrase,{telegram_user_id:9999});assert.equal(await f.chat(alice),undefined);
+ await f.send(alice,712,f.phrase,{meta:{source:'telegram_business',raw:{date:1}}});assert.equal(await f.chat(alice),undefined);
+ await f.send(alice,713,'Просто здравствуйте');assert.equal(await f.chat(alice),undefined);
+ await f.send(alice,714);assert.equal((await f.chat(alice)).started,true);
+});
+
+test('revoking questionnaire identity after claim prevents dispatch and checkout capability consumption',async()=>{
+ const f=await customerFixture(),alice=f.users[0];await f.send(alice,720);const job=await due();
+ const c=await f.chat(alice),body={user_id:alice.id,responsible_user_id:owner,amount:179000},hash='c'.repeat(64);
+ await db.query("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'customer-quote','admin-create-public-link',$3,$4)",[job.id,c.id,hash,body]);
+ await db.query('UPDATE profiles SET is_archived=true WHERE user_id=$1',[alice.id]);
+ assert.equal(await rpc('sales_begin_send',[job.id,job.claim_token,{}]),false);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',body]),null);
+ assert.equal((await one('SELECT count(*)::int n FROM notification_outbox')).n,0);
+});
+
+test('customer capability checks the conversation recipient, even when an operation contains another valid user',async()=>{
+ const f=await customerFixture(),[alice,bob]=f.users;await f.send(alice,730);const job=await due(),c=await f.chat(alice);
+ const wrong={user_id:bob.id,responsible_user_id:owner,amount:179000},hash='d'.repeat(64);
+ await db.query("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'recipient-quote','admin-create-public-link',$3,$4)",[job.id,c.id,hash,wrong]);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',wrong]),null);
+ const correct={...wrong,user_id:alice.id};await db.query('UPDATE sales_checkout_operations SET request_body=$1 WHERE token_hash=$2',[correct,hash]);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',correct]),owner);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',correct]),null);
+});
+
+test('manual customer reply preserves human hold even while the support binding is unavailable',async()=>{
+ const f=await customerFixture(),alice=f.users[0];await f.send(alice,735);
+ await db.query('DELETE FROM telegram_access_audit WHERE user_id=$1',[alice.id]);
+ await f.send(alice,736,'Ответ сотрудника',{direction:'outgoing',message_origin:'crm_operator'});
+ assert.equal((await f.chat(alice)).state,'HUMAN_HOLD');
+ assert.equal((await one("SELECT count(*)::int n FROM sales_jobs WHERE status='cancelled' AND reason='manual_reply'")).n,1);
+ await assert.rejects(rpc('sales_control_conversation',[f.p,alice.id,'resume',owner]),/questionnaire_identity_required/);
+});
+
+test('customer invoice document cannot authorize another client order, and exact authorization is single-use',async()=>{
+ const f=await customerFixture(),[alice,bob]=f.users;await f.send(alice,737);const j=await due(),c=await f.chat(alice);
+ const offer=randomUUID(),hash='e'.repeat(64),body={target_user_id:alice.id,responsible_user_id:owner,offer_id:offer};
+ const op=(await one("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'customer-invoice','admin-invoice-checkout-issue',$3,$4) RETURNING id",[j.id,c.id,hash,body])).id;
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-invoice-checkout-issue',body]),owner);
+ const order=(await one("INSERT INTO orders_v2(user_id,product_id,offer_id,status,final_price,meta) VALUES($1,$2,$3,'pending',1790,$4) RETURNING id",[bob.id,product,offer,{sales_checkout_operation_id:op,checkout_kind:'invoice',awaits_payment:true}])).id;
+ const generate={order_id:order,mode:'generate',pre_payment_invoice:true};
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,generate]),null);
+ await db.query('UPDATE orders_v2 SET user_id=$1 WHERE id=$2',[alice.id,order]);
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,generate]),owner);
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,generate]),null);
+});
+
+test('customer handoff assigns the exact sender to the owner without pausing another customer',async()=>{
+ const f=await customerFixture(),[alice,bob]=f.users;await f.send(alice,738);const j=await due();await f.send(bob,739);
+ const assignment=await rpc('sales_handoff',[j.id,j.claim_token,'technical_problem']);assert.ok(assignment);
+ const handoff=await one('SELECT * FROM ai_handoffs');assert.equal(handoff.user_id,alice.id);assert.equal(handoff.telegram_user_id,alice.tg);
+ assert.equal((await f.chat(alice)).state,'HUMAN_HOLD');assert.equal((await f.chat(bob)).state,'READY');
+ assert.equal((await one('SELECT count(*)::int n FROM notification_outbox')).n,0);
+});
+
+test('campaign configuration invalidates every customer revision and job, and notices unresolved delivery in either chat',async()=>{
+ const f=await customerFixture();for(let i=0;i<f.users.length;i++)await f.send(f.users[i],740+i);
+ await rpc('sales_control',[f.p,'disable',owner]);
+ const config=(await one('SELECT ai_config FROM sales_campaigns WHERE id=$1',[f.p])).ai_config;
+ await db.exec("UPDATE sales_jobs SET status='claimed'");
+ const before=(await db.query('SELECT id,revision FROM sales_conversations WHERE campaign_id=$1 ORDER BY id',[f.p])).rows;
+ assert.equal(await rpc('sales_configure_ai',[f.p,owner,{...config,max_tokens:9000},config]),true);
+ const after=(await db.query('SELECT id,revision FROM sales_conversations WHERE campaign_id=$1 ORDER BY id',[f.p])).rows;
+ assert.deepEqual(after.map((c,i)=>Number(c.revision)-Number(before[i].revision)),[1,1]);
+ assert.equal((await one("SELECT count(*)::int n FROM sales_jobs WHERE status='cancelled' AND reason='ai_configuration_changed'")).n,2);
+ await db.exec("UPDATE sales_jobs SET status='claimed'");
+ assert.equal(await rpc('sales_configure_knowledge_products',[f.p,owner,[],[]]),true);
+ assert.equal((await one("SELECT count(*)::int n FROM sales_jobs WHERE status='cancelled' AND reason='knowledge_configuration_changed'")).n,2);
+ await db.query("UPDATE sales_jobs SET status='unknown' WHERE conversation_id=$1",[(await f.chat(f.users[1])).id]);
+ await assert.rejects(rpc('sales_configure_ai',[f.p,owner,config,{...config,max_tokens:9000}]),/disable_and_pause_required/);
+ await assert.rejects(rpc('sales_replace_knowledge_facts',[f.p,owner,[],'k1','unused',false,null]),/delivery_unresolved/);
+});
+
+test('customer campaign cannot enable against a disabled questionnaire and new RPCs remain service-only',async()=>{
+ const f=await customerFixture();await rpc('sales_control',[f.p,'disable',owner]);
+ await db.exec("UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,questionnaire_first}','false')");
+ await assert.rejects(rpc('sales_control',[f.p,'enable',owner]),/questionnaire_not_ready/);
+ for(const name of ['sales_conversation_enabled(uuid,uuid)','sales_control_conversation(uuid,uuid,text,uuid)','sales_replace_knowledge_facts(uuid,uuid,jsonb,text,text,boolean,text)']) {
+  for(const role of ['anon','authenticated','service_role']) {
+   assert.equal((await one('SELECT has_function_privilege($1,$2,\'EXECUTE\') allowed',[role,name])).allowed,role==='service_role');
+  }
+ }
+});
+
+test('administrator configures a separate OFF customer route idempotently without changing the live owner test',async()=>{
+ const base=await fixture(),page=randomUUID(),block=randomUUID(),phrase='Настроенная менеджером кодовая фраза';
+ await db.query("INSERT INTO site_pages VALUES($1,'published',$2)",[page,[{id:block,type:'form',content:{auth_mode:true,questionnaire_first:false}}]]);
+ const before=await one('SELECT * FROM sales_campaigns WHERE id=$1',[base]);
+ const first=await rpc('sales_configure_questionnaire_campaign',[base,owner,page,block,phrase,null,'k1']);
+ assert.equal(await rpc('sales_configure_questionnaire_campaign',[base,owner,page,block,phrase,null,'k1']),first);
+ const customer=await one('SELECT * FROM sales_campaigns WHERE id=$1',[first]);
+ assert.equal(customer.mode,'off');assert.equal(customer.test_user_id,null);assert.equal(customer.knowledge.client_release_approved,false);
+ assert.equal(customer.product_id,before.product_id);assert.deepEqual(customer.ai_config,before.ai_config);
+ assert.deepEqual(await one('SELECT * FROM sales_campaigns WHERE id=$1',[base]),before);
+ assert.equal((await one('SELECT count(*)::int n FROM sales_conversations WHERE campaign_id=$1',[first])).n,0);
+ const route={id:first,page_id:page,block_id:block,trigger_phrase:phrase};
+ assert.equal(await rpc('sales_configure_questionnaire_campaign',[base,owner,page,block,'Новая управляемая кодовая фраза',route,'k1']),first);
+ await assert.rejects(rpc('sales_configure_questionnaire_campaign',[base,owner,page,block,phrase,route,'k1']),/configuration_changed/);
+ await assert.rejects(rpc('sales_configure_questionnaire_campaign',[base,stranger,page,block,phrase,null,'k1']),/owner_required/);
+ assert.equal(await rpc('sales_campaign_configuration_ready',[first]),true);
+});
+
+test('route change requires an exact snapshot and stopped campaign; opted-out customers do not block safe configuration',async()=>{
+ const f=await customerFixture(),alice=f.users[0],route={id:f.p,page_id:f.page,block_id:f.block,trigger_phrase:f.phrase};
+ await f.send(alice,760);
+ await assert.rejects(rpc('sales_configure_questionnaire_campaign',[f.p,owner,f.page,f.block,'Другая фраза запуска',route,'k1']),/disable_and_pause_required/);
+ await rpc('sales_control',[f.p,'disable',owner]);
+ await db.query("UPDATE sales_conversations SET state='STOPPED' WHERE campaign_id=$1",[f.p]);
+ assert.equal(await rpc('sales_campaign_configuration_ready',[f.p]),true);
+ assert.equal(await rpc('sales_configure_questionnaire_campaign',[f.p,owner,f.page,f.block,'Другая фраза запуска',route,'k1']),f.p);
+ assert.equal((await f.chat(alice)).state,'STOPPED');assert.equal((await f.chat(alice)).started,false);
+ assert.equal((await one('SELECT mode FROM sales_campaigns WHERE id=$1',[f.p])).mode,'off');
+ const functionName='sales_configure_questionnaire_campaign(uuid,uuid,uuid,uuid,text,jsonb,text)';
+ assert.equal((await one("SELECT has_function_privilege('authenticated',$1,'EXECUTE') allowed",[functionName])).allowed,false);
+});
+
+
+test('customer activation validates actual course sources, grants no access, and keeps the owner campaign intact',async()=>{
+ const f=await customerFixture();await rpc('sales_control',[f.p,'disable',owner]);
+ const source=randomUUID(),root=randomUUID(),module=randomUUID(),lesson=randomUUID(),block=randomUUID();
+ const revision='a'.repeat(64),hash='b'.repeat(64);
+ await db.query("INSERT INTO course_transcription_sources VALUES($1,'kinescope',$2,$3,true)",[source,randomUUID(),revision]);
+ await db.query("INSERT INTO course_transcripts VALUES($1,$2,$3,'unreviewed','PRIVATE TRANSCRIPT')",[source,revision,hash]);
+ await db.query('INSERT INTO training_modules VALUES($1,$2,$3,false)',[module,product,root]);
+ await db.query('INSERT INTO training_lessons VALUES($1,$2)',[lesson,module]);
+ await db.query(`INSERT INTO lesson_blocks VALUES($1,$2,now(),'{"url":"https://kinescope.io/synthetic-customer-source","provider":"kinescope"}','video')`,[block,lesson]);
+ await db.query('INSERT INTO course_transcription_bindings VALUES($1,$2,$3,$4,now())',[source,block,lesson,product]);
+ const fact={id:'customer-topic',title:'Темы курса',text:'В курсе рассматривается работа с документами в 1С.',source_id:source,source_revision:revision,source_sha256:hash,module_id:module,binding_block_id:block};
+ await db.query("UPDATE sales_campaigns SET knowledge=knowledge||$2::jsonb WHERE id=$1",[f.p,{root_module_id:root,facts:[fact],client_release_approved:false}]);
+ const ownerBefore=await one('SELECT * FROM sales_campaigns WHERE test_user_id=$1',[owner]);
+ assert.equal((await rpc('sales_check_knowledge_facts',[f.p,[fact]])).valid,true);
+ await db.query('UPDATE course_transcription_sources SET enabled=false WHERE id=$1',[source]);
+ await assert.rejects(rpc('sales_control',[f.p,'enable',owner]),/knowledge_not_ready/);
+ assert.equal((await one('SELECT mode FROM sales_campaigns WHERE id=$1',[f.p])).mode,'off');
+ await db.query('UPDATE course_transcription_sources SET enabled=true WHERE id=$1',[source]);
+ await rpc('sales_control',[f.p,'enable',owner]);
+ const active=await one('SELECT * FROM sales_campaigns WHERE id=$1',[f.p]);
+ assert.equal(active.mode,'questionnaire_customer');assert.equal(active.knowledge.client_release_approved,true);
+ assert.deepEqual(await one('SELECT * FROM sales_campaigns WHERE test_user_id=$1',[owner]),ownerBefore);
+ assert.equal((await one('SELECT count(*)::int n FROM notification_outbox')).n,0);
+ assert.equal((await one('SELECT count(*)::int n FROM orders_v2')).n,0);
+ await f.send(f.users[0],770);assert.equal((await f.chat(f.users[0])).started,true);
 });

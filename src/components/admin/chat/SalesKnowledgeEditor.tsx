@@ -10,12 +10,12 @@ type Snapshot = {facts:Fact[];knowledge_version:string;facts_sha256:string;produ
 type Preview = {valid:boolean;facts_sha256:string;added:number;changed:number;removed:number;unchanged:number;errors:{fact_id:string;reason:string}[];applied?:boolean;noop?:boolean};
 const reasons:Record<string,string>={invalid_short_reply:'Короткая реплика: от 1 до 200 символов, без вопросов, ссылок и контактов; только для темы программы',module_not_in_product:'Модуль не включён действующими правилами продукта',source_unavailable_or_stale:'Источник изменён или недоступен',source_binding_stale:'Изменилась привязка видео',source_gap_unresolved:'Источник требует проверки пропусков',target_video_not_verified:'Видео не совпадает с источником',target_outside_curriculum:'Урок не относится к программе',target_reference_required:'Выберите урок программы',invalid_summary_text:'Проверьте описание: до 600 символов, без ссылок и контактных данных',invalid_or_duplicate_id:'Повторяющаяся или некорректная карточка',invalid_source_reference:'Не указан проверенный источник',invalid_title:'Проверьте название темы'};
 
-export function SalesKnowledgeEditor({userId,businessAccountId,editable}:{userId:string;businessAccountId:string;editable:boolean}) {
+export function SalesKnowledgeEditor({userId,businessAccountId,editable,campaignScope}:{userId:string;businessAccountId:string;editable:boolean;campaignScope?:'owner_test'|'questionnaire_customer'}) {
   const [data,setData]=useState<Snapshot|null>(null),[facts,setFacts]=useState<Fact[]>([]),[preview,setPreview]=useState<Preview|null>(null);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[approved,setApproved]=useState(false);
   const [expanded,setExpanded]=useState<string|null>(null);
   async function invoke<T>(action:string,extra:Record<string,unknown>={}):Promise<T>{
-    const {data,error}=await supabase.functions.invoke('sales-runtime-control',{body:{action,user_id:userId,business_account_id:businessAccountId,...extra}});
+    const {data,error}=await supabase.functions.invoke('sales-runtime-control',{body:{action,user_id:userId,business_account_id:businessAccountId,campaign_scope:campaignScope,...extra}});
     if(error||data?.error)throw Error(data?.message||'Не удалось выполнить операцию. Обновите базу перед повторной попыткой.');
     return data as T;
   }

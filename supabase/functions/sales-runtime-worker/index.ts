@@ -15,6 +15,7 @@ import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
 import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
 import { CB21_RELEASE_DIGEST } from "../_shared/cb21-release.ts";
 import {authorizeInteractiveAction} from "../_shared/sales-runtime/interactive-auth.mjs";
+import {campaignForConversation} from "../_shared/sales-runtime/recipient.mjs";
 async function draftReply(
   context: Awaited<ReturnType<typeof loadContext>>,
   stage: string,
@@ -227,19 +228,31 @@ Deno.serve(async (request) => {
         db.from("sales_conversations").select("*").eq("id", job.conversation_id)
           .single(),
       );
-      const p = await read(
+      const storedCampaign = await read(
         db.from("sales_campaigns").select("*").eq("id", c.campaign_id).single(),
       );
+      const source = await read(
+        db.from("telegram_messages").select("user_id,telegram_user_id,bot_id,business_account_id,transport").eq(
+          "id", job.inbound_id,
+        ).single(),
+      );
+      // Bind every history, eligibility, attachment and checkout read to this
+      // conversation before invoking any model or payment-link writer.
+      const p = campaignForConversation(storedCampaign, c, source);
+      if (storedCampaign.mode === 'questionnaire_customer') {
+        const eligible=await rpc(db,'site_questionnaire_sales_identity', {
+          p_page_id: storedCampaign.source_page_id,
+          p_block_id: storedCampaign.source_block_id,
+          p_user_id: p.test_user_id,
+          p_telegram_user_id: source.telegram_user_id,
+        });
+        if(eligible !== true) throw Error('sales_questionnaire_identity_unavailable');
+        p.questionnaire_verified=true;
+      }
       const b = await read(
         db.from("telegram_business_connections").select(
           "id,bot_id,connection_id,is_enabled,can_reply",
         ).eq("id", p.business_account_id).single(),
-      );
-      const source = await read(
-        db.from("telegram_messages").select("telegram_user_id").eq(
-          "id",
-          job.inbound_id,
-        ).single(),
       );
       const bot = await read(
         db.from("telegram_bots").select("bot_token_encrypted,status").eq(

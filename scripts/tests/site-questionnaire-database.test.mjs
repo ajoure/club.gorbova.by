@@ -8,6 +8,7 @@ const notificationsMigration = await readFile(new URL('../../supabase/migrations
 const remindersMigration = await readFile(new URL('../../supabase/migrations/20261009064000_site_questionnaire_incomplete_reminders.sql', import.meta.url), 'utf8');
 const journeysMigration = await readFile(new URL('../../supabase/migrations/20261009083000_site_questionnaire_journeys.sql',import.meta.url),'utf8');
 const submissionDelayMigration = await readFile(new URL('../../supabase/migrations/20261009072000_site_questionnaire_submission_delay.sql', import.meta.url), 'utf8');
+const salesIdentityMigration = await readFile(new URL('../../supabase/migrations/20261009120000_questionnaire_sales_identity.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -94,6 +95,58 @@ async function counts(db) {
     (SELECT count(*)::int FROM consent_logs) consents,(SELECT count(*)::int FROM audit_logs) audits,
     (SELECT count(*)::int FROM commercial_access) access`)).rows[0];
 }
+test('sales identity requires this saved questionnaire and the genuinely linked Telegram recipient', async()=>{
+  const {db,submit}=await fixture();try {
+    await db.exec(salesIdentityMigration);
+    const eligible=async(page=id(3),block=id(8),user=id(1),telegram=123)=>(await db.query(
+      'SELECT site_questionnaire_sales_identity($1,$2,$3,$4) eligible',[page,block,user,telegram])).rows[0].eligible;
+    assert.equal(await eligible(),false);
+    await submit();const before=await counts(db);
+    assert.equal(await eligible(),true);
+    for(const args of [[id(99),id(8),id(1),123],[id(3),id(99),id(1),123],[id(3),id(8),id(99),123],[id(3),id(8),id(1),999]]) {
+      assert.equal(await eligible(...args),false);
+    }
+    assert.deepEqual(await counts(db),before,'identity reads create no orders, grants or messages');
+    await db.exec('DELETE FROM telegram_access_audit');
+    assert.equal(await eligible(),false,'a manually entered Telegram ID is not a support-bot connection');
+  }finally{await db.close()}
+});
+
+test('sales identity stops on blocked, archived, merged, unverified or disabled form state',async()=>{
+  const {db,submit}=await fixture();try {
+    await db.exec(salesIdentityMigration);await submit();
+    const eligible=async()=>(await db.query('SELECT site_questionnaire_sales_identity($1,$2,$3,123) eligible',[id(3),id(8),id(1)])).rows[0].eligible;
+    for(const change of [
+      "UPDATE auth.users SET banned_until=now()+interval '1 day'",
+      'UPDATE auth.users SET email_confirmed_at=null',
+      'UPDATE auth.users SET deleted_at=now()',
+      "UPDATE profiles SET status='blocked'",
+      'UPDATE profiles SET is_archived=true',
+      `UPDATE profiles SET merged_to_profile_id='${id(99)}'`,
+      "UPDATE site_pages SET status='draft'",
+      "UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,questionnaire_first}','false')",
+      "UPDATE site_form_submissions SET metadata=metadata-'questionnaire_first'",
+      "UPDATE site_form_submissions SET status='pending'",
+    ]) {
+      await db.exec('BEGIN');try {await db.exec(change);assert.equal(await eligible(),false,change);}finally{await db.exec('ROLLBACK')}
+    }
+    assert.equal(await eligible(),true);
+  }finally{await db.close()}
+});
+
+test('sales identity RPC is service-only and does not expose auth rows to its caller',async()=>{
+  const {db,submit}=await fixture();try {
+    await db.exec(salesIdentityMigration);await submit();
+    for(const role of ['anon','authenticated','service_role']) {
+      const privilege=(await db.query("SELECT has_function_privilege($1,'public.site_questionnaire_sales_identity(uuid,uuid,uuid,bigint)','EXECUTE') allowed",[role])).rows[0].allowed;
+      assert.equal(privilege,role==='service_role');
+    }
+    await db.exec('SET ROLE service_role');
+    assert.equal((await db.query('SELECT site_questionnaire_sales_identity($1,$2,$3,123) eligible',[id(3),id(8),id(1)])).rows[0].eligible,true);
+    await assert.rejects(db.query('SELECT * FROM auth.users'),/permission denied/);
+    await db.exec('RESET ROLE');
+  }finally{await db.close()}
+});
 async function notifications(db) {
   await db.exec(`CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
       CONSTRAINT broadcast_templates_trigger_kind_check CHECK(trigger_kind IN ('manual','lesson_event','scheduled_condition')));
