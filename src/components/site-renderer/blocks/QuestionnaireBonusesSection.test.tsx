@@ -2,37 +2,35 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ user: null as null | { id: string }, telegram: vi.fn() }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: mocks.user }) }));
-vi.mock("./QuestionnaireTelegramStep", () => ({ QuestionnaireTelegramStep: (props: unknown) => {
-  mocks.telegram(props); return <p>Персональные приглашения</p>;
+vi.mock("./QuestionnaireTelegramStep", () => ({ QuestionnaireTelegramStep: () => {
+  mocks.telegram(); return <p>Подключение support-бота</p>;
 } }));
 import { QuestionnaireBonusesSection } from "./QuestionnaireBonusesSection";
-const content = { source_page_id: "c8c5c19a-a10d-4f6b-8049-449f37230ed0", source_block_id: "7f144dcc-1a71-4225-8399-efd4d91502cd" };
-describe("thank-you page personal Telegram bonuses", () => {
+const content = { channel_url: "https://t.me/+thanks-fixture", channel_title: "Канал из настроек", personal_chat_url: "https://t.me/m/configuredSlug" };
+describe("thank-you page shared Telegram links", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.user = { id: "owner" }; });
   afterEach(cleanup);
-  it("uses the original questionnaire identity, without lessons or shared invitation URLs", () => {
+  it("uses configured shared channel and business links without lessons or recipient-bound invitations", () => {
     render(<QuestionnaireBonusesSection content={content} />);
-    expect(mocks.telegram).toHaveBeenCalledWith({ pageId: content.source_page_id, blockId: content.source_block_id });
-    expect(screen.getByText(/бесплатные Telegram-каналы/)).toBeInTheDocument();
-    expect(screen.queryByRole("link")).toBeNull();
-    expect(screen.queryByText(/урок|тренинг/i)).toBeNull();
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Вступить в бесплатный канал" })).toHaveAttribute("href", content.channel_url);
+    expect(screen.getByRole("link", { name: "Написать Катерине в Telegram" })).toHaveAttribute("href", content.personal_chat_url);
+    expect(screen.getByText(content.channel_title)).toBeInTheDocument();
+    expect(screen.queryByText(/урок|тренинг|персональн/i)).toBeNull();
   });
-  it("does not request personal links in a public unauthenticated session or preview", () => {
+  it("allows a forwarded thank-you page to show the shared links without requiring an account", () => {
     mocks.user = null;
-    const view = render(<QuestionnaireBonusesSection content={content} />);
-    expect(screen.getByRole("status")).toHaveTextContent("вашем аккаунте");
-    expect(mocks.telegram).not.toHaveBeenCalled();
-    view.rerender(<QuestionnaireBonusesSection content={content} isPreview />);
+    render(<QuestionnaireBonusesSection content={content} />);
+    expect(screen.getAllByRole("link")).toHaveLength(2);
     expect(mocks.telegram).not.toHaveBeenCalled();
   });
-  it("fails closed for a missing source form instead of showing a generic channel link", () => {
-    render(<QuestionnaireBonusesSection content={{}} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("не настроены");
+  it("never prepares bot linking in preview", () => {
+    render(<QuestionnaireBonusesSection content={content} isPreview />);
     expect(mocks.telegram).not.toHaveBeenCalled();
   });
-  it("uses the administrator's configured business link rather than hardcoding a recipient or message", () => {
-    render(<QuestionnaireBonusesSection content={{ ...content, personal_chat_url: "https://t.me/m/fixtureSlug" }} />);
-    expect(screen.getByRole("link", { name: "Написать Катерине в Telegram" })).toHaveAttribute("href", "https://t.me/m/fixtureSlug");
-    expect(screen.getByText(/Нажмите «Отправить»/)).toBeInTheDocument();
+  it("does not expose an unsafe configured channel address", () => {
+    render(<QuestionnaireBonusesSection content={{ channel_url: "https://wrong.example/invite" }} />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
   });
 });

@@ -7,10 +7,9 @@ DECLARE
   v_block constant uuid := '7f144dcc-1a71-4225-8399-efd4d91502cd';
   v_product constant uuid := '0c98e21a-5300-4cfb-ac82-51c2d6184650';
   v_tariff constant uuid := '1a7bf501-c654-46d3-8665-1febd7eb59eb';
-  v_bot constant uuid := '1a560e98-574e-4fd9-82ab-4b7bbdc300b4';
   v_ids uuid[]; v_orders uuid[]; v_users uuid[]; v_content jsonb; v_mapping jsonb; v_keys text[];
   v_s public.site_form_submissions%ROWTYPE; v_p public.profiles%ROWTYPE; v_o public.orders_v2%ROWTYPE;
-  v_email text; v_label text; v_count integer; v_histories integer := 0; v_changed_orders integer := 0; v_grants integer := 0;
+  v_email text; v_label text; v_count integer; v_histories integer := 0; v_changed_orders integer := 0;
 BEGIN
   IF p_execute IS NULL THEN RAISE EXCEPTION 'legacy_repair_mode_required'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('cb21_legacy_questionnaire_repair',0));
@@ -66,22 +65,16 @@ BEGIN
       OR (v_s.metadata ? 'block_id' AND v_s.metadata->>'block_id' IS DISTINCT FROM v_block::text)
       OR (v_s.metadata ? 'product_id' AND v_s.metadata->>'product_id' IS DISTINCT FROM v_product::text)
       OR (v_s.metadata ? 'tariff_id' AND v_s.metadata->>'tariff_id' IS DISTINCT FROM v_tariff::text)
-      OR (v_s.metadata ? 'legacy_bonus_verified' AND v_s.metadata->>'legacy_bonus_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1')
+      OR (v_s.metadata ? 'legacy_repair_verified' AND v_s.metadata->>'legacy_repair_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1')
       THEN RAISE EXCEPTION 'legacy_repair_submission_changed'; END IF;
   END LOOP;
-  IF NOT EXISTS(SELECT 1 FROM site_questionnaire_bonus_channels WHERE page_id=v_page AND block_id=v_block
-    AND bot_id=v_bot AND channel_id=-1002091043395 AND is_enabled)
-    OR EXISTS(SELECT 1 FROM telegram_clubs WHERE channel_id=-1002091043395 OR chat_id=-1002091043395)
-    THEN RAISE EXCEPTION 'legacy_repair_bonus_route_unavailable'; END IF;
   SELECT count(*) INTO v_histories FROM site_form_submissions WHERE id=ANY(v_ids)
-    AND metadata->>'legacy_bonus_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1';
+    AND metadata->>'legacy_repair_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1';
   v_changed_orders := CASE WHEN v_o.product_id IS DISTINCT FROM v_product OR v_o.tariff_id IS DISTINCT FROM v_tariff THEN 1 ELSE 0 END;
-  v_grants := CASE WHEN EXISTS(SELECT 1 FROM site_questionnaire_bonus_channel_grants
-    WHERE bot_id=v_bot AND channel_id=-1002091043395 AND user_id=v_p.user_id) THEN 0 ELSE 1 END;
-  IF NOT p_execute THEN RETURN jsonb_build_object('dry_run',true,'histories',v_histories,'orders',v_changed_orders,'bonus_grants',v_grants); END IF;
+  IF NOT p_execute THEN RETURN jsonb_build_object('dry_run',true,'histories',v_histories,'orders',v_changed_orders); END IF;
   UPDATE site_form_submissions SET metadata=metadata || jsonb_build_object('block_id',v_block,'product_id',v_product,
-    'tariff_id',v_tariff,'legacy_bonus_verified','cb21-2026-10-08-v1') WHERE id=ANY(v_ids)
-    AND metadata->>'legacy_bonus_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1';
+    'tariff_id',v_tariff,'legacy_repair_verified','cb21-2026-10-08-v1') WHERE id=ANY(v_ids)
+    AND metadata->>'legacy_repair_verified' IS DISTINCT FROM 'cb21-2026-10-08-v1';
   GET DIAGNOSTICS v_count=ROW_COUNT;
   IF v_count<>v_histories THEN RAISE EXCEPTION 'legacy_repair_history_rowcount'; END IF;
   UPDATE orders_v2 SET product_id=v_product,tariff_id=v_tariff WHERE id=v_o.id
@@ -93,16 +86,12 @@ BEGIN
     IS DISTINCT FROM (to_jsonb(v_o)-'product_id'-'tariff_id'-'updated_at') THEN
     RAISE EXCEPTION 'legacy_repair_order_side_effect';
   END IF;
-  INSERT INTO site_questionnaire_bonus_channel_grants(bot_id,channel_id,user_id,submission_id)
-    VALUES(v_bot,-1002091043395,v_p.user_id,v_ids[1]) ON CONFLICT(bot_id,channel_id,user_id) DO NOTHING;
-  GET DIAGNOSTICS v_count=ROW_COUNT;
-  IF v_count<>v_grants THEN RAISE EXCEPTION 'legacy_repair_grant_rowcount'; END IF;
-  IF v_histories+v_changed_orders+v_grants>0 THEN
+  IF v_histories+v_changed_orders>0 THEN
     INSERT INTO audit_logs(action,actor_type,actor_label,entity_type,entity_id,meta)
       VALUES('site_questionnaire.legacy_repaired','system','managed-deployment','site_page',v_page::text,
-        jsonb_build_object('histories',v_histories,'orders',v_changed_orders,'bonus_grants',v_grants,'purchases_changed',0,'origin_preserved',true));
+        jsonb_build_object('histories',v_histories,'orders',v_changed_orders,'purchases_changed',0,'origin_preserved',true));
   END IF;
-  RETURN jsonb_build_object('dry_run',false,'histories',v_histories,'orders',v_changed_orders,'bonus_grants',v_grants);
+  RETURN jsonb_build_object('dry_run',false,'histories',v_histories,'orders',v_changed_orders);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.repair_cb21_legacy_questionnaires(boolean) FROM PUBLIC,anon,authenticated;

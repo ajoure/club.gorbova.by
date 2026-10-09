@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration = await readFile(new URL('../../supabase/migrations/20261009071000_site_questionnaire_bonus_channel.sql',import.meta.url),'utf8');
-const inviteMigration = await readFile(new URL('../../supabase/migrations/20261009074000_site_questionnaire_bonus_invites.sql',import.meta.url),'utf8');
 const legacyMigration = await readFile(new URL('../../supabase/migrations/20261009080000_cb21_legacy_questionnaire_repair.sql',import.meta.url),'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 async function legacyFixture() {
@@ -44,16 +43,15 @@ test('bounded legacy repair preserves dates, answers, identity and money, suppor
   const db=await legacyFixture();try{
     const original=(await db.query('SELECT id,created_at,form_data,source FROM site_form_submissions ORDER BY id')).rows;
     assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(false) result')).rows[0].result,
-      {dry_run:true,histories:2,orders:1,bonus_grants:1});
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
+      {dry_run:true,histories:2,orders:1});
     assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(true) result')).rows[0].result,
-      {dry_run:false,histories:2,orders:1,bonus_grants:1});
+      {dry_run:false,histories:2,orders:1});
     assert.deepEqual((await db.query('SELECT id,created_at,form_data,source FROM site_form_submissions ORDER BY id')).rows,original);
     assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'questionnaire_first'")).rows[0].n,0);
     assert.deepEqual((await db.query('SELECT user_id,status,base_price,final_price,paid_amount FROM orders_v2')).rows[0],
       {user_id:null,status:'draft',base_price:'0',final_price:'0',paid_amount:'0'});
     assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(true) result')).rows[0].result,
-      {dry_run:false,histories:0,orders:0,bonus_grants:0});
+      {dry_run:false,histories:0,orders:0});
     assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs WHERE action='site_questionnaire.legacy_repaired'")).rows[0].n,1);
     assert.equal((await db.query("SELECT has_function_privilege('authenticated','repair_cb21_legacy_questionnaires(boolean)','EXECUTE') allowed")).rows[0].allowed,false);
   }finally{await db.close();}
@@ -69,8 +67,7 @@ test('legacy repair rejects wrong email, changed amounts and unexpected payments
     await db.exec('UPDATE orders_v2 SET final_price=0');
     await db.query('INSERT INTO payments_v2 VALUES($1,$2)',[id(30),id(20)]);
     await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_order_changed/);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
-    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_bonus_verified'")).rows[0].n,0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_repair_verified'")).rows[0].n,0);
     assert.equal((await db.query('SELECT product_id FROM orders_v2')).rows[0].product_id,null);
   }finally{await db.close();}
 });
@@ -82,8 +79,7 @@ test('unexpected order trigger effects roll back history and bonus changes toget
       CREATE TRIGGER fixture_bad_order BEFORE UPDATE ON orders_v2 FOR EACH ROW EXECUTE FUNCTION fixture_bad_order_trigger();`);
     await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_order_side_effect/);
     assert.equal((await db.query('SELECT final_price,product_id FROM orders_v2')).rows[0].final_price,'0');
-    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_bonus_verified'")).rows[0].n,0);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_repair_verified'")).rows[0].n,0);
   }finally{await db.close();}
 });
 
@@ -111,7 +107,6 @@ async function fixture() {
     CREATE TABLE commercial_access(user_id uuid,expires_at timestamptz);
     GRANT USAGE ON SCHEMA public,auth TO service_role;`);
   await db.exec(migration);
-  await db.exec(inviteMigration);
   await db.query('INSERT INTO auth.users VALUES($1,now(),null,null)',[id(1)]);
   await db.query("INSERT INTO site_pages VALUES($1,'published','[]')",[id(3)]);
   await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[id(4)]);
@@ -123,137 +118,44 @@ async function fixture() {
   return {db,submit,resolve};
 }
 
-test('free bonus right is permanent, idempotent and independent of club expiry and page archival',async()=>{
-  const {db,submit,resolve}=await fixture();try{
-    await submit(); await submit(7);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,1);
-    assert.equal((await resolve()).eligible,false,'a genuine bot linking event is required');
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
-    assert.equal((await resolve()).eligible,true);
+test('shared free channel accepts people without an account or questionnaire and survives paid expiry',async()=>{
+  const {db}=await fixture();try{
+    const resolve=user=>db.query('SELECT resolve_site_questionnaire_bonus_join($1,-100123,$2) result',[id(4),user]).then(r=>r.rows[0].result);
+    assert.equal((await resolve(999)).eligible,true,'a forwarded shared invitation is allowed');
     await db.query("INSERT INTO commercial_access VALUES($1,now()-interval '1 year')",[id(1)]);
     await db.exec("UPDATE site_pages SET status='archived',blocks='[]'");
-    assert.equal((await resolve()).eligible,true);
+    await db.exec("UPDATE profiles SET telegram_link_status='unlinked'");
+    assert.equal((await resolve(999)).eligible,true);
     assert.equal((await db.query('SELECT count(*)::int n FROM commercial_access')).rows[0].n,1);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,1);
+    assert.equal((await db.query("SELECT to_regclass('site_questionnaire_bonus_invites') relation")).rows[0].relation,null);
   }finally{await db.close();}
 });
 
-test('wrong identity, incomplete forms and commercial channel collisions never grant bonus entry',async()=>{
-  const {db,submit,resolve}=await fixture();try{
-    await submit(6,'pending'); await submit(7,'processed',id(99));
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
-    await submit(8);
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
+test('paused free routes remain reserved and commercial collisions block approval',async()=>{
+  const {db,resolve}=await fixture();try{
     await db.query('INSERT INTO telegram_clubs VALUES($1,$2,null,-100123,false,null)',[id(9),id(4)]);
     assert.equal((await resolve()).eligible,false);
     await db.exec('UPDATE telegram_clubs SET channel_id=NULL');
     assert.equal((await resolve()).eligible,true);
-    await db.exec("UPDATE profiles SET telegram_link_status='unlinked'");
-    assert.equal((await resolve()).eligible,false);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,1,'unlinking preserves the permanent right');
     await db.exec('UPDATE site_questionnaire_bonus_channels SET is_enabled=false');
-    assert.equal((await resolve()).configured,true,'paused bonus routes remain reserved');
+    assert.equal((await resolve()).configured,true);
+    assert.equal((await resolve()).eligible,false);
+    assert.equal((await db.query("SELECT has_function_privilege('authenticated','resolve_site_questionnaire_bonus_join(uuid,bigint,bigint)','EXECUTE') allowed")).rows[0].allowed,false);
   }finally{await db.close();}
 });
 
-test('ordinary users cannot forge bonus rights or invoke the privileged resolver',async()=>{
-  const {db,submit}=await fixture();try{
-    await submit();
-    const rights=(await db.query("SELECT has_table_privilege('authenticated','site_questionnaire_bonus_channel_grants','INSERT') can_insert,has_function_privilege('authenticated','record_site_questionnaire_bonus_channel_grant(uuid)','EXECUTE') can_grant,has_function_privilege('authenticated','resolve_site_questionnaire_bonus_join(uuid,bigint,bigint)','EXECUTE') can_resolve")).rows[0];
-    assert.deepEqual(rights,{can_insert:false,can_grant:false,can_resolve:false});
-    await db.exec('SET ROLE service_role');
-    assert.equal((await db.query('SELECT record_site_questionnaire_bonus_channel_grant($1) n',[id(6)])).rows[0].n,0);
-    await db.exec('RESET ROLE');
-  }finally{await db.close();}
-});
-
-test('managed cutover changes exactly one mapping and rejects an unexpected grant count atomically',async()=>{
+test('managed cutover changes exactly one mapping, preserves the paid chat and is idempotent',async()=>{
   const {db}=await fixture();try{
     const bot='1a560e98-574e-4fd9-82ab-4b7bbdc300b4';
     const page='c8c5c19a-a10d-4f6b-8049-449f37230ed0';
     const club='4f8f9d8f-07ce-4898-8012-39f1035c1456';
     await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[bot]);
     await db.query("INSERT INTO site_pages VALUES($1,'published','[]')",[page]);
-    await db.query('INSERT INTO telegram_clubs VALUES($1,$2,-100999,-1002091043395,false,$3)',[club,bot,'private-fixture-link']);
-    await assert.rejects(db.query('SELECT configure_cb21_bonus_channel(1)'),/bonus_channel_grant_rowcount/);
+    await db.query('INSERT INTO telegram_clubs VALUES($1,$2,-100999,-1002091043395,false,$3)',[club,bot,'fixture-link']);
+    await assert.rejects(db.query('SELECT configure_cb21_bonus_channel(2)'),/bonus_channel_expected_count_required/);
     assert.equal((await db.query('SELECT channel_id FROM telegram_clubs WHERE id=$1',[club])).rows[0].channel_id,-1002091043395);
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channels WHERE page_id=$1',[page])).rows[0].n,0);
-    assert.deepEqual((await db.query('SELECT configure_cb21_bonus_channel(0) result')).rows[0].result,{changed_clubs:1,changed_routes:1,granted_users:0,replayed:false});
+    assert.deepEqual((await db.query('SELECT configure_cb21_bonus_channel(1) result')).rows[0].result,{changed_clubs:1,changed_routes:1,replayed:false});
     assert.deepEqual((await db.query('SELECT chat_id,channel_id,channel_invite_link FROM telegram_clubs WHERE id=$1',[club])).rows[0],{chat_id:-100999,channel_id:null,channel_invite_link:null});
-    assert.deepEqual((await db.query('SELECT configure_cb21_bonus_channel(0) result')).rows[0].result,{changed_clubs:0,changed_routes:0,replayed:true});
-    assert.equal((await db.query('SELECT count(*)::int n FROM commercial_access')).rows[0].n,0);
-  }finally{await db.close();}
-});
-
-test('private invites require canonical ownership, reserve once and return the same permanent link',async()=>{
-  const {db,submit}=await fixture();try{
-    const prepare = user => db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),user]).then(r=>r.rows[0].result);
-    assert.equal((await prepare(id(1))).status,'ineligible');
-    await submit();
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
-    assert.equal((await prepare(id(99))).status,'ineligible');
-    const first=await prepare(id(1));
-    assert.equal(first.status,'create');
-    assert.equal((await prepare(id(1))).status,'busy');
-    await assert.rejects(db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://wrong.example/private')",[first.request_id,id(1)]),/bonus_invite_invalid/);
-    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+fixture-private') ok",[first.request_id,id(99)])).rows[0].ok,false);
-    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+fixture-private') ok",[first.request_id,id(1)])).rows[0].ok,true);
-    assert.equal((await prepare(id(1))).invite_link,'https://t.me/+fixture-private');
-    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '10 years'");
-    assert.equal((await prepare(id(1))).invite_link,'https://t.me/+fixture-private','a ready invite never expires');
-    assert.equal((await db.query('SELECT expires_at FROM site_questionnaire_bonus_invites')).rows[0].expires_at,null);
-    await db.exec("UPDATE site_pages SET status='archived'");
-    assert.equal((await prepare(id(1))).status,'ready');
-    await db.exec("UPDATE profiles SET telegram_link_status='unlinked'");
-    assert.equal((await prepare(id(1))).status,'ineligible','an unlinked identity cannot obtain even a cached invitation');
-    assert.equal((await db.query("SELECT has_function_privilege('authenticated','prepare_site_questionnaire_bonus_invite(uuid,uuid,uuid)','EXECUTE') allowed")).rows[0].allowed,false);
-  }finally{await db.close();}
-});
-
-test('personal permanent invitations approve only their bound Telegram identity, including re-entry',async()=>{
-  const {db,submit}=await fixture();try{
-    await submit();
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
-    const prepare=user=>db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),user]).then(r=>r.rows[0].result);
-    const join=(telegram,link)=>db.query('SELECT resolve_site_questionnaire_bonus_invite_join($1,-100123,$2,$3) result',[id(4),telegram,link]).then(r=>r.rows[0].result);
-    const owner=await prepare(id(1));
-    await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+owner-fixture')",[owner.request_id,id(1)]);
-    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,true);
-    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '10 years'");
-    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,true,'the same owner can re-enter without expiry');
-    assert.equal((await join(123,null)).eligible,false);
-    assert.equal((await join(123,'https://t.me/+unknown-fixture')).eligible,false);
-    assert.equal((await join(999,'https://t.me/+owner-fixture')).eligible,false);
-    await db.query('INSERT INTO auth.users VALUES($1,now(),null,null)',[id(10)]);
-    await db.query("INSERT INTO profiles VALUES($1,$2,'active',false,null,456,$3,'active',now())",[id(11),id(10),id(4)]);
-    await db.query('INSERT INTO site_form_submissions VALUES($1,$2,$3,$4,$5)',[id(12),id(11),id(3),'processed',JSON.stringify({questionnaire_first:true,block_id:id(5),user_id:id(10)})]);
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,456,'telegram_link_confirmed',$2,now())",[id(10),JSON.stringify({bot_id:id(4)})]);
-    assert.equal((await join(456,'https://t.me/+owner-fixture')).eligible,false,'even another eligible participant cannot use a forwarded personal link');
-    const other=await prepare(id(10));
-    await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+other-fixture')",[other.request_id,id(10)]);
-    assert.equal((await join(456,'https://t.me/+other-fixture')).eligible,true);
-    assert.equal((await join(123,'https://t.me/+other-fixture')).eligible,false);
-    await db.query('UPDATE profiles SET telegram_user_id=789,telegram_linked_at=now() WHERE user_id=$1',[id(1)]);
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,789,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
-    assert.equal((await join(789,'https://t.me/+owner-fixture')).eligible,false,'a relinked identity needs its own new invitation');
-    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,false,'the previous identity loses approval eligibility');
-    assert.equal((await prepare(id(1))).status,'create');
-    assert.equal((await db.query("SELECT has_function_privilege('authenticated','resolve_site_questionnaire_bonus_invite_join(uuid,bigint,bigint,text)','EXECUTE') allowed")).rows[0].allowed,false);
-  }finally{await db.close();}
-});
-
-test('failed or expired invite leases cannot overwrite a newer reservation or remove a permanent right',async()=>{
-  const {db,submit}=await fixture();try{
-    await submit();
-    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
-    const prepare = () => db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),id(1)]).then(r=>r.rows[0].result);
-    const first=await prepare();
-    assert.equal((await db.query('SELECT finish_site_questionnaire_bonus_invite($1,$2) ok',[first.request_id,id(1)])).rows[0].ok,true);
-    assert.equal((await prepare()).status,'busy');
-    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '1 second'");
-    const retry=await prepare();assert.equal(retry.status,'create');assert.notEqual(retry.request_id,first.request_id);
-    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+stale-fixture') ok",[first.request_id,id(1)])).rows[0].ok,false);
-    await db.exec('DELETE FROM site_form_submissions');
-    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,1);
+    assert.deepEqual((await db.query('SELECT configure_cb21_bonus_channel(1) result')).rows[0].result,{changed_clubs:0,changed_routes:0,replayed:true});
   }finally{await db.close();}
 });

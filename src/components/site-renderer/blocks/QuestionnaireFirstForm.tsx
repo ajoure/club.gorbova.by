@@ -36,7 +36,8 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   const [answers, setAnswers] = useState<Record<string, string>>(initial?.answers || {});
   const [submissionKey] = useState(() => initial?.submissionKey || crypto.randomUUID());
   const [source] = useState(() => initial?.source || parseQuestionnaireSource(new URLSearchParams(window.location.search).get("src")));
-  const [step, setStep] = useState<"answers" | "otp" | "success">("answers");
+  const [step, setStep] = useState<"answers" | "otp" | "telegram" | "success">("answers");
+  const [telegramLinked, setTelegramLinked] = useState(false);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -107,7 +108,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
           setError("Укажите email аккаунта, в который вы вошли. Для другого email выйдите из аккаунта; черновик сохранится.");
           return;
         }
-        await submit();
+        setStep("telegram");
       } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`)) {
         setStep("otp");
       }
@@ -119,7 +120,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     if (working.current) return;
     working.current = true; setBusy(true); setError("");
     try {
-      if (await otp.verifyCode(code)) await submit();
+      if (await otp.verifyCode(code)) setStep("telegram");
     } catch {
       setStep("answers");
       setError("Почта подтверждена, но анкету не удалось сохранить. Нажмите «Отправить анкету» ещё раз — ответы сохранены.");
@@ -135,16 +136,27 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
         {step === "success" ? (
           <div className="space-y-4">
             <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
-            {!isPreview && pageId && blockId && <QuestionnaireTelegramStep pageId={pageId} blockId={blockId} />}
+          </div>
+        ) : step === "telegram" ? (
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">Подключите Telegram</h2>
+            <p>Почта подтверждена. Подключите support-бота, чтобы мы могли общаться с вами лично. Ответы сохранены в черновике.</p>
+            {pageId && <QuestionnaireTelegramStep pageId={pageId} onLinkedChange={setTelegramLinked} />}
+            <Button type="button" className="w-full" disabled={pending || !telegramLinked} onClick={() => {
+              if (working.current || !telegramLinked) return;
+              working.current = true; setBusy(true); setError("");
+              void submit().catch(() => setError("Не удалось сохранить анкету. Проверьте подключение бота и попробуйте ещё раз — ответы сохранены."))
+                .finally(() => { working.current = false; setBusy(false); });
+            }}>Сохранить анкету и получить бонусы</Button>
           </div>
         ) : step === "otp" ? (
           <form className="space-y-4" onSubmit={e => { e.preventDefault(); void verifyAndSubmit(); }}>
             <h2 className="text-xl font-semibold">Подтвердите почту</h2>
             <p>Отправили шестизначный код на {otp.email}. Введите его здесь — переходить по ссылкам не нужно.</p>
-            <p className="text-sm text-muted-foreground">Ваши ответы сохранены. После подтверждения отправим анкету и покажем бонусы.</p>
+            <p className="text-sm text-muted-foreground">Ваши ответы сохранены. После подтверждения проверим подключение support-бота.</p>
             <Label htmlFor={`questionnaire-code-${blockId}`}>Код из письма</Label>
             <Input id={`questionnaire-code-${blockId}`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))} disabled={pending} />
-            <Button type="submit" className="w-full" disabled={pending || code.length !== 6}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Подтвердить и отправить</Button>
+            <Button type="submit" className="w-full" disabled={pending || code.length !== 6}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Подтвердить почту</Button>
             <Button type="button" variant="outline" className="w-full" disabled={pending || otp.resendIn > 0} onClick={() => { void otp.resend(); }}>{otp.resendIn > 0 ? `Повторить через ${otp.resendIn} с` : "Отправить код ещё раз"}</Button>
             <Button type="button" variant="ghost" disabled={pending} onClick={() => { otp.changeEmail(); setCode(""); setStep("answers"); }}>Изменить email или ответы</Button>
           </form>

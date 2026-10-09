@@ -1,3 +1,17 @@
+-- Service-only proof of the existing primary support-bot binding.
+CREATE OR REPLACE FUNCTION public.site_questionnaire_telegram_link_ready(p_user_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+  SELECT EXISTS(SELECT 1 FROM profiles p JOIN telegram_bots b ON b.id=p.telegram_link_bot_id
+    WHERE p.user_id=p_user_id AND p.status='active' AND NOT coalesce(p.is_archived,false)
+      AND p.merged_to_profile_id IS NULL AND p.telegram_user_id IS NOT NULL
+      AND p.telegram_link_status='active' AND b.is_primary AND b.status='active'
+      AND EXISTS(SELECT 1 FROM telegram_access_audit a WHERE a.user_id=p.user_id
+        AND a.telegram_user_id=p.telegram_user_id AND a.event_type IN ('telegram_link_confirmed','telegram_relink')
+        AND a.meta->>'bot_id'=b.id::text AND a.created_at>=p.telegram_linked_at-interval '5 seconds'));
+$$;
+REVOKE ALL ON FUNCTION public.site_questionnaire_telegram_link_ready(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.site_questionnaire_telegram_link_ready(uuid) TO service_role;
+
 -- Questionnaire-first submission is a service-only transaction. It never pays
 -- an order or grants commercial access. All routing comes from a published page.
 CREATE UNIQUE INDEX IF NOT EXISTS site_form_questionnaire_submission_key
@@ -40,6 +54,9 @@ BEGIN
   IF NOT FOUND OR v_profile.status IS DISTINCT FROM 'active' OR coalesce(v_profile.is_archived, false)
      OR v_profile.merged_to_profile_id IS NOT NULL THEN
     RAISE EXCEPTION 'questionnaire_profile_unavailable' USING ERRCODE = '42501';
+  END IF;
+  IF NOT public.site_questionnaire_telegram_link_ready(p_user_id) THEN
+    RAISE EXCEPTION 'questionnaire_telegram_link_required' USING ERRCODE='42501';
   END IF;
   SELECT * INTO v_page FROM public.site_pages WHERE id = p_page_id AND status = 'published' FOR SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'questionnaire_page_unavailable' USING ERRCODE = '22023'; END IF;

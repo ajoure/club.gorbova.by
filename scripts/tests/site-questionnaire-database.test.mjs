@@ -23,7 +23,9 @@ async function fixture() {
   const db = new PGlite();
   const schemaSQL = `CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
-    CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid UNIQUE,status text,is_archived boolean,merged_to_profile_id uuid,full_name text,phone text);
+    CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid UNIQUE,status text,is_archived boolean,merged_to_profile_id uuid,full_name text,phone text,telegram_user_id bigint,telegram_link_bot_id uuid,telegram_link_status text,telegram_linked_at timestamptz);
+    CREATE TABLE telegram_bots(id uuid PRIMARY KEY,status text,is_primary boolean);
+    CREATE TABLE telegram_access_audit(user_id uuid,telegram_user_id bigint,event_type text,meta jsonb,created_at timestamptz DEFAULT now());
     CREATE TABLE site_pages(id uuid PRIMARY KEY,workspace_id uuid,status text,blocks jsonb);
     CREATE TABLE products_v2(id uuid PRIMARY KEY,is_active boolean);
     CREATE TABLE tariffs(id uuid PRIMARY KEY,product_id uuid,is_active boolean);
@@ -48,7 +50,9 @@ async function fixture() {
   await db.exec(schemaSQL);
   const content = { auth_mode:true,questionnaire_first:true,fields,product_binding_enabled:true,product_id:id(4),tariff_id:id(5),deal_creation_enabled:true,pipeline_id:id(6),pipeline_stage_id:id(7) };
   await db.query('INSERT INTO auth.users VALUES($1,$2,now(),null,null)',[id(1),'buyer@example.invalid']);
-  await db.query("INSERT INTO profiles VALUES($1,$2,'active',false,null,'Existing name','Existing phone')",[id(2),id(1)]);
+  await db.query("INSERT INTO profiles VALUES($1,$2,'active',false,null,'Existing name','Existing phone',123,$3,'active',now())",[id(2),id(1),id(90)]);
+  await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[id(90)]);
+  await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(90)})]);
   await db.query("INSERT INTO site_pages VALUES($1,$2,'published',$3)",[id(3),id(30),JSON.stringify([{id:id(8),type:'form',content}])]);
   await db.query('INSERT INTO products_v2 VALUES($1,true)',[id(4)]);
   await db.query('INSERT INTO tariffs VALUES($1,$2,true)',[id(5),id(4)]);
@@ -60,7 +64,7 @@ async function fixture() {
     const safeRoles = schemaSQL.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;',
       () => "DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
     const seed = `INSERT INTO auth.users VALUES(${quote(id(1))},'buyer@example.invalid',now(),null,null);
-      INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone');
+      INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone',123,$3,'active',now());
       INSERT INTO site_pages VALUES(${quote(id(3))},${quote(id(30))},'published',${quote(JSON.stringify([{id:id(8),type:'form',content}]))});
       INSERT INTO products_v2 VALUES(${quote(id(4))},true);
       INSERT INTO tariffs VALUES(${quote(id(5))},${quote(id(4))},true);
@@ -88,8 +92,7 @@ async function counts(db) {
     (SELECT count(*)::int FROM commercial_access) access`)).rows[0];
 }
 async function notifications(db) {
-  await db.exec(`ALTER TABLE profiles ADD COLUMN telegram_user_id bigint;
-    CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
+  await db.exec(`CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
       CONSTRAINT broadcast_templates_trigger_kind_check CHECK(trigger_kind IN ('manual','lesson_event','scheduled_condition')));
     CREATE TABLE broadcast_automation_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),template_id uuid,user_id uuid,event_key text,status text DEFAULT 'pending',
       created_at timestamptz DEFAULT now(),attempted_at timestamptz,error text,
@@ -107,14 +110,14 @@ test('new questionnaire entrants wait for the configured delay and retries do no
     await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,delay_minutes}','90'::jsonb) WHERE id=$1",[id(60)]);
     await submit(); await submit();
     const delivery=(await db.query('SELECT * FROM broadcast_automation_deliveries')).rows[0];
-    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,1);
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,2);
     assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,0);
     assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery.id])).rows[0].allowed,false);
     await db.exec("UPDATE broadcast_automation_deliveries SET created_at=now()-interval '91 minutes',available_at=now()-interval '1 minute'");
-    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,1);
+    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,2);
     assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery.id])).rows[0].allowed,true);
     await submit(id(11));
-    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,1);
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,2);
     assert.equal((await counts(db)).access,0);
   }finally{await db.close()}
 });
@@ -243,11 +246,9 @@ test('service-only submission works without granting service_role access to auth
     await db.exec('RESET ROLE');
   }finally{await db.close()}
 });
-test('questionnaire notifications wait for Telegram linking and are unique independently for each channel',async()=>{
+test('completed questionnaires queue both channels once after verified bot linking',async()=>{
   const {db,submit}=await fixture();try{
     await notifications(db);await submit();
-    assert.deepEqual((await db.query('SELECT channel FROM broadcast_automation_deliveries ORDER BY channel')).rows,[{channel:'email'}]);
-    await db.exec('UPDATE profiles SET telegram_user_id=123456');
     assert.deepEqual((await db.query('SELECT channel FROM broadcast_automation_deliveries ORDER BY channel')).rows,[{channel:'email'},{channel:'telegram'}]);
     await submit();await submit(id(11));
     await db.exec('UPDATE profiles SET telegram_user_id=654321');
@@ -265,4 +266,21 @@ test('unapproved or unrelated form templates cannot send, and blocked profiles d
     await db.exec("UPDATE profiles SET status='blocked',telegram_user_id=123456");
     assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0);
   }finally{await db.close()}
+});
+
+
+test('questionnaire requires a genuine primary support-bot binding before any writes',async()=>{
+  const {db,submit}=await fixture();try{
+    await db.exec("UPDATE profiles SET telegram_link_status='not_linked'");
+    await assert.rejects(submit(),/questionnaire_telegram_link_required/);
+    assert.equal((await counts(db)).submissions,0);
+    await db.exec("UPDATE profiles SET telegram_link_status='active'; DELETE FROM telegram_access_audit");
+    await assert.rejects(submit(),/questionnaire_telegram_link_required/);
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(90)})]);
+    await db.exec('UPDATE telegram_bots SET is_primary=false');
+    await assert.rejects(submit(),/questionnaire_telegram_link_required/);
+    await db.exec('UPDATE telegram_bots SET is_primary=true');
+    assert.equal((await submit()).success,true);
+    assert.equal((await counts(db)).access,0);
+  }finally{await db.close();}
 });

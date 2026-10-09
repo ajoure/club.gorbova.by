@@ -27,7 +27,7 @@ export function QuestionnaireBonusesBlockEditor({ content, onChange }: {
     return [{ id: block.id, title: typeof settings.title === "string" && settings.title ? settings.title : "Анкета" }];
   });
   return <div className="space-y-3">
-    <p className="text-sm text-muted-foreground">Страница «Спасибо» показывает персональные Telegram-приглашения из той же анкеты. Общие ссылки на каналы сюда не вставляются.</p>
+    <p className="text-sm text-muted-foreground">Страница «Спасибо» использует общую бессрочную ссылку на бесплатный канал. Для рассылок настройте другую ссылку в шаблоне рассылки.</p>
     <Label htmlFor="questionnaire-bonuses-page">Страница исходной анкеты</Label>
     <Select value={pageId || undefined} onValueChange={source_page_id => onChange({ ...content, source_page_id, source_block_id: "" })}>
       <SelectTrigger id="questionnaire-bonuses-page"><SelectValue placeholder={isPending ? "Загрузка…" : "Выберите страницу"} /></SelectTrigger>
@@ -39,10 +39,16 @@ export function QuestionnaireBonusesBlockEditor({ content, onChange }: {
       <SelectContent>{forms.map(form => <SelectItem key={form.id} value={form.id}>{form.title}</SelectItem>)}</SelectContent>
     </Select>
     {isError && <p role="alert" className="text-sm text-destructive">Не удалось загрузить страницы. Откройте настройки ещё раз.</p>}
+    <Label htmlFor="questionnaire-bonuses-channel-title">Название бесплатного канала</Label>
+    <Input id="questionnaire-bonuses-channel-title" value={typeof content.channel_title === "string" ? content.channel_title : ""}
+      onChange={event => onChange({ ...content, channel_title: event.target.value })} />
+    <Label htmlFor="questionnaire-bonuses-channel-url">Ссылка на канал для страницы «Спасибо»</Label>
+    <Input id="questionnaire-bonuses-channel-url" value={typeof content.channel_url === "string" ? content.channel_url : ""}
+      onChange={event => onChange({ ...content, channel_url: event.target.value.trim() })} placeholder="https://t.me/+…" />
     <Label htmlFor="questionnaire-bonuses-personal-chat">Личная переписка Катерины</Label>
     <Input id="questionnaire-bonuses-personal-chat" value={personalChatUrl}
       onChange={event => onChange({ ...content, personal_chat_url: event.target.value.trim() })} placeholder="https://t.me/m/..." />
     {personalChatUrl && !questionnairePersonalChatUrl(personalChatUrl) && <p role="alert" className="text-sm text-destructive">Нужна ссылка Telegram Business вида https://t.me/m/…</p>}
-    <p className="text-sm text-muted-foreground">Используйте готовую ссылку Telegram Business с настроенным сообщением. Это вторая кнопка, отдельно от персонального приглашения в канал. Текст сообщения меняется в настройках этой ссылки в Telegram.</p>
+    <p className="text-sm text-muted-foreground">Используйте готовую ссылку Telegram Business с настроенным сообщением. Это отдельная кнопка личной переписки, не приглашение в канал. Текст сообщения меняется в настройках этой ссылки в Telegram.</p>
   </div>;
 }
