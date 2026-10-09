@@ -2938,6 +2938,8 @@ export type Database = {
       broadcast_automation_deliveries: {
         Row: {
           attempted_at: string | null
+          available_at: string
+          channel: string | null
           created_at: string
           error: string | null
           event_key: string
@@ -2951,6 +2953,8 @@ export type Database = {
         }
         Insert: {
           attempted_at?: string | null
+          available_at?: string
+          channel?: string | null
           created_at?: string
           error?: string | null
           event_key: string
@@ -2964,6 +2968,8 @@ export type Database = {
         }
         Update: {
           attempted_at?: string | null
+          available_at?: string
+          channel?: string | null
           created_at?: string
           error?: string | null
           event_key?: string
@@ -20309,6 +20315,189 @@ export type Database = {
           },
         ]
       }
+      site_questionnaire_bonus_channels: {
+        Row: {
+          block_id: string
+          bot_id: string
+          channel_id: number
+          is_enabled: boolean
+          legacy_channel_snapshot: Json
+          legacy_club_id: string | null
+          page_id: string
+        }
+        Insert: {
+          block_id: string
+          bot_id: string
+          channel_id: number
+          is_enabled?: boolean
+          legacy_channel_snapshot?: Json
+          legacy_club_id?: string | null
+          page_id: string
+        }
+        Update: {
+          block_id?: string
+          bot_id?: string
+          channel_id?: number
+          is_enabled?: boolean
+          legacy_channel_snapshot?: Json
+          legacy_club_id?: string | null
+          page_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_legacy_club_id_fkey"
+            columns: ["legacy_club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_questionnaire_confirmations: {
+        Row: {
+          block_id: string
+          confirmed_at: string
+          page_id: string
+          user_id: string
+        }
+        Insert: {
+          block_id: string
+          confirmed_at?: string
+          page_id: string
+          user_id: string
+        }
+        Update: {
+          block_id?: string
+          confirmed_at?: string
+          page_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_confirmations_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_questionnaire_journeys: {
+        Row: {
+          account_outcome: string | null
+          attribution: Json
+          first_seen_at: string
+          id: string
+          key_hash: string
+          last_seen_at: string
+          outcome_at: string | null
+          page_id: string
+          profile_id: string | null
+        }
+        Insert: {
+          account_outcome?: string | null
+          attribution?: Json
+          first_seen_at?: string
+          id: string
+          key_hash: string
+          last_seen_at?: string
+          outcome_at?: string | null
+          page_id: string
+          profile_id?: string | null
+        }
+        Update: {
+          account_outcome?: string | null
+          attribution?: Json
+          first_seen_at?: string
+          id?: string
+          key_hash?: string
+          last_seen_at?: string
+          outcome_at?: string | null
+          page_id?: string
+          profile_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_journeys_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_journeys_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_questionnaire_visit_limits: {
+        Row: {
+          attempts: number
+          ip_hash: string
+          window_start: string
+        }
+        Insert: {
+          attempts: number
+          ip_hash: string
+          window_start: string
+        }
+        Update: {
+          attempts?: number
+          ip_hash?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
+      site_questionnaire_visits: {
+        Row: {
+          id: string
+          journey_id: string
+          seen_at: string
+        }
+        Insert: {
+          id: string
+          journey_id: string
+          seen_at?: string
+        }
+        Update: {
+          id?: string
+          journey_id?: string
+          seen_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_visits_journey_id_fkey"
+            columns: ["journey_id"]
+            isOneToOne: false
+            referencedRelation: "site_questionnaire_journeys"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sms_messages: {
         Row: {
           company_id: string | null
@@ -25001,6 +25190,14 @@ export type Database = {
         Args: { _intent_id: string; _provider_refund_id: string }
         Returns: Json
       }
+      bind_site_questionnaire_journey: {
+        Args: {
+          p_journey_id: string
+          p_key_hash: string
+          p_submission_id: string
+        }
+        Returns: undefined
+      }
       bulk_mark_dialogs_read_atomic: {
         Args: { p_boundary?: string; p_user_ids: string[] }
         Returns: number
@@ -25056,6 +25253,8 @@ export type Database = {
         Args: { _limit?: number }
         Returns: {
           attempted_at: string | null
+          available_at: string
+          channel: string | null
           created_at: string
           error: string | null
           event_key: string
@@ -25236,6 +25435,10 @@ export type Database = {
       }
       compute_order_financial_state: {
         Args: { p_order_id: string }
+        Returns: Json
+      }
+      configure_cb21_bonus_channel: {
+        Args: { p_expected_mappings?: number }
         Returns: Json
       }
       consume_inline_otp_attempt: {
@@ -27198,6 +27401,10 @@ export type Database = {
         Args: { p_package_template_id: string; p_profile_id: string }
         Returns: boolean
       }
+      queue_site_questionnaire_broadcasts: {
+        Args: { _channel?: string; _submission_id: string }
+        Returns: undefined
+      }
       queue_telegram_notification: {
         Args: {
           p_club_id?: string
@@ -27207,6 +27414,15 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      read_site_questionnaire_journey_attribution: {
+        Args: {
+          p_journey_id: string
+          p_key_hash: string
+          p_page_id: string
+          p_profile_id: string
+        }
+        Returns: Json
       }
       recalc_order_totals: {
         Args: {
@@ -27263,6 +27479,14 @@ export type Database = {
           p_target_user_id?: string
         }
         Returns: Json
+      }
+      record_site_questionnaire_account_outcome: {
+        Args: { p_journey_id: string; p_key_hash: string; p_user_id: string }
+        Returns: undefined
+      }
+      record_site_questionnaire_confirmation: {
+        Args: { p_block_id: string; p_page_id: string; p_user_id: string }
+        Returns: undefined
       }
       referral_admin_attach_historical_profile: {
         Args: {
@@ -27499,6 +27723,10 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      repair_cb21_legacy_questionnaires: {
+        Args: { p_execute?: boolean }
+        Returns: Json
+      }
       report_package_field_dependencies: {
         Args: { _field_id: string }
         Returns: Json
@@ -27562,6 +27790,14 @@ export type Database = {
           has_telegram: boolean
           user_id: string
         }[]
+      }
+      resolve_site_questionnaire_bonus_join: {
+        Args: {
+          p_bot_id: string
+          p_channel_id: number
+          p_telegram_user_id?: number
+        }
+        Returns: Json
       }
       resolve_telegram_conversation_v1: {
         Args: {
@@ -28081,6 +28317,41 @@ export type Database = {
         Args: { _payment_id: string; _primary_order_id: string }
         Returns: Json
       }
+      site_questionnaire_delivery_allowed: {
+        Args: { p_delivery_id: string }
+        Returns: boolean
+      }
+      site_questionnaire_funnel_stats: {
+        Args: { p_from: string; p_page_id: string; p_to: string }
+        Returns: {
+          attribution: Json
+          contacts: number
+          existing_accounts: number
+          new_accounts: number
+          questionnaires: number
+          unclassified_accounts: number
+          visitors: number
+          visits: number
+        }[]
+      }
+      site_questionnaire_telegram_link_ready: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
+      submit_site_questionnaire: {
+        Args: {
+          p_block_id: string
+          p_consent_version: string
+          p_fields: Json
+          p_journey_id?: string
+          p_journey_key_hash?: string
+          p_page_id: string
+          p_source_code: string
+          p_submission_key: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       subscription_charge_cron_secret: { Args: never; Returns: string }
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
@@ -28104,6 +28375,17 @@ export type Database = {
         Returns: Json
       }
       tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
+      track_site_questionnaire_visit: {
+        Args: {
+          p_attribution: Json
+          p_ip_hash: string
+          p_journey_id: string
+          p_key_hash: string
+          p_page_id: string
+          p_visit_id: string
+        }
+        Returns: Json
+      }
       training_module_release_guard: {
         Args: { _module_id: string }
         Returns: boolean
@@ -28202,6 +28484,16 @@ export type Database = {
           resolved_product_id: string
           valid: boolean
         }[]
+      }
+      validate_site_questionnaire_otp_journey: {
+        Args: {
+          p_block_id: string
+          p_email: string
+          p_journey_id: string
+          p_key_hash: string
+          p_page_id: string
+        }
+        Returns: undefined
       }
       verify_bepaid_webhook_realtime_queue_cron_secret: {
         Args: { _candidate: string }
