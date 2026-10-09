@@ -251,7 +251,7 @@ export function FormsHubTable({
                 title="Открыть сделку"
                 onClick={(e) => {
                   e.stopPropagation();
-                  navigate(`/admin/deals?order=${orderId}&from=forms`);
+                  navigate(`/admin/deals?deal=${orderId}&from=forms`);
                 }}
                 className="inline-flex items-center justify-center hover:text-emerald-700 transition-colors"
               >
@@ -264,7 +264,7 @@ export function FormsHubTable({
         );
       }
       case "has_account": {
-        const contactId = row.user_id || row.profile_id;
+        const contactId = row.profile_id || row.user_id;
         return (
           <TableCell key={col.key} style={{ width: col.width }} className="text-center" onClick={(e) => e.stopPropagation()}>
             {row.has_account && contactId ? (
