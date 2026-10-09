@@ -136,21 +136,21 @@ async function fetchSiteForms(
   const profileIdsToResolve: string[] = [];
   for (const f of forms || []) {
     const meta = (f.metadata || {}) as any;
-    if (!meta.user_id && f.profile_id) {
+    if (f.profile_id) {
       profileIdsToResolve.push(f.profile_id);
     }
   }
 
-  let profileUserIdMap: Record<string, string | null> = {};
+  let profileMap: Record<string, { user_id: string | null; email: string | null }> = {};
   if (profileIdsToResolve.length > 0) {
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, user_id")
+      .select("id, user_id, email")
       .in("id", [...new Set(profileIdsToResolve)]);
     if (profilesError) throw profilesError;
     if (profiles) {
       for (const p of profiles) {
-        profileUserIdMap[p.id] = p.user_id;
+        profileMap[p.id] = { user_id: p.user_id, email: p.email };
       }
     }
   }
@@ -183,7 +183,7 @@ async function fetchSiteForms(
     const page = (f as any).site_pages;
     const pageTitle = page?.title || "Без страницы";
     const metaUserId = meta.user_id || null;
-    const resolvedUserId = metaUserId || (f.profile_id ? profileUserIdMap[f.profile_id] : null);
+    const resolvedUserId = metaUserId || (f.profile_id ? profileMap[f.profile_id]?.user_id : null);
     const resolvedProductId = page?.product_id || meta.product_id || null;
     const resolvedProductTitle = (resolvedProductId && productMap[resolvedProductId]?.name) || meta.product_title || "";
 
@@ -191,7 +191,7 @@ async function fetchSiteForms(
       id: f.id,
       source_type: "site_form",
       client_name: pickField(formData, NAME_KEYS) || meta.full_name || "—",
-      client_email: pickField(formData, EMAIL_KEYS) || meta.email || null,
+      client_email: pickField(formData, EMAIL_KEYS) || meta.email || (f.profile_id ? profileMap[f.profile_id]?.email : null) || null,
       client_phone: pickField(formData, PHONE_KEYS) || meta.phone || null,
       profile_id: f.profile_id,
       user_id: resolvedUserId,

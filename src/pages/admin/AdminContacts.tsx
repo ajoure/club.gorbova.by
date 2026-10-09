@@ -1,3 +1,4 @@
+import { useLinkedAdminContact } from "@/hooks/useLinkedAdminContact";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
@@ -362,6 +363,8 @@ export default function AdminContacts() {
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
 
+  const { data: linkedContact } = useLinkedAdminContact(contactFromUrl);
+
   const PAGE_SIZE = 100;
 
   // Server-side tab counts via RPC
@@ -662,17 +665,16 @@ export default function AdminContacts() {
 
   // Auto-open contact card when contact param is in URL
   useEffect(() => {
-    if (contactFromUrl && contacts) {
-      const contact = contacts.find(c => c.id === contactFromUrl) || 
-                      contacts.find(c => c.user_id === contactFromUrl);
-      if (contact) {
-        setSelectedContactId(contact.id);
-        const newParams = new URLSearchParams();
-        if (fromPage) newParams.set("from", fromPage);
-        setSearchParams(newParams, { replace: true });
+    if (contactFromUrl && (contacts || linkedContact)) {
+      const contact = contacts?.find(c => c.id === contactFromUrl) ||
+                      contacts?.find(c => c.user_id === contactFromUrl);
+      const resolvedContact = contact || linkedContact;
+      if (resolvedContact) {
+        setSelectedContactId(resolvedContact.id);
+        // Keep the URL identity while the card is open. It may be outside the loaded list.
       }
     }
-  }, [contactFromUrl, contacts, setSearchParams, fromPage]);
+  }, [contactFromUrl, contacts, linkedContact]);
 
   // Fetch products for filter options
   const { data: products } = useQuery({
@@ -975,7 +977,14 @@ export default function AdminContacts() {
     }
   };
 
-  const selectedContact = contacts?.find(c => c.id === selectedContactId);
+  const selectedContact = contacts?.find(c => c.id === selectedContactId) ||
+    (linkedContact?.id === selectedContactId ? {
+      ...linkedContact,
+      status: linkedContact.is_archived ? "archived" : linkedContact.status,
+      deals_count: 0,
+      last_deal_at: null,
+      communication_style: linkedContact.communication_style as unknown as CommunicationStyle | null,
+    } as Contact : undefined);
 
   // Drag select hook
   const {
