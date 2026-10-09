@@ -1,7 +1,7 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 const mocks=vi.hoisted(()=>({invoke:vi.fn()}));
 vi.mock('@/integrations/supabase/client',()=>({supabase:{functions:{invoke:mocks.invoke}}}));
-import {trackQuestionnaireJourney} from './siteQuestionnaireJourney';
+import {trackQuestionnaireJourney,prepareQuestionnaireJourneyForEmail} from './siteQuestionnaireJourney';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 function storage(){const map=new Map<string,string>();return {getItem:(k:string)=>map.get(k)||null,setItem:(k:string,v:string)=>{map.set(k,v);}};}
 describe('questionnaire visitor persistence',()=>{
@@ -27,6 +27,18 @@ describe('questionnaire visitor persistence',()=>{
   expect(await trackQuestionnaireJourney(id(21),id(22),'?utm_source=Other',store)).not.toBeNull();
   expect(mocks.invoke.mock.calls[1][1].body.request_key).toBe(nonce);
   vi.useRealTimers();
+ });
+ it('keeps retries on one journey but separates a second email in a shared browser',async()=>{
+  const store=storage();mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(33),journey_key:'a'.repeat(64)},error:null});
+  const first=trackQuestionnaireJourney(id(31),id(32),'?utm_source=Stories',store);
+  expect(await prepareQuestionnaireJourneyForEmail(id(31),id(32),'','one@example.invalid',first,store)).toEqual(await first);
+  expect(await prepareQuestionnaireJourneyForEmail(id(31),id(32),'','ONE@example.invalid',first,store)).toEqual(await first);
+  expect(mocks.invoke).toHaveBeenCalledOnce();
+  mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(34),journey_key:'b'.repeat(64)},error:null});
+  expect((await prepareQuestionnaireJourneyForEmail(id(31),id(32),'?utm_source=Other','two@example.invalid',first,store))?.journey_id).toBe(id(34));
+  expect(mocks.invoke.mock.calls[1][1].body.attribution).toEqual({utm_source:'Stories'});
+  expect(mocks.invoke.mock.calls[1][1].body.visit_id).not.toBe(id(32));
+  expect(store.getItem(`site-questionnaire-journey:v1:${id(31)}`)).not.toMatch(/one@example|two@example/);
  });
  it('keeps a private request nonce when a first response is lost and accepts a later visit',async()=>{
   const store=storage();mocks.invoke.mockResolvedValueOnce({data:null,error:new Error('network')});

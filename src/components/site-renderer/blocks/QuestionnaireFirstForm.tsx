@@ -12,7 +12,7 @@ import { parseQuestionnaireSource } from "../../../../supabase/functions/site-fo
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 import { SafeHtml } from "@/components/ui/SafeHtml";
-import { trackQuestionnaireJourney, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
+import { trackQuestionnaireJourney, prepareQuestionnaireJourneyForEmail, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
@@ -111,11 +111,14 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     working.current = true; setBusy(true);
     try {
       // Do not attach a questionnaire for a different email to an already-open account.
+      if (user && user.email?.toLowerCase() !== email) {
+        setError("Укажите email аккаунта, в который вы вошли. Для другого email выйдите из аккаунта; черновик сохранится.");
+        return;
+      }
+      if (pageId) {
+        journeyRequest.current = prepareQuestionnaireJourneyForEmail(pageId, visitId, window.location.search, email, journeyRequest.current);
+      }
       if (user) {
-        if (user.email?.toLowerCase() !== email) {
-          setError("Укажите email аккаунта, в который вы вошли. Для другого email выйдите из аккаунта; черновик сохранится.");
-          return;
-        }
         setStep("telegram");
       } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`, await journeyRequest.current)) {
         setStep("otp");
