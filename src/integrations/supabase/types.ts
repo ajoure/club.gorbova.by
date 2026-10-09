@@ -2938,6 +2938,7 @@ export type Database = {
       broadcast_automation_deliveries: {
         Row: {
           attempted_at: string | null
+          channel: string | null
           created_at: string
           error: string | null
           event_key: string
@@ -2951,6 +2952,7 @@ export type Database = {
         }
         Insert: {
           attempted_at?: string | null
+          channel?: string | null
           created_at?: string
           error?: string | null
           event_key: string
@@ -2964,6 +2966,7 @@ export type Database = {
         }
         Update: {
           attempted_at?: string | null
+          channel?: string | null
           created_at?: string
           error?: string | null
           event_key?: string
@@ -25056,6 +25059,7 @@ export type Database = {
         Args: { _limit?: number }
         Returns: {
           attempted_at: string | null
+          channel: string | null
           created_at: string
           error: string | null
           event_key: string
@@ -27197,6 +27201,10 @@ export type Database = {
       profile_can_use_document_package: {
         Args: { p_package_template_id: string; p_profile_id: string }
         Returns: boolean
+      }
+      queue_site_questionnaire_broadcasts: {
+        Args: { _channel?: string; _submission_id: string }
+        Returns: undefined
       }
       queue_telegram_notification: {
         Args: {

@@ -15,6 +15,13 @@
       "when": 1791541736694,
       "tag": "0001_cb21_questionnaire_atomic_submission",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791541773661,
+      "tag": "0002_site_questionnaire_notifications",
+      "breakpoints": true
     }
   ]
 }
