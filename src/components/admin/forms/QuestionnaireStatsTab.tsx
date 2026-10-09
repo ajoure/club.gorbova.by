@@ -13,7 +13,7 @@ interface StatsRow {
 function date(daysAgo=0){return new Date(Date.now()+3*3600000-daysAgo*86400000).toISOString().slice(0,10);}
 export function QuestionnaireStatsTab(){
  const access=useAdminAccess();
- const allowed=access.canAccessResource("forms-hub","preregistration-stats");
+ const allowed=access.canAccessResource("forms-hub","site");
  const [pageId,setPageId]=useState("");const [from,setFrom]=useState(()=>date(30));const [to,setTo]=useState(()=>date());
  const pages=useQuery({queryKey:["questionnaire-stats-pages"],enabled:allowed,queryFn:async()=>{
   const {data,error}=await supabase.from("site_pages").select("id,title,slug,blocks").order("title");

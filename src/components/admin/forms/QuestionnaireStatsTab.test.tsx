@@ -14,7 +14,7 @@ describe('questionnaire source statistics',()=>{
   expect(screen.getByRole('alert')).toHaveTextContent('Нулевые показатели не подставляются');
   expect(screen.queryByText(/переходов и заполнений пока нет/)).toBeNull();
  });
- it('honours the dedicated resource permission',()=>{
+ it('honours the existing site forms permission',()=>{
   mocks.allowed=false;render(<QuestionnaireStatsTab />);
   expect(screen.getByRole('alert')).toHaveTextContent('Нет доступа');
   expect(screen.queryByLabelText('С даты')).toBeNull();
