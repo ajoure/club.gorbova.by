@@ -95,7 +95,7 @@ jobs:
         run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/site-form-submit/index.ts supabase/functions/process-scheduled-broadcasts/index.ts supabase/functions/verify-inline-otp/index.ts supabase/functions/site-questionnaire-visit/index.ts
       - name: Sales recipient types and isolated checkout tests
         run: |
-          deno check --no-lock --no-config --node-modules-dir=none supabase/functions/sales-runtime-worker/index.ts
+          deno check --no-lock --no-config --node-modules-dir=none supabase/functions/sales-runtime-worker/index.ts supabase/functions/sales-runtime-control/index.ts
           deno test --no-lock --no-config --node-modules-dir=none --allow-env --allow-net scripts/sales-knowledge/runtime-checkout.test.ts scripts/sales-knowledge/runtime-media.test.ts
       - name: MNS current-law Edge types
         run: node scripts/verify-mns-function-bundles.mjs

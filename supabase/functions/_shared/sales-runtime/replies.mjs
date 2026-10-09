@@ -29,7 +29,7 @@ feedback только если клиент сам подтвердил, что 
 Если клиент рассказал про свой опыт, следующий вопрос goals; если уже рассказал цели, подбери соответствующие темы или тариф.
 Не выбирай welcome после стадии qualification. Не навязывай payment до интереса к покупке.
 Если нечего ответить по фактам — handoff. Короткое спасибо/ок/договорились после завершения: bridge done, question none.
-Слова не генерируй, только выбирай согласованные ID. Это owner_test: клиентская кампания не включена.`;
+Слова не генерируй, только выбирай согласованные ID.`;
 
 export function renderSelection(
   selection,
@@ -111,9 +111,10 @@ export function policyInput(p, c, j, b, candidate, now) {
   return {
     now,
     policy: {
-      approved: p.mode === "owner_test",
+      approved: p.mode === "owner_test" ||
+        (p.mode === "questionnaire_customer" && p.questionnaire_verified === true),
       mode: "auto",
-      owner_test: true,
+      owner_test: p.mode === "owner_test",
       require_activation: true,
       version: p.policy_version,
       knowledge_version: p.knowledge_version,

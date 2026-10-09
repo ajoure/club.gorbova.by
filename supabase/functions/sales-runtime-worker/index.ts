@@ -239,13 +239,16 @@ Deno.serve(async (request) => {
       // Bind every history, eligibility, attachment and checkout read to this
       // conversation before invoking any model or payment-link writer.
       const p = campaignForConversation(storedCampaign, c, source);
-      if (storedCampaign.mode === 'questionnaire_customer' && await rpc(db,
-        'site_questionnaire_sales_identity', {
+      if (storedCampaign.mode === 'questionnaire_customer') {
+        const eligible=await rpc(db,'site_questionnaire_sales_identity', {
           p_page_id: storedCampaign.source_page_id,
           p_block_id: storedCampaign.source_block_id,
           p_user_id: p.test_user_id,
           p_telegram_user_id: source.telegram_user_id,
-        }) !== true) throw Error('sales_questionnaire_identity_unavailable');
+        });
+        if(eligible !== true) throw Error('sales_questionnaire_identity_unavailable');
+        p.questionnaire_verified=true;
+      }
       const b = await read(
         db.from("telegram_business_connections").select(
           "id,bot_id,connection_id,is_enabled,can_reply",

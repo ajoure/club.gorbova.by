@@ -36,10 +36,13 @@ Deno.serve(async (request) => {
       !/^[0-9a-f-]{36}$/i.test(body.user_id || "") ||
       !/^[0-9a-f-]{36}$/i.test(body.business_account_id || "")
     ) return json({ error: "scope_required" }, 400);
-    const campaign = await must(
-      db.from("sales_campaigns").select("*").eq("test_user_id", body.user_id)
-        .eq("business_account_id", body.business_account_id).maybeSingle(),
-    );
+    if(body.campaign_scope && !['owner_test','questionnaire_customer'].includes(body.campaign_scope))
+      return json({error:'campaign_scope_invalid'},400);
+    let campaignQuery=db.from('sales_campaigns').select('*').eq('business_account_id',body.business_account_id);
+    if(body.campaign_scope==='questionnaire_customer') campaignQuery=campaignQuery.is('test_user_id',null);
+    else if(body.campaign_scope==='owner_test') campaignQuery=campaignQuery.eq('test_user_id',body.user_id);
+    else campaignQuery=campaignQuery.or(`test_user_id.eq.${body.user_id},test_user_id.is.null`);
+    const campaign = await must(campaignQuery.order('test_user_id',{ascending:true,nullsFirst:false}).limit(1).maybeSingle());
     if (!campaign) return json({ available: false, can_manage: true });
     if(['knowledge_status','knowledge_preview','knowledge_apply','knowledge_version'].includes(body.action)) {
       return json(await knowledgeEditor(db,campaign,actor.id,body));
@@ -55,6 +58,10 @@ Deno.serve(async (request) => {
     } else if(body.action==='ai_config') {
       await rpc(db,'sales_configure_ai',{p_campaign:campaign.id,p_actor:actor.id,
         p_config:readAIConfig(body.ai_config),p_expected:body.expected_ai_config});
+    } else if(['pause','resume'].includes(body.action)) {
+      await rpc(db,'sales_control_conversation',{
+        p_campaign:campaign.id,p_user:body.user_id,p_action:body.action,p_actor:actor.id,
+      });
     } else if (body.action && body.action !== "status") {
       await rpc(db, "sales_control", {
         p_campaign: campaign.id,
@@ -66,13 +73,13 @@ Deno.serve(async (request) => {
     }
     const fresh = await must(
       db.from("sales_campaigns").select(
-        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,followup_min_seconds,followup_max_seconds,ai_config,knowledge",
+        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,followup_min_seconds,followup_max_seconds,ai_config,knowledge,source_page_id,source_block_id",
       ).eq("id", campaign.id).single(),
     );
     const conversation = await must(
       db.from("sales_conversations").select(
         "id,state,started,stage,reason,human_hold,updated_at",
-      ).eq("campaign_id", campaign.id).maybeSingle(),
+      ).eq("campaign_id", campaign.id).eq('user_id',body.user_id).maybeSingle(),
     );
     const job = conversation
       ? await must(
