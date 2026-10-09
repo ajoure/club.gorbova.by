@@ -7,6 +7,7 @@ import { FormsPreorderTabContent } from "@/components/admin/forms/FormsPreorderT
 import { FormsSiteTabContent } from "@/components/admin/forms/FormsSiteTabContent";
 import { FormsTrainingTabContent } from "@/components/admin/forms/FormsTrainingTabContent";
 import { FormsByProductTabContent } from "@/components/admin/forms/FormsByProductTabContent";
+import { QuestionnaireStatsTab } from "@/components/admin/forms/QuestionnaireStatsTab";
 import { FormsExportTabContent } from "@/components/admin/forms/FormsExportTabContent";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 
@@ -14,6 +15,7 @@ const tabs = [
   { id: "all", label: "Все", icon: LayoutList },
   { id: "site", label: "Анкеты сайта", icon: FileText },
   { id: "preorders", label: "Предзаписи", icon: ClipboardList },
+  { id: "preregistration-stats", label: "Анкета предзаписи", icon: ClipboardList },
   { id: "training", label: "Обучение", icon: GraduationCap },
   { id: "by-product", label: "По продуктам", icon: Layers },
   { id: "export", label: "Экспорт", icon: Download },
@@ -50,6 +52,8 @@ export default function AdminFormsHub() {
               return (
                 <button
                   key={tab.id}
+                  aria-label={tab.label}
+                  title={tab.label}
                   onClick={() => handleTabChange(tab.id)}
                   className={cn(
                     "relative flex items-center gap-1.5 px-3 h-8 rounded-full text-xs transition-all duration-200 whitespace-nowrap",
@@ -75,6 +79,7 @@ export default function AdminFormsHub() {
           {activeTab === "all" && <FormsAllTabContent />}
           {activeTab === "site" && <FormsSiteTabContent />}
           {activeTab === "preorders" && <FormsPreorderTabContent />}
+          {activeTab === "preregistration-stats" && <QuestionnaireStatsTab />}
           {activeTab === "training" && <FormsTrainingTabContent />}
           {activeTab === "by-product" && <FormsByProductTabContent />}
           {activeTab === "export" && <FormsExportTabContent />}

@@ -291,7 +291,7 @@ test('questionnaire requires a genuine primary support-bot binding before any wr
 
 test('saved questionnaires bind the verified first-touch journey atomically, without allowing a retry to switch sources',async()=>{
  const {db,submit}=await fixture();try{
-  await db.exec("CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT null::uuid$$; CREATE FUNCTION has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$SELECT false$$;");
+  await db.exec("CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT null::uuid$$; CREATE FUNCTION has_admin_resource_access(uuid,text,text,text) RETURNS boolean LANGUAGE sql AS $$SELECT false$$;");
   await db.exec(journeysMigration);
   const key='a'.repeat(64),ip='b'.repeat(64);
   await db.query('SELECT track_site_questionnaire_visit($1,$2,$3,$4,$5,$6)',[id(80),key,id(81),id(3),JSON.stringify({utm_source:'Stories',utm_campaign:'ЦБ21'}),ip]);

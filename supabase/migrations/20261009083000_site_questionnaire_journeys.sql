@@ -90,10 +90,10 @@ REVOKE ALL ON FUNCTION public.bind_site_questionnaire_journey(uuid,text,uuid) FR
 GRANT EXECUTE ON FUNCTION public.bind_site_questionnaire_journey(uuid,text,uuid) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.site_questionnaire_funnel_stats(p_page_id uuid,p_from timestamptz,p_to timestamptz)
-RETURNS TABLE(attribution jsonb,visits bigint,visitors bigint,questionnaires bigint,contacts bigint,new_accounts bigint,existing_accounts bigint)
+RETURNS TABLE(attribution jsonb,visits bigint,visitors bigint,questionnaires bigint,contacts bigint,new_accounts bigint,existing_accounts bigint,unclassified_accounts bigint)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
 BEGIN
-  IF auth.uid() IS NULL OR NOT public.has_admin_section_access(auth.uid(),'forms-hub','view') THEN
+  IF auth.uid() IS NULL OR NOT public.has_admin_resource_access(auth.uid(),'forms-hub','preregistration-stats','view') THEN
     RAISE EXCEPTION 'questionnaire_stats_forbidden' USING ERRCODE='42501'; END IF;
   IF p_from IS NULL OR p_to IS NULL OR p_to<=p_from OR p_to-p_from>interval '366 days' THEN
     RAISE EXCEPTION 'questionnaire_stats_range_invalid' USING ERRCODE='22023'; END IF;
@@ -108,7 +108,8 @@ BEGIN
   ) SELECT j.attribution,sum(j.visit_count)::bigint,count(*) FILTER(WHERE j.visit_count>0)::bigint,sum(j.form_count)::bigint,
     count(DISTINCT j.profile_id) FILTER(WHERE j.form_count>0)::bigint,
     count(DISTINCT j.profile_id) FILTER(WHERE j.account_outcome='new_account' AND j.outcome_at>=p_from AND j.outcome_at<p_to)::bigint,
-    count(DISTINCT j.profile_id) FILTER(WHERE j.account_outcome='existing_account' AND j.outcome_at>=p_from AND j.outcome_at<p_to)::bigint
+    count(DISTINCT j.profile_id) FILTER(WHERE j.account_outcome='existing_account' AND j.outcome_at>=p_from AND j.outcome_at<p_to)::bigint,
+    count(DISTINCT j.profile_id) FILTER(WHERE j.account_outcome IS NULL AND j.form_count>0)::bigint
     FROM per_journey j GROUP BY j.attribution HAVING sum(j.visit_count)+sum(j.form_count)+count(*) FILTER(WHERE j.outcome_at>=p_from AND j.outcome_at<p_to)>0 ORDER BY sum(j.visit_count) DESC;
 END;
 $$;

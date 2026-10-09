@@ -121,6 +121,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
       { code: "all",        label: "Все",           route: "/admin/forms" },
       { code: "site",       label: "Анкеты сайта",  route: "/admin/forms?tab=site" },
       { code: "preorders",  label: "Предзаписи",    route: "/admin/forms?tab=preorders" },
+      { code: "preregistration-stats", label: "Анкета предзаписи", route: "/admin/forms?tab=preregistration-stats" },
       { code: "training",   label: "Обучение",      route: "/admin/forms?tab=training" },
       { code: "by-product", label: "По продуктам",  route: "/admin/forms?tab=by-product" },
       { code: "export",     label: "Экспорт",       route: "/admin/forms?tab=export" },
