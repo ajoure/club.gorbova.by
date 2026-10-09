@@ -86,7 +86,7 @@ describe("questionnaire-first journey", () => {
     fireEvent.click(button);
     const save = await screen.findByRole("button", { name: "Сохранить анкету и получить бонусы" });
     fireEvent.click(save); fireEvent.click(save);
-    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledTimes(1));
     const key = mocks.invoke.mock.calls[0][1].body.submission_key;
     await act(async () => { fail({ data: null, error: new Error("network") }); });
     expect(localStorage.getItem("site-questionnaire:v1:page:block")).not.toBeNull();

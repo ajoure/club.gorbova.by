@@ -114,3 +114,17 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.site_questionnaire_funnel_stats(uuid,timestamptz,timestamptz) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.site_questionnaire_funnel_stats(uuid,timestamptz,timestamptz) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.read_site_questionnaire_journey_attribution(p_journey_id uuid,p_key_hash text,p_page_id uuid,p_profile_id uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE v_j public.site_questionnaire_journeys%ROWTYPE;
+BEGIN
+  SELECT * INTO v_j FROM site_questionnaire_journeys WHERE id=p_journey_id;
+  IF v_j.id IS NULL OR p_key_hash IS NULL OR v_j.key_hash<>p_key_hash OR v_j.page_id<>p_page_id
+    OR (v_j.profile_id IS NOT NULL AND v_j.profile_id<>p_profile_id)
+    THEN RAISE EXCEPTION 'journey_binding_invalid' USING ERRCODE='42501'; END IF;
+  RETURN v_j.attribution||jsonb_build_object('journey_id',v_j.id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.read_site_questionnaire_journey_attribution(uuid,text,uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.read_site_questionnaire_journey_attribution(uuid,text,uuid,uuid) TO service_role;

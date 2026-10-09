@@ -16,9 +16,13 @@ Deno.serve(async req=>{
     // An existing journey needs its opaque key; never resume by UUID alone.
     const resumed=body.journey_id!==undefined;
     if(resumed&&(!uuid.test(body.journey_id)||typeof body.journey_key!=="string"||!/^([a-f0-9]{64})$/.test(body.journey_key)))return json({error:"invalid_journey"},400);
-    const journeyId=resumed?body.journey_id:crypto.randomUUID();
-    const journeyKey=resumed?body.journey_key:Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b=>b.toString(16).padStart(2,"0")).join("");
+    if(!resumed&&(typeof body.request_key!=="string"||!/^[a-f0-9]{64}$/.test(body.request_key)))return json({error:"invalid_request_key"},400);
     const pepper=Deno.env.get("INLINE_OTP_PEPPER"); if(!pepper)return json({error:"tracking_unavailable"},503);
+    // An opaque browser nonce makes a lost first response safely retryable.
+    // Knowing a visitor UUID alone never lets another browser recover its key.
+    const seed=await hash(`questionnaire-journey-id:${pepper}:${body.page_id}:${body.request_key||""}`);
+    const journeyId=resumed?body.journey_id:`${seed.slice(0,8)}-${seed.slice(8,12)}-4${seed.slice(13,16)}-8${seed.slice(17,20)}-${seed.slice(20,32)}`;
+    const journeyKey=resumed?body.journey_key:await hash(`questionnaire-journey-key:${pepper}:${body.page_id}:${body.request_key}`);
     const admin=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,{auth:{persistSession:false,autoRefreshToken:false}});
     const {data,error}=await admin.rpc("track_site_questionnaire_visit",{p_journey_id:journeyId,p_key_hash:await hash(journeyKey),p_visit_id:body.visit_id,p_page_id:body.page_id,p_attribution:questionnaireAttribution(body.attribution),p_ip_hash:await hash(`questionnaire-visit:${pepper}:${getClientIp(req)}`)});
     if(error)return json({error:"tracking_rejected"},error.code==="42501"?403:400);

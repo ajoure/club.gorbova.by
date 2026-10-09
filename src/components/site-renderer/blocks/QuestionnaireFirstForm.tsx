@@ -12,6 +12,7 @@ import { parseQuestionnaireSource } from "../../../../supabase/functions/site-fo
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 import { SafeHtml } from "@/components/ui/SafeHtml";
+import { trackQuestionnaireJourney, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
@@ -34,6 +35,12 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     try { return readQuestionnaireDraft(window.localStorage, key, schema, fields.length); } catch { return null; }
   });
   const [answers, setAnswers] = useState<Record<string, string>>(initial?.answers || {});
+  const [visitId] = useState(() => crypto.randomUUID());
+  const journeyRequest = useRef<Promise<QuestionnaireJourney | null> | null>(null);
+  useEffect(() => {
+    if (isPreview || !pageId) return;
+    journeyRequest.current = trackQuestionnaireJourney(pageId, visitId, window.location.search);
+  }, [isPreview, pageId, visitId]);
   const [submissionKey] = useState(() => initial?.submissionKey || crypto.randomUUID());
   const [source] = useState(() => initial?.source || parseQuestionnaireSource(new URLSearchParams(window.location.search).get("src")));
   const [step, setStep] = useState<"answers" | "otp" | "telegram" | "success">("answers");
@@ -80,10 +87,11 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     if (submitted.current) return;
     if (isPreview) { setStep("success"); return; }
     if (!pageId || !blockId) throw new Error("missing_form_config");
+    const journey = await journeyRequest.current;
     const { data, error: submitError } = await supabase.functions.invoke("site-form-submit", {
       body: {
         page_id: pageId, block_id: blockId, submission_key: submissionKey,
-        source_code: source,
+        source_code: source, ...(journey || {}),
         privacy_consent: { accepted: privacyConsent, version: CONSENT_POLICY_VERSION },
         fields: fields.map((f, i) => ({ label: f.label, type: f.type, mapping: f.mapping || "none", value: (answers[String(i)] || "").trim() })),
       },

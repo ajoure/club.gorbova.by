@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 const migration = await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql', import.meta.url), 'utf8');
 const notificationsMigration = await readFile(new URL('../../supabase/migrations/20261009062003_site_questionnaire_notifications.sql', import.meta.url), 'utf8');
 const remindersMigration = await readFile(new URL('../../supabase/migrations/20261009064000_site_questionnaire_incomplete_reminders.sql', import.meta.url), 'utf8');
+const journeysMigration = await readFile(new URL('../../supabase/migrations/20261009083000_site_questionnaire_journeys.sql',import.meta.url),'utf8');
 const submissionDelayMigration = await readFile(new URL('../../supabase/migrations/20261009072000_site_questionnaire_submission_delay.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
@@ -39,7 +40,7 @@ async function fixture() {
     CREATE FUNCTION generate_order_number() RETURNS text LANGUAGE sql AS $$SELECT 'FORM-' || gen_random_uuid()::text$$;
     CREATE TABLE site_form_submissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),public_id text UNIQUE NOT NULL,
       workspace_id uuid NOT NULL,page_id uuid NOT NULL,profile_id uuid,order_id uuid,form_data jsonb NOT NULL,field_mapping jsonb NOT NULL,
-      status text NOT NULL,source text NOT NULL,metadata jsonb NOT NULL);
+      status text NOT NULL,source text NOT NULL,metadata jsonb NOT NULL,created_at timestamptz DEFAULT now());
     CREATE FUNCTION test_submission_public_id() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.public_id='SUB-'||NEW.id::text; RETURN NEW; END$$;
     CREATE TRIGGER set_site_form_submissions_public_id BEFORE INSERT ON site_form_submissions FOR EACH ROW EXECUTE FUNCTION test_submission_public_id();
     CREATE TABLE consent_logs(user_id uuid,email text,consent_type text,policy_version text,granted boolean,source text,meta jsonb);
@@ -81,9 +82,9 @@ async function fixture() {
     await writeFile(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, exportedSQL);
   }
   await db.exec(migration);
-  const submit = (key=id(10),payload=answers,source='reels') => db.query(
-    'SELECT submit_site_questionnaire($1,$2,$3,$4,$5,$6,$7) result',
-    [id(3),id(8),id(1),key,JSON.stringify(payload),source,'v2026-04-10'],
+  const submit = (key=id(10),payload=answers,source='reels',journey=null,journeyHash=null) => db.query(
+    'SELECT submit_site_questionnaire($1,$2,$3,$4,$5,$6,$7,$8,$9) result',
+    [id(3),id(8),id(1),key,JSON.stringify(payload),source,'v2026-04-10',journey,journeyHash],
   ).then(r=>r.rows[0].result);
   return {db,submit};
 }
@@ -231,7 +232,7 @@ test('missing contact fields are filled without rewriting identity, and arbitrar
     const metadata=(await db.query('SELECT metadata FROM site_form_submissions')).rows[0].metadata;
     assert.equal(metadata.source_code,undefined);
     assert.equal(JSON.stringify(metadata).includes('buyer-secret'),false);
-    const grants=(await db.query("SELECT has_function_privilege('anon','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') anon, has_function_privilege('authenticated','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') authenticated,has_function_privilege('service_role','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') service")).rows[0];
+    const grants=(await db.query("SELECT has_function_privilege('anon','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)','EXECUTE') anon, has_function_privilege('authenticated','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)','EXECUTE') authenticated,has_function_privilege('service_role','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)','EXECUTE') service")).rows[0];
     assert.deepEqual(grants,{anon:false,authenticated:false,service:true});
   }finally{await db.close()}
 });
@@ -285,4 +286,23 @@ test('questionnaire requires a genuine primary support-bot binding before any wr
     assert.equal((await submit()).success,true);
     assert.equal((await counts(db)).access,0);
   }finally{await db.close();}
+});
+
+
+test('saved questionnaires bind the verified first-touch journey atomically, without allowing a retry to switch sources',async()=>{
+ const {db,submit}=await fixture();try{
+  await db.exec("CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT null::uuid$$; CREATE FUNCTION has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$SELECT false$$;");
+  await db.exec(journeysMigration);
+  const key='a'.repeat(64),ip='b'.repeat(64);
+  await db.query('SELECT track_site_questionnaire_visit($1,$2,$3,$4,$5,$6)',[id(80),key,id(81),id(3),JSON.stringify({utm_source:'Stories',utm_campaign:'ЦБ21'}),ip]);
+  await assert.rejects(submit(id(10),answers,'reels',id(80),'c'.repeat(64)),/journey_binding_invalid/);
+  assert.equal((await counts(db)).submissions,0);
+  const saved=await submit(id(10),answers,'reels',id(80),key);
+  const metadata=(await db.query('SELECT metadata FROM site_form_submissions WHERE id=$1',[saved.submission_id])).rows[0].metadata;
+  assert.equal(metadata.utm_source,'Stories');assert.equal(metadata.journey_id,id(80));
+  assert.equal((await db.query('SELECT profile_id FROM site_questionnaire_journeys WHERE id=$1',[id(80)])).rows[0].profile_id,id(2));
+  assert.equal((await submit(id(10),answers,'reels',id(80),key)).replayed,true);
+  await assert.rejects(submit(id(10)),/questionnaire_retry_conflict/);
+  assert.equal((await counts(db)).submissions,1);assert.equal((await counts(db)).access,0);
+ }finally{await db.close();}
 });

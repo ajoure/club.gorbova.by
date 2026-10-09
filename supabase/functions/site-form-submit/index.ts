@@ -74,6 +74,8 @@ interface RequestBody {
   block_id?: string;
   submission_key?: string;
   source_code?: unknown;
+  journey_id?: string;
+  journey_key?: string;
   privacy_consent?: { accepted?: boolean; version?: string };
   fields: FormField[];
   redirect_url?: string;
@@ -158,12 +160,20 @@ Deno.serve(async (req) => {
       } catch {
         return json({ error: "questionnaire_answers_invalid" }, 400);
       }
+      let journeyKeyHash: string | null = null;
+      if (body.journey_id !== undefined || body.journey_key !== undefined) {
+        if (typeof body.journey_id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.journey_id)
+          || typeof body.journey_key !== "string" || !/^[a-f0-9]{64}$/.test(body.journey_key)) return json({ error: "journey_invalid" }, 400);
+        journeyKeyHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.journey_key))))
+          .map(b => b.toString(16).padStart(2,"0")).join("");
+      }
       // SQL rechecks the current published block, canonical profile, account ban,
       // routing and answers under one transaction. No partial success or access grant.
       const { data: result, error: transactionError } = await admin.rpc("submit_site_questionnaire", {
         p_page_id: page_id, p_block_id: body.block_id, p_user_id: identity.user.id,
         p_submission_key: body.submission_key, p_fields: fields,
         p_source_code: parseQuestionnaireSource(body.source_code), p_consent_version: body.privacy_consent.version,
+        p_journey_id: body.journey_id || null, p_journey_key_hash: journeyKeyHash,
       });
       if (transactionError) {
         // Only a stable code is logged; database messages may contain client data.

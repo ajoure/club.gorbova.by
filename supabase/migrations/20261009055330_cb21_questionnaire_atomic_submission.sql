@@ -20,7 +20,8 @@ WHERE metadata->>'questionnaire_first' = 'true';
 
 CREATE OR REPLACE FUNCTION public.submit_site_questionnaire(
   p_page_id uuid, p_block_id uuid, p_user_id uuid, p_submission_key uuid,
-  p_fields jsonb, p_source_code text, p_consent_version text
+  p_fields jsonb, p_source_code text, p_consent_version text,
+  p_journey_id uuid DEFAULT NULL, p_journey_key_hash text DEFAULT NULL
 ) RETURNS jsonb
 -- Managed production service_role cannot SELECT auth.users directly. This
 -- narrowly scoped function runs as its migration owner, with only service_role
@@ -104,11 +105,17 @@ BEGIN
   END LOOP;
   IF v_answer_email IS DISTINCT FROM v_email THEN RAISE EXCEPTION 'questionnaire_email_mismatch' USING ERRCODE = '42501'; END IF;
 
+  IF (p_journey_id IS NULL) IS DISTINCT FROM (p_journey_key_hash IS NULL) THEN
+    RAISE EXCEPTION 'journey_binding_invalid' USING ERRCODE='42501'; END IF;
+  IF p_journey_id IS NOT NULL THEN
+    v_attribution := public.read_site_questionnaire_journey_attribution(p_journey_id,p_journey_key_hash,p_page_id,v_profile.id);
+  END IF;
   SELECT * INTO v_existing FROM public.site_form_submissions WHERE page_id = p_page_id
     AND metadata->>'questionnaire_first' = 'true' AND metadata->>'block_id' = p_block_id::text
     AND metadata->>'user_id' = p_user_id::text AND metadata->>'submission_key' = p_submission_key::text;
   IF FOUND THEN
-    IF v_existing.form_data IS DISTINCT FROM v_data OR v_existing.profile_id IS DISTINCT FROM v_profile.id THEN
+    IF v_existing.form_data IS DISTINCT FROM v_data OR v_existing.profile_id IS DISTINCT FROM v_profile.id
+      OR v_existing.metadata->>'journey_id' IS DISTINCT FROM p_journey_id::text THEN
       RAISE EXCEPTION 'questionnaire_retry_conflict' USING ERRCODE = '22023';
     END IF;
     RETURN jsonb_build_object('success',true,'submission_id',v_existing.id,'public_id',v_existing.public_id,'order_id',v_existing.order_id,'replayed',true);
@@ -120,7 +127,7 @@ BEGIN
     ('reels','Рилс','instagram'), ('direct','Директ','instagram')
   ) s(code,label,source) WHERE code = p_source_code;
   IF v_source_label IS NOT NULL THEN v_attribution := jsonb_build_object('source_code',p_source_code,'source_label',v_source_label,
-    'utm_source',v_source,'utm_medium',p_source_code,'utm_campaign','cb21_preregistration'); END IF;
+    'utm_source',v_source,'utm_medium',p_source_code,'utm_campaign','cb21_preregistration') || v_attribution; END IF;
 
   -- Contact answers fill missing fields only; existing login/contact data and
   -- Telegram identity are never overwritten by questionnaire text.
@@ -172,6 +179,9 @@ BEGIN
   INSERT INTO public.site_form_submissions (public_id,workspace_id,page_id,profile_id,order_id,form_data,field_mapping,status,source,metadata)
   VALUES ('',v_page.workspace_id,p_page_id,v_profile.id,v_order,v_data,v_mapping,'processed','site_form_auth',v_meta)
   RETURNING id,public_id INTO v_submission,v_public_id;
+  IF p_journey_id IS NOT NULL THEN
+    PERFORM public.bind_site_questionnaire_journey(p_journey_id,p_journey_key_hash,v_submission);
+  END IF;
   INSERT INTO public.consent_logs (user_id,email,consent_type,policy_version,granted,source,meta)
   VALUES (p_user_id,v_email,'privacy_policy',p_consent_version,true,'site_questionnaire',jsonb_build_object('submission_id',v_submission,'page_id',p_page_id));
   INSERT INTO public.domain_events (event_type,source,entity_id,payload)
@@ -185,5 +195,5 @@ BEGIN
   RETURN jsonb_build_object('success',true,'submission_id',v_submission,'public_id',v_public_id,'order_id',v_order,'event_id',v_event,'replayed',false);
 END;
 $$;
-REVOKE ALL ON FUNCTION public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text) TO service_role;
+REVOKE ALL ON FUNCTION public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text) TO service_role;
