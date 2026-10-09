@@ -28334,6 +28334,15 @@ export type Database = {
           visits: number
         }[]
       }
+      site_questionnaire_sales_identity: {
+        Args: {
+          p_block_id: string
+          p_page_id: string
+          p_telegram_user_id: number
+          p_user_id: string
+        }
+        Returns: boolean
+      }
       site_questionnaire_telegram_link_ready: {
         Args: { p_user_id: string }
         Returns: boolean
