@@ -23,6 +23,8 @@ let client: QueryClient;
 const base = {
   available: true,
   can_configure: true,
+  can_edit_campaign: false,
+  customer_mode: "off",
   campaign: {
     mode: "owner_test",
     trigger_phrase: "Хочу программу курса ЦБ",
@@ -127,7 +129,7 @@ describe("exact-dialog sales controls", () => {
 
 it("AI settings use the existing owner control and preserve expected config", async () => {
  const ai={model:'google/gemini-3.1-pro-preview',max_tokens:8000,timeout_seconds:60,max_context_chars:750000,vision_enabled:true,max_image_bytes:8388608};
- mock.invoke.mockResolvedValue({data:{...base,campaign:{...base.campaign,mode:'off',ai_config:ai},conversation:{state:'HUMAN_HOLD'},job:null,ai_models:[ai.model,'google/gemini-3.8-flash']}});
+ mock.invoke.mockResolvedValue({data:{...base,can_edit_campaign:true,campaign:{...base.campaign,mode:'off',ai_config:ai},conversation:{state:'HUMAN_HOLD'},job:null,ai_models:[ai.model,'google/gemini-3.8-flash']}});
  mount();fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
  fireEvent.change(screen.getByLabelText('Модель автопродаж'),{target:{value:'google/gemini-3.8-flash'}});
  fireEvent.click(screen.getByRole('button',{name:'Сохранить настройки ИИ'}));
@@ -136,7 +138,7 @@ it("AI settings use the existing owner control and preserve expected config", as
 
 
 it("owner selects consultation products through existing control without exposing campaign knowledge", async () => {
- mock.invoke.mockResolvedValue({data:{...base,campaign:{...base.campaign,mode:'off',consultation_product_ids:[]},conversation:{state:'HUMAN_HOLD'},job:null,catalog_products:[{id:'club-id',name:'Клуб'}]}});
+ mock.invoke.mockResolvedValue({data:{...base,can_edit_campaign:true,campaign:{...base.campaign,mode:'off',consultation_product_ids:[]},conversation:{state:'HUMAN_HOLD'},job:null,catalog_products:[{id:'club-id',name:'Клуб'}]}});
  mount();fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
  fireEvent.click(screen.getByLabelText('Консультировать: Клуб'));fireEvent.click(screen.getByRole('button',{name:'Сохранить продукты'}));
  await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-control',{body:{action:'knowledge_products',user_id:'user-scope',business_account_id:'business-scope',product_ids:['club-id'],expected_product_ids:[]}}));
@@ -157,7 +159,7 @@ it("settings open outside the composer and close without changing campaign state
 it("runs a synthetic owner preview only while the campaign is off and held", async () => {
  mock.invoke.mockImplementation(async (name: string) => name === 'sales-runtime-worker'
    ? {data:{ok:true,steps:[{incoming:'Хочу программу курса ЦБ',expected:'experience',actual:'experience',pass:true,candidate:{text:'Здравствуйте!'}}]},error:null}
-   : {data:{...base,campaign:{...base.campaign,mode:'off'},conversation:{state:'HUMAN_HOLD'},job:null},error:null});
+   : {data:{...base,can_edit_campaign:true,campaign:{...base.campaign,mode:'off'},conversation:{state:'HUMAN_HOLD'},job:null},error:null});
  mount();
  fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
  fireEvent.click(screen.getByRole('button',{name:'Новый клиент'}));
