@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration = await readFile(new URL('../../supabase/migrations/20261009071000_site_questionnaire_bonus_channel.sql',import.meta.url),'utf8');
+const inviteMigration = await readFile(new URL('../../supabase/migrations/20261009074000_site_questionnaire_bonus_invites.sql',import.meta.url),'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 async function fixture() {
   const db = new PGlite();
@@ -22,6 +23,7 @@ async function fixture() {
     CREATE TABLE commercial_access(user_id uuid,expires_at timestamptz);
     GRANT USAGE ON SCHEMA public,auth TO service_role;`);
   await db.exec(migration);
+  await db.exec(inviteMigration);
   await db.query('INSERT INTO auth.users VALUES($1,now(),null,null)',[id(1)]);
   await db.query("INSERT INTO site_pages VALUES($1,'published','[]')",[id(3)]);
   await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[id(4)]);
@@ -92,5 +94,78 @@ test('managed cutover changes exactly one mapping and rejects an unexpected gran
     assert.deepEqual((await db.query('SELECT chat_id,channel_id,channel_invite_link FROM telegram_clubs WHERE id=$1',[club])).rows[0],{chat_id:-100999,channel_id:null,channel_invite_link:null});
     assert.deepEqual((await db.query('SELECT configure_cb21_bonus_channel(0) result')).rows[0].result,{changed_clubs:0,changed_routes:0,replayed:true});
     assert.equal((await db.query('SELECT count(*)::int n FROM commercial_access')).rows[0].n,0);
+  }finally{await db.close();}
+});
+
+test('private invites require canonical ownership, reserve once and return the same permanent link',async()=>{
+  const {db,submit}=await fixture();try{
+    const prepare = user => db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),user]).then(r=>r.rows[0].result);
+    assert.equal((await prepare(id(1))).status,'ineligible');
+    await submit();
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
+    assert.equal((await prepare(id(99))).status,'ineligible');
+    const first=await prepare(id(1));
+    assert.equal(first.status,'create');
+    assert.equal((await prepare(id(1))).status,'busy');
+    await assert.rejects(db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://wrong.example/private')",[first.request_id,id(1)]),/bonus_invite_invalid/);
+    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+fixture-private') ok",[first.request_id,id(99)])).rows[0].ok,false);
+    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+fixture-private') ok",[first.request_id,id(1)])).rows[0].ok,true);
+    assert.equal((await prepare(id(1))).invite_link,'https://t.me/+fixture-private');
+    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '10 years'");
+    assert.equal((await prepare(id(1))).invite_link,'https://t.me/+fixture-private','a ready invite never expires');
+    assert.equal((await db.query('SELECT expires_at FROM site_questionnaire_bonus_invites')).rows[0].expires_at,null);
+    await db.exec("UPDATE site_pages SET status='archived'");
+    assert.equal((await prepare(id(1))).status,'ready');
+    await db.exec("UPDATE profiles SET telegram_link_status='unlinked'");
+    assert.equal((await prepare(id(1))).status,'ineligible','an unlinked identity cannot obtain even a cached invitation');
+    assert.equal((await db.query("SELECT has_function_privilege('authenticated','prepare_site_questionnaire_bonus_invite(uuid,uuid,uuid)','EXECUTE') allowed")).rows[0].allowed,false);
+  }finally{await db.close();}
+});
+
+test('personal permanent invitations approve only their bound Telegram identity, including re-entry',async()=>{
+  const {db,submit}=await fixture();try{
+    await submit();
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
+    const prepare=user=>db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),user]).then(r=>r.rows[0].result);
+    const join=(telegram,link)=>db.query('SELECT resolve_site_questionnaire_bonus_invite_join($1,-100123,$2,$3) result',[id(4),telegram,link]).then(r=>r.rows[0].result);
+    const owner=await prepare(id(1));
+    await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+owner-fixture')",[owner.request_id,id(1)]);
+    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,true);
+    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '10 years'");
+    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,true,'the same owner can re-enter without expiry');
+    assert.equal((await join(123,null)).eligible,false);
+    assert.equal((await join(123,'https://t.me/+unknown-fixture')).eligible,false);
+    assert.equal((await join(999,'https://t.me/+owner-fixture')).eligible,false);
+    await db.query('INSERT INTO auth.users VALUES($1,now(),null,null)',[id(10)]);
+    await db.query("INSERT INTO profiles VALUES($1,$2,'active',false,null,456,$3,'active',now())",[id(11),id(10),id(4)]);
+    await db.query('INSERT INTO site_form_submissions VALUES($1,$2,$3,$4,$5)',[id(12),id(11),id(3),'processed',JSON.stringify({questionnaire_first:true,block_id:id(5),user_id:id(10)})]);
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,456,'telegram_link_confirmed',$2,now())",[id(10),JSON.stringify({bot_id:id(4)})]);
+    assert.equal((await join(456,'https://t.me/+owner-fixture')).eligible,false,'even another eligible participant cannot use a forwarded personal link');
+    const other=await prepare(id(10));
+    await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+other-fixture')",[other.request_id,id(10)]);
+    assert.equal((await join(456,'https://t.me/+other-fixture')).eligible,true);
+    assert.equal((await join(123,'https://t.me/+other-fixture')).eligible,false);
+    await db.query('UPDATE profiles SET telegram_user_id=789,telegram_linked_at=now() WHERE user_id=$1',[id(1)]);
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,789,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
+    assert.equal((await join(789,'https://t.me/+owner-fixture')).eligible,false,'a relinked identity needs its own new invitation');
+    assert.equal((await join(123,'https://t.me/+owner-fixture')).eligible,false,'the previous identity loses approval eligibility');
+    assert.equal((await prepare(id(1))).status,'create');
+    assert.equal((await db.query("SELECT has_function_privilege('authenticated','resolve_site_questionnaire_bonus_invite_join(uuid,bigint,bigint,text)','EXECUTE') allowed")).rows[0].allowed,false);
+  }finally{await db.close();}
+});
+
+test('failed or expired invite leases cannot overwrite a newer reservation or remove a permanent right',async()=>{
+  const {db,submit}=await fixture();try{
+    await submit();
+    await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(4)})]);
+    const prepare = () => db.query('SELECT prepare_site_questionnaire_bonus_invite($1,$2,$3) result',[id(3),id(5),id(1)]).then(r=>r.rows[0].result);
+    const first=await prepare();
+    assert.equal((await db.query('SELECT finish_site_questionnaire_bonus_invite($1,$2) ok',[first.request_id,id(1)])).rows[0].ok,true);
+    assert.equal((await prepare()).status,'busy');
+    await db.exec("UPDATE site_questionnaire_bonus_invites SET lease_until=now()-interval '1 second'");
+    const retry=await prepare();assert.equal(retry.status,'create');assert.notEqual(retry.request_id,first.request_id);
+    assert.equal((await db.query("SELECT finish_site_questionnaire_bonus_invite($1,$2,'https://t.me/+stale-fixture') ok",[first.request_id,id(1)])).rows[0].ok,false);
+    await db.exec('DELETE FROM site_form_submissions');
+    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,1);
   }finally{await db.close();}
 });

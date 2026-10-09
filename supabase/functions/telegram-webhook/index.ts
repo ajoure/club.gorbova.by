@@ -1002,8 +1002,9 @@ Deno.serve(async (req) => {
 
       console.log(`Join request from ${telegramUserId} to chat ${chatId}`);
 
-      const { data: bonusContext, error: bonusError } = await supabase.rpc('resolve_site_questionnaire_bonus_join', {
+      const { data: bonusContext, error: bonusError } = await supabase.rpc('resolve_site_questionnaire_bonus_invite_join', {
         p_bot_id: botId, p_channel_id: chatId, p_telegram_user_id: telegramUserId,
+        p_invite_link: joinRequest.invite_link?.invite_link ?? null,
       });
       if (bonusError || !bonusContext || typeof bonusContext.configured !== 'boolean') {
         return new Response(JSON.stringify({ ok: false, error: 'bonus_channel_resolution_failed' }), {

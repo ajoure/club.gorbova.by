@@ -22,8 +22,8 @@ USING(public.has_role_v2(auth.uid(),'super_admin'));
 CREATE TABLE public.site_questionnaire_bonus_channel_grants (
   bot_id uuid NOT NULL,
   channel_id bigint NOT NULL,
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  submission_id uuid NOT NULL REFERENCES public.site_form_submissions(id),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  submission_id uuid REFERENCES public.site_form_submissions(id) ON DELETE SET NULL,
   granted_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(bot_id,channel_id,user_id),
   FOREIGN KEY(bot_id,channel_id) REFERENCES public.site_questionnaire_bonus_channels(bot_id,channel_id)

@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { resolveServerFormSettings } from "./form_settings.ts";
 import { validateQuestionnaireAnswers } from "./questionnaire-fields.ts";
 import { parseQuestionnaireSource } from "./questionnaire-source.ts";
+import { prepareQuestionnaireBonusInvite, type BonusBackend } from "./questionnaire-bonus-invite.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,6 +69,7 @@ interface FormField {
 }
 
 interface RequestBody {
+  action?: "bonus_channel_invite";
   page_id: string;
   /** Stable ID of the form block rendered on the public page. */
   block_id?: string;
@@ -106,6 +108,19 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
+
+    // A permanent bonus right remains usable after the landing is archived.
+    // The service-only RPC derives ownership and current Telegram binding.
+    if (body.action === "bonus_channel_invite") {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuid.test(page_id) || !body.block_id || !uuid.test(body.block_id)) return json({ error: "bonus_invite_request_invalid" }, 400);
+      const jwt = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!jwt) return json({ error: "questionnaire_identity_required" }, 401);
+      const { data: identity, error: identityError } = await admin.auth.getUser(jwt);
+      if (identityError || !identity.user?.email_confirmed_at) return json({ error: "questionnaire_identity_invalid" }, 401);
+      const result = await prepareQuestionnaireBonusInvite(admin as unknown as BonusBackend, page_id, body.block_id, identity.user.id);
+      return json(result.body, result.status);
+    }
 
     // Load the published form configuration from the server. CRM routing and
     // auth/product settings must never be selected by an untrusted browser.

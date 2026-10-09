@@ -132,7 +132,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
         {step === "success" ? (
           <div className="space-y-4">
             <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
-            {!isPreview && <QuestionnaireTelegramStep />}
+            {!isPreview && pageId && blockId && <QuestionnaireTelegramStep pageId={pageId} blockId={blockId} />}
           </div>
         ) : step === "otp" ? (
           <form className="space-y-4" onSubmit={e => { e.preventDefault(); void verifyAndSubmit(); }}>
