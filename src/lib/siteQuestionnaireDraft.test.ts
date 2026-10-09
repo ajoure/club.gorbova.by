@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { QUESTIONNAIRE_DRAFT_TTL_MS, readQuestionnaireDraft, saveQuestionnaireDraft, questionnaireDraftKey } from "./siteQuestionnaireDraft";
-import { parseQuestionnaireSource, questionnaireSourceLinks, questionnaireSourceMetadata } from "../../supabase/functions/_shared/site-questionnaire-source";
+import { parseQuestionnaireSource, questionnaireSourceLinks, questionnaireSourceMetadata } from "../../supabase/functions/site-form-submit/questionnaire-source";
 
 function storage() {
   const data = new Map<string, string>();

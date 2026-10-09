@@ -1,7 +1,7 @@
 import {
   parseQuestionnaireSource,
   type QuestionnaireSource,
-} from "../../supabase/functions/_shared/site-questionnaire-source";
+} from "../../supabase/functions/site-form-submit/questionnaire-source";
 
 // Keep only questionnaire answers and attribution. Never store passwords, OTPs or sessions.
 export const QUESTIONNAIRE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;

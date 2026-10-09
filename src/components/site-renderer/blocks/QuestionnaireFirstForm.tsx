@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { clearQuestionnaireDraft, questionnaireDraftKey, readQuestionnaireDraft, saveQuestionnaireDraft } from "@/lib/siteQuestionnaireDraft";
-import { parseQuestionnaireSource } from "../../../../supabase/functions/_shared/site-questionnaire-source";
+import { parseQuestionnaireSource } from "../../../../supabase/functions/site-form-submit/questionnaire-source";
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
