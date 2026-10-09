@@ -23,7 +23,7 @@ let exportedFixtureVerified = false;
 async function fixture() {
   const db = new PGlite();
   const schemaSQL = `CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
-    CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
+    CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz,raw_app_meta_data jsonb DEFAULT '{}');
     CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid UNIQUE,status text,is_archived boolean,merged_to_profile_id uuid,full_name text,phone text,telegram_user_id bigint,telegram_link_bot_id uuid,telegram_link_status text,telegram_linked_at timestamptz);
     CREATE TABLE telegram_bots(id uuid PRIMARY KEY,status text,is_primary boolean);
     CREATE TABLE telegram_access_audit(user_id uuid,telegram_user_id bigint,event_type text,meta jsonb,created_at timestamptz DEFAULT now());
@@ -50,7 +50,7 @@ async function fixture() {
     CREATE TABLE commercial_access(user_id uuid,product_id uuid);`;
   await db.exec(schemaSQL);
   const content = { auth_mode:true,questionnaire_first:true,fields,product_binding_enabled:true,product_id:id(4),tariff_id:id(5),deal_creation_enabled:true,pipeline_id:id(6),pipeline_stage_id:id(7) };
-  await db.query('INSERT INTO auth.users VALUES($1,$2,now(),null,null)',[id(1),'buyer@example.invalid']);
+  await db.query('INSERT INTO auth.users(id,email,email_confirmed_at,banned_until,deleted_at) VALUES($1,$2,now(),null,null)',[id(1),'buyer@example.invalid']);
   await db.query("INSERT INTO profiles VALUES($1,$2,'active',false,null,'Existing name','Existing phone',123,$3,'active',now())",[id(2),id(1),id(90)]);
   await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[id(90)]);
   await db.query("INSERT INTO telegram_access_audit VALUES($1,123,'telegram_link_confirmed',$2,now())",[id(1),JSON.stringify({bot_id:id(90)})]);
@@ -64,7 +64,7 @@ async function fixture() {
     const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
     const safeRoles = schemaSQL.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;',
       () => "DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
-    const seed = `INSERT INTO auth.users VALUES(${quote(id(1))},'buyer@example.invalid',now(),null,null);
+    const seed = `INSERT INTO auth.users(id,email,email_confirmed_at,banned_until,deleted_at) VALUES(${quote(id(1))},'buyer@example.invalid',now(),null,null);
       INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone',123,${quote(id(90))},'active',now());
       INSERT INTO telegram_bots VALUES(${quote(id(90))},'active',true);
       INSERT INTO telegram_access_audit VALUES(${quote(id(1))},123,'telegram_link_confirmed',${quote(JSON.stringify({bot_id:id(90)}))},now());

@@ -117,7 +117,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
           return;
         }
         setStep("telegram");
-      } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`)) {
+      } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`, await journeyRequest.current)) {
         setStep("otp");
       }
     } catch { setError("Не удалось сохранить анкету. Ответы сохранены в черновике, попробуйте ещё раз."); }

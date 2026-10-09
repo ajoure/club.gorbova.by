@@ -1,3 +1,4 @@
+import type { QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 /**
  * useInlineEmailOtp — OTP-first inline auth for public/identity flows.
  *
@@ -63,7 +64,7 @@ export interface UseInlineEmailOtpReturn {
   /** Step 2 (new users only): submit collected meta and send OTP. */
   submitDetails: (meta: InlineOtpMeta) => Promise<boolean>;
   /** Questionnaire already has contact fields; verify its email without password setup. */
-  requestQuestionnaireCode: (email: string, flowId?: string) => Promise<boolean>;
+  requestQuestionnaireCode: (email: string, flowId?: string, journey?: QuestionnaireJourney | null) => Promise<boolean>;
   /** Step 3: verify 6-digit OTP; returns { userId } on success. */
   verifyCode: (code: string) => Promise<{ userId: string } | null>;
   /** Resend OTP for the current email (respects cooldown). */
@@ -124,7 +125,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
   }, []);
 
   const sendOtpForEmail = useCallback(
-    async (targetEmail: string, meta?: InlineOtpMeta, flowId?: string): Promise<boolean> => {
+    async (targetEmail: string, meta?: InlineOtpMeta, flowId?: string, journey?: QuestionnaireJourney | null): Promise<boolean> => {
       setError(null);
       setIsSending(true);
       try {
@@ -146,6 +147,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
               email: trimmed,
               purpose: "auth",
               ...(flowId ? { flowId } : {}),
+              ...(journey ? { journey } : {}),
               meta: metaPayload,
             },
           },
@@ -242,7 +244,8 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
   );
 
   const questionnaireFlowRef = useRef<string | undefined>(undefined);
-  const requestQuestionnaireCode = useCallback(async (targetEmail: string, flowId?: string): Promise<boolean> => {
+  const questionnaireJourneyRef = useRef<QuestionnaireJourney | null>(null);
+  const requestQuestionnaireCode = useCallback(async (targetEmail: string, flowId?: string, journey?: QuestionnaireJourney | null): Promise<boolean> => {
     const trimmed = (targetEmail || "").toLowerCase().trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
       setError("Введите корректный email.");
@@ -253,12 +256,13 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     metaRef.current = undefined;
     pendingPasswordRef.current = null;
     questionnaireFlowRef.current = flowId;
-    return sendOtpForEmail(trimmed, undefined, flowId);
+    questionnaireJourneyRef.current = journey || null;
+    return sendOtpForEmail(trimmed, undefined, flowId, journey);
   }, [sendOtpForEmail]);
 
   const resend = useCallback(async () => {
     if (resendIn > 0 || !email) return false;
-    return sendOtpForEmail(email, metaRef.current, questionnaireFlowRef.current);
+    return sendOtpForEmail(email, metaRef.current, questionnaireFlowRef.current, questionnaireJourneyRef.current);
   }, [email, resendIn, sendOtpForEmail]);
 
   const verifyCode = useCallback(
@@ -357,6 +361,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
 
   const changeEmail = useCallback(() => {
     questionnaireFlowRef.current = undefined;
+    questionnaireJourneyRef.current = null;
     setStep("email");
     setError(null);
     setInvalidAttempts(0);

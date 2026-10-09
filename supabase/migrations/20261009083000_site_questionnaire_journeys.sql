@@ -81,7 +81,8 @@ BEGIN
     OR v_j.page_id<>v_s.page_id OR v_s.profile_id IS NULL OR v_s.status<>'processed'
     OR (v_j.profile_id IS NOT NULL AND v_j.profile_id<>v_s.profile_id)
     THEN RAISE EXCEPTION 'journey_binding_invalid' USING ERRCODE='42501'; END IF;
-  UPDATE site_questionnaire_journeys SET profile_id=v_s.profile_id WHERE id=v_j.id;
+  PERFORM public.record_site_questionnaire_account_outcome(v_j.id,p_key_hash,
+    (SELECT user_id FROM public.profiles WHERE id=v_s.profile_id));
   UPDATE site_form_submissions SET metadata=metadata||jsonb_build_object('journey_id',v_j.id,'attribution',v_j.attribution)
     WHERE id=v_s.id;
 END;
@@ -122,10 +123,53 @@ DECLARE v_j public.site_questionnaire_journeys%ROWTYPE;
 BEGIN
   SELECT * INTO v_j FROM site_questionnaire_journeys WHERE id=p_journey_id;
   IF v_j.id IS NULL OR p_key_hash IS NULL OR v_j.key_hash<>p_key_hash OR v_j.page_id<>p_page_id
-    OR (v_j.profile_id IS NOT NULL AND v_j.profile_id<>p_profile_id)
+    OR (v_j.profile_id IS NOT NULL AND v_j.profile_id IS DISTINCT FROM p_profile_id)
     THEN RAISE EXCEPTION 'journey_binding_invalid' USING ERRCODE='42501'; END IF;
   RETURN v_j.attribution||jsonb_build_object('journey_id',v_j.id);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.read_site_questionnaire_journey_attribution(uuid,text,uuid,uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.read_site_questionnaire_journey_attribution(uuid,text,uuid,uuid) TO service_role;
+
+-- Only the service endpoint may validate and persist an OTP journey context.
+CREATE OR REPLACE FUNCTION public.validate_site_questionnaire_otp_journey(
+ p_journey_id uuid,p_key_hash text,p_page_id uuid,p_block_id uuid,p_email text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE v_j public.site_questionnaire_journeys%ROWTYPE;
+BEGIN
+ SELECT * INTO v_j FROM site_questionnaire_journeys WHERE id=p_journey_id;
+ IF v_j.id IS NULL OR p_key_hash IS NULL OR v_j.key_hash<>p_key_hash OR v_j.page_id IS DISTINCT FROM p_page_id
+   OR p_email IS NULL OR NOT EXISTS(SELECT 1 FROM site_pages p CROSS JOIN LATERAL jsonb_array_elements(p.blocks) b
+     WHERE p.id=p_page_id AND p.status='published' AND b->>'id'=p_block_id::text AND b->>'type'='form'
+       AND b->'content'->'auth_mode'='true'::jsonb AND b->'content'->'questionnaire_first'='true'::jsonb)
+   OR (v_j.profile_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM profiles p JOIN auth.users u ON u.id=p.user_id
+     WHERE p.id=v_j.profile_id AND lower(u.email)=lower(p_email)))
+ THEN RAISE EXCEPTION 'questionnaire_context_invalid' USING ERRCODE='42501'; END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.validate_site_questionnaire_otp_journey(uuid,text,uuid,uuid,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.validate_site_questionnaire_otp_journey(uuid,text,uuid,uuid,text) TO service_role;
+
+-- Auth provisioning and public-schema writes are separate operations. The
+-- server-only signup marker survives a fresh OTP after profile/session failures.
+-- Never infer a new account from profile.created_at or user-editable metadata.
+CREATE OR REPLACE FUNCTION public.record_site_questionnaire_account_outcome(
+ p_journey_id uuid,p_key_hash text,p_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE v_j public.site_questionnaire_journeys%ROWTYPE; v_profile uuid; v_signup text;
+BEGIN
+ SELECT * INTO v_j FROM site_questionnaire_journeys WHERE id=p_journey_id FOR UPDATE;
+ SELECT p.id,u.raw_app_meta_data->>'questionnaire_signup_journey_id' INTO v_profile,v_signup
+   FROM profiles p JOIN auth.users u ON u.id=p.user_id WHERE p.user_id=p_user_id
+   AND p.status='active' AND NOT coalesce(p.is_archived,false) AND p.merged_to_profile_id IS NULL
+   AND u.email_confirmed_at IS NOT NULL AND u.deleted_at IS NULL AND (u.banned_until IS NULL OR u.banned_until<=now());
+ IF v_j.id IS NULL OR p_key_hash IS NULL OR v_j.key_hash<>p_key_hash OR v_profile IS NULL
+   OR (v_j.profile_id IS NOT NULL AND v_j.profile_id<>v_profile)
+ THEN RAISE EXCEPTION 'journey_binding_invalid' USING ERRCODE='42501'; END IF;
+ UPDATE site_questionnaire_journeys SET profile_id=v_profile,
+   account_outcome=coalesce(account_outcome,CASE WHEN v_signup=v_j.id::text THEN 'new_account' ELSE 'existing_account' END),
+   outcome_at=coalesce(outcome_at,now()) WHERE id=v_j.id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.record_site_questionnaire_account_outcome(uuid,text,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.record_site_questionnaire_account_outcome(uuid,text,uuid) TO service_role;

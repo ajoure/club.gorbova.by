@@ -55,7 +55,7 @@ describe("questionnaire-first journey", () => {
     show(); fillAnswers();
     fireEvent.click(screen.getByRole("button", { name: "Отправить анкету" }));
     await screen.findByLabelText("Код из письма");
-    expect(mocks.request).toHaveBeenCalledWith("test@example.com", "site-questionnaire:page:block");
+    expect(mocks.request).toHaveBeenCalledWith("test@example.com", "site-questionnaire:page:block", null);
     expect(mocks.invoke).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Код из письма"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Подтвердить почту" }));

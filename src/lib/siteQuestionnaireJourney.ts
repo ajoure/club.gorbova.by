@@ -29,14 +29,25 @@ export function trackQuestionnaireJourney(pageId:string,visitId:string,search:st
    const record=read(storage,storageKey)||{createdAt:Date.now(),requestKey:nonce(),attribution:questionnaireAttribution(Object.fromEntries(new URLSearchParams(search)))};
    // Retaining this nonce makes a lost first response retryable without extra views.
    try{storage.setItem(storageKey,JSON.stringify(record));}catch{/* Private mode may disable persistence. */}
-   const {data,error}=await supabase.functions.invoke("site-questionnaire-visit",{body:{page_id:pageId,visit_id:visitId,attribution:record.attribution,
-    ...(record.journey?record.journey:{request_key:record.requestKey})}});
+   const controller=new AbortController();
+   let timer:ReturnType<typeof setTimeout>|undefined;
+   const timeout=new Promise<{data:null;error:Error}>(resolve=>{
+    timer=setTimeout(()=>{controller.abort();resolve({data:null,error:new Error("tracking_timeout")});},8000);
+   });
+   let response;
+   try{
+    response=await Promise.race([supabase.functions.invoke("site-questionnaire-visit",{signal:controller.signal,body:{page_id:pageId,visit_id:visitId,attribution:record.attribution,
+     ...(record.journey?record.journey:{request_key:record.requestKey})}}),timeout]);
+   }finally{if(timer!==undefined)clearTimeout(timer);}
+   const {data,error}=response;
    if(error||data?.success!==true||!uuid.test(data.journey_id)||!secret.test(data.journey_key))return null;
    const journey={journey_id:data.journey_id,journey_key:data.journey_key};
    try{storage.setItem(storageKey,JSON.stringify({...record,journey}));}catch{/* Tracking does not block the questionnaire. */}
    return journey;
   }catch{return null;}
  })();
- requests.set(requestId,promise);if(requests.size>100)requests.delete(requests.keys().next().value!);
+ requests.set(requestId,promise);
+ void promise.then(result=>{if(!result&&requests.get(requestId)===promise)requests.delete(requestId);});
+ if(requests.size>100)requests.delete(requests.keys().next().value!);
  return promise;
 }
