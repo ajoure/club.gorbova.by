@@ -117,7 +117,13 @@ Deno.serve(async (req) => {
       if (identityError || !identity.user?.email_confirmed_at) return json({ error: "questionnaire_identity_invalid" }, 401);
       const { data: ready, error: statusError } = await admin.rpc("site_questionnaire_telegram_link_ready", { p_user_id: identity.user.id });
       if (statusError) return json({ error: "questionnaire_telegram_status_failed" }, 503);
-      return json({ success: true, linked: ready === true });
+      const { data: bot, error: botError } = await admin.from("telegram_bots")
+        .select("bot_username").eq("is_primary", true).eq("status", "active").maybeSingle();
+      const botUsername = bot?.bot_username?.replace(/^@/, "");
+      if (botError || !botUsername || !/^[a-z0-9_]{5,32}$/i.test(botUsername)) {
+        return json({ error: "questionnaire_support_bot_unavailable" }, 503);
+      }
+      return json({ success: true, linked: ready === true, bot_username: botUsername });
     }
 
     // Shared channel links are maintained in page/broadcast settings.
