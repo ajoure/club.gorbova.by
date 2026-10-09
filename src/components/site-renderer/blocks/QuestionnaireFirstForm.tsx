@@ -12,6 +12,7 @@ import { parseQuestionnaireSource } from "../../../../supabase/functions/site-fo
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 import { SafeHtml } from "@/components/ui/SafeHtml";
+import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {
@@ -90,6 +91,8 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     submitted.current = true;
     try { clearQuestionnaireDraft(window.localStorage, key); } catch { /* Storage may be disabled. */ }
     setStep("success");
+    const thankYouUrl = questionnaireThankYouUrl(content.redirectUrl, window.location.origin);
+    if (thankYouUrl && thankYouUrl !== window.location.pathname + window.location.search + window.location.hash) window.location.assign(thankYouUrl);
   }
 
   async function sendAnswers() {

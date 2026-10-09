@@ -383,6 +383,7 @@ export const blockContentSchemas = {
   logos: logosContentSchema,
   spacer: spacerContentSchema,
   form: formContentSchema,
+  questionnaire_bonuses: z.object({ source_page_id: z.string().default(""), source_block_id: z.string().default("") }),
   accordion: accordionSiteContentSchema,
   tabs: tabsSiteContentSchema,
   callout: calloutSiteContentSchema,
