@@ -63,7 +63,7 @@ export interface UseInlineEmailOtpReturn {
   /** Step 2 (new users only): submit collected meta and send OTP. */
   submitDetails: (meta: InlineOtpMeta) => Promise<boolean>;
   /** Questionnaire already has contact fields; verify its email without password setup. */
-  requestQuestionnaireCode: (email: string) => Promise<boolean>;
+  requestQuestionnaireCode: (email: string, flowId?: string) => Promise<boolean>;
   /** Step 3: verify 6-digit OTP; returns { userId } on success. */
   verifyCode: (code: string) => Promise<{ userId: string } | null>;
   /** Resend OTP for the current email (respects cooldown). */
@@ -124,7 +124,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
   }, []);
 
   const sendOtpForEmail = useCallback(
-    async (targetEmail: string, meta?: InlineOtpMeta): Promise<boolean> => {
+    async (targetEmail: string, meta?: InlineOtpMeta, flowId?: string): Promise<boolean> => {
       setError(null);
       setIsSending(true);
       try {
@@ -145,16 +145,18 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
             body: {
               email: trimmed,
               purpose: "auth",
+              ...(flowId ? { flowId } : {}),
               meta: metaPayload,
             },
           },
         );
 
         // functions.invoke surfaces non-2xx as sendError; we also check data.error defensively.
-        if (sendError || (data && (data as any).error)) {
-          const code = ((data as any)?.error || sendError?.message || "").toString();
+        const response = data as { error?: string; retry_after_s?: number } | null;
+        if (sendError || response?.error) {
+          const code = (response?.error || sendError?.message || "").toString();
           if (/rate_limited|429/i.test(code)) {
-            const retry = (data as any)?.retry_after_s;
+            const retry = response?.retry_after_s;
             setError(
               retry
                 ? `Слишком много попыток. Попробуйте через ${retry} с.`
@@ -239,7 +241,8 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     [email, sendOtpForEmail],
   );
 
-  const requestQuestionnaireCode = useCallback(async (targetEmail: string): Promise<boolean> => {
+  const questionnaireFlowRef = useRef<string | undefined>(undefined);
+  const requestQuestionnaireCode = useCallback(async (targetEmail: string, flowId?: string): Promise<boolean> => {
     const trimmed = (targetEmail || "").toLowerCase().trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
       setError("Введите корректный email.");
@@ -249,12 +252,13 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     // them here would overwrite an existing contact in verify-inline-otp.
     metaRef.current = undefined;
     pendingPasswordRef.current = null;
-    return sendOtpForEmail(trimmed);
+    questionnaireFlowRef.current = flowId;
+    return sendOtpForEmail(trimmed, undefined, flowId);
   }, [sendOtpForEmail]);
 
   const resend = useCallback(async () => {
     if (resendIn > 0 || !email) return false;
-    return sendOtpForEmail(email, metaRef.current);
+    return sendOtpForEmail(email, metaRef.current, questionnaireFlowRef.current);
   }, [email, resendIn, sendOtpForEmail]);
 
   const verifyCode = useCallback(
@@ -274,7 +278,8 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           { body: { email, code: cleaned } },
         );
 
-        const errCode = ((verifyData as any)?.error || verifyFnError?.message || "").toString();
+        const verifiedResponse = verifyData as { error?: string; token_hash?: string } | null;
+        const errCode = (verifiedResponse?.error || verifyFnError?.message || "").toString();
         if (errCode) {
           const next = invalidAttempts + 1;
           setInvalidAttempts(next);
@@ -299,7 +304,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           return null;
         }
 
-        const tokenHash = (verifyData as any)?.token_hash as string | undefined;
+        const tokenHash = verifiedResponse?.token_hash;
         if (!tokenHash) {
           setError("Не удалось подтвердить код. Попробуйте ещё раз.");
           return null;
@@ -351,6 +356,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
 
 
   const changeEmail = useCallback(() => {
+    questionnaireFlowRef.current = undefined;
     setStep("email");
     setError(null);
     setInvalidAttempts(0);

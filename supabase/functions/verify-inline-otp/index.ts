@@ -214,6 +214,19 @@ Deno.serve(async (req) => {
 
   if (!tokenHash) return json({ error: "session_mint_failed" }, 500);
 
+  // The durable context comes from the consumed code, never from this request.
+  // Other login forms have no questionnaire flow and remain unchanged.
+  const questionnaireFlow = /^site-questionnaire:([0-9a-f-]{36}):([0-9a-f-]{36})$/i.exec(row.flow_id || "");
+  if (questionnaireFlow) {
+    const { error: confirmationError } = await supabase.rpc("record_site_questionnaire_confirmation", {
+      p_page_id: questionnaireFlow[1], p_block_id: questionnaireFlow[2], p_user_id: userId,
+    });
+    if (confirmationError) {
+      console.error("[verify-inline-otp] questionnaire confirmation failed:", confirmationError.code);
+      return json({ error: "questionnaire_confirmation_failed" }, 500);
+    }
+  }
+
   return json({
     ok: true,
     token_hash: tokenHash,

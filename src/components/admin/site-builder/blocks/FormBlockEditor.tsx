@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { toast } from "sonner";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { OptionsEditor } from "@/components/admin/shared/OptionsEditor";
+import { QuestionnaireSourceLinks } from "./QuestionnaireSourceLinks";
 
 // Типы полей формы. Совместимы по смыслу с lesson editor (не дублируют его движок).
 const FIELD_TYPES = [
@@ -294,6 +295,7 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
               <Switch checked={questionnaireFirst} onCheckedChange={v => onChange({ ...content, questionnaire_first: v })} />
             </div>
             <p className="text-[10px] text-muted-foreground">Черновик сохраняется на устройстве на 7 дней. В полях анкеты должен быть Email с привязкой к email контакта.</p>
+            {questionnaireFirst && <QuestionnaireSourceLinks pageId={pageId} />}
             {!questionnaireFirst && <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
               <div className="space-y-1">

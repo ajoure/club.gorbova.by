@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 import { clearQuestionnaireDraft, questionnaireDraftKey, readQuestionnaireDraft, saveQuestionnaireDraft } from "@/lib/siteQuestionnaireDraft";
 import { parseQuestionnaireSource } from "../../../../supabase/functions/site-form-submit/questionnaire-source";
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
+import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {
@@ -88,11 +89,6 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     submitted.current = true;
     try { clearQuestionnaireDraft(window.localStorage, key); } catch { /* Storage may be disabled. */ }
     setStep("success");
-    const redirect = content.redirectUrl;
-    if (typeof redirect === "string" && redirect) {
-      const url = new URL(redirect, window.location.origin);
-      if (url.origin === window.location.origin) window.location.assign(url.href);
-    }
   }
 
   async function sendAnswers() {
@@ -108,7 +104,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
           return;
         }
         await submit();
-      } else if (await otp.requestQuestionnaireCode(email)) {
+      } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`)) {
         setStep("otp");
       }
     } catch { setError("Не удалось сохранить анкету. Ответы сохранены в черновике, попробуйте ещё раз."); }
@@ -133,7 +129,10 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
         {typeof content.title === "string" && content.title && <h2 className="text-2xl font-bold">{content.title}</h2>}
         {typeof content.subtitle === "string" && content.subtitle && <p>{content.subtitle}</p>}
         {step === "success" ? (
-          <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
+          <div className="space-y-4">
+            <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
+            {!isPreview && <QuestionnaireTelegramStep />}
+          </div>
         ) : step === "otp" ? (
           <form className="space-y-4" onSubmit={e => { e.preventDefault(); void verifyAndSubmit(); }}>
             <h2 className="text-xl font-semibold">Подтвердите почту</h2>

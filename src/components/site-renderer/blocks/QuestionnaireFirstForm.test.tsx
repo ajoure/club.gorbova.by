@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   user: null as null | { email: string },
 }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: mocks.user }) }));
+vi.mock("./QuestionnaireTelegramStep", () => ({ QuestionnaireTelegramStep: () => <p>Привязать Telegram после анкеты</p> }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invoke: mocks.invoke } } }));
 vi.mock("@/hooks/useInlineEmailOtp", () => ({ useInlineEmailOtp: () => ({
   requestQuestionnaireCode: mocks.request, verifyCode: mocks.verify, email: "test@example.com",
@@ -50,7 +51,7 @@ describe("questionnaire-first journey", () => {
     show(); fillAnswers();
     fireEvent.click(screen.getByRole("button", { name: "Отправить анкету" }));
     await screen.findByLabelText("Код из письма");
-    expect(mocks.request).toHaveBeenCalledWith("test@example.com");
+    expect(mocks.request).toHaveBeenCalledWith("test@example.com", "site-questionnaire:page:block");
     expect(mocks.invoke).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Код из письма"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Подтвердить и отправить" }));

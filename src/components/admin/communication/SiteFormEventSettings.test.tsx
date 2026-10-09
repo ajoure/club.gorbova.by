@@ -28,14 +28,14 @@ describe("site form event destination", () => {
     render(<SiteFormEventSettings value={{ page_id: pageA, block_id: block, event: "submitted" }} onChange={onChange} />);
     expect(screen.queryByText("Обычная форма")).toBeNull();
     expect(screen.getByRole("option", { name: "Анкета" })).toHaveValue(block);
-    fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: pageB } });
+    fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: pageB } });
     expect(onChange).toHaveBeenCalledWith({ page_id: pageB, block_id: "", event: "submitted" });
   });
   it("shows a loading failure instead of inventing a destination", () => {
     query.data = []; query.isError = true;
     render(<SiteFormEventSettings value={{ page_id: "", block_id: "", event: "submitted" }} onChange={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Не удалось загрузить страницы");
-    expect(screen.getAllByRole("combobox")[1]).toBeDisabled();
+    expect(screen.getAllByRole("combobox")[2]).toBeDisabled();
     query.isError = false;
   });
 });

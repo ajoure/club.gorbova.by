@@ -5,6 +5,7 @@ import { PGlite } from '@electric-sql/pglite';
 
 const migration = await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql', import.meta.url), 'utf8');
 const notificationsMigration = await readFile(new URL('../../supabase/migrations/20261009062003_site_questionnaire_notifications.sql', import.meta.url), 'utf8');
+const remindersMigration = await readFile(new URL('../../supabase/migrations/20261009064000_site_questionnaire_incomplete_reminders.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -90,11 +91,51 @@ async function notifications(db) {
     CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
       CONSTRAINT broadcast_templates_trigger_kind_check CHECK(trigger_kind IN ('manual','lesson_event','scheduled_condition')));
     CREATE TABLE broadcast_automation_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),template_id uuid,user_id uuid,event_key text,status text DEFAULT 'pending',
+      created_at timestamptz DEFAULT now(),attempted_at timestamptz,error text,
       UNIQUE(template_id,user_id,event_key));`);
   await db.exec(notificationsMigration);
   await db.query(`INSERT INTO broadcast_templates VALUES($1,'email',ARRAY['email','telegram'],'site_form_event','recurring','approved',$2)`,
     [id(60),JSON.stringify({site_form_condition:{page_id:id(3),block_id:id(8),event:'submitted'}})]);
 }
+
+test('incomplete reminders require verified identity, wait until due and stop after a completed form',async()=>{
+  const {db,submit}=await fixture();try{
+    await notifications(db);
+    await db.exec("CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$SELECT 'service_role'::text$$");
+    await db.exec(remindersMigration);
+    await db.query(`INSERT INTO broadcast_templates VALUES($1,'email',ARRAY['email'],'site_form_event','recurring','approved',$2)`,
+      [id(61),JSON.stringify({site_form_condition:{page_id:id(3),block_id:id(8),event:'email_confirmed_incomplete',delay_minutes:60}})]);
+    const confirm=()=>db.query('SELECT record_site_questionnaire_confirmation($1,$2,$3)',[id(3),id(8),id(1)]);
+    await db.exec('UPDATE auth.users SET email_confirmed_at=null');
+    await assert.rejects(confirm(),/questionnaire_identity_invalid/);
+    await db.exec('UPDATE auth.users SET email_confirmed_at=now()');
+    await confirm();await confirm();
+    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_confirmations')).rows[0].n,1);
+    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,0);
+    const delivery=(await db.query('SELECT id FROM broadcast_automation_deliveries WHERE template_id=$1',[id(61)])).rows[0].id;
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery])).rows[0].allowed,false);
+    await db.exec("UPDATE broadcast_automation_deliveries SET available_at=now()-interval '1 second'");
+    await db.exec("UPDATE site_questionnaire_confirmations SET confirmed_at=now()-interval '61 minutes'");
+    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,1);
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery])).rows[0].allowed,true);
+    await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,delay_minutes}','120'::jsonb) WHERE id=$1",[id(61)]);
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery])).rows[0].allowed,false);
+    await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,delay_minutes}','60'::jsonb),channels=ARRAY['telegram'] WHERE id=$1",[id(61)]);
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery])).rows[0].allowed,false);
+    await db.query("UPDATE broadcast_templates SET channels=ARRAY['email'] WHERE id=$1",[id(61)]);
+    // Completion during an already claimed reminder still suppresses dispatch.
+    await submit();
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery])).rows[0].allowed,false);
+    const completedDelivery=(await db.query('SELECT id FROM broadcast_automation_deliveries WHERE template_id=$1',[id(60)])).rows[0].id;
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[completedDelivery])).rows[0].allowed,true);
+    await db.query("UPDATE broadcast_automation_deliveries SET status='pending' WHERE id=$1",[delivery]);
+    await submit(id(11));
+    assert.deepEqual((await db.query('SELECT status,error FROM broadcast_automation_deliveries WHERE id=$1',[delivery])).rows[0],{status:'failed',error:'questionnaire_completed'});
+    await confirm();
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries WHERE template_id=$1',[id(61)])).rows[0].n,1);
+    assert.equal((await counts(db)).access,0);
+  }finally{await db.close()}
+});
 
 test('atomic questionnaire creates complete history and draft deal; retries never duplicate or grant course access',async()=>{
   const {db,submit}=await fixture(); try {

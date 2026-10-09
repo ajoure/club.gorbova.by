@@ -1087,6 +1087,11 @@ export function BroadcastsTabContent() {
       toast.error("Выберите страницу и форму анкеты");
       return;
     }
+    if (sendMode === "event" && siteFormCondition?.event === "email_confirmed_incomplete" &&
+        (!Number.isInteger(siteFormCondition.delay_minutes) || (siteFormCondition.delay_minutes ?? 0) < 15 || (siteFormCondition.delay_minutes ?? 0) > 10080 || sendToTelegram || !sendToEmail)) {
+      toast.error("Для напоминания выберите только email и задержку от 15 до 10080 минут");
+      return;
+    }
     if (sendMode === "event" && !siteFormCondition && !filters.education) {
       toast.error("Для отправки по событию задайте условие по обучению");
       return;

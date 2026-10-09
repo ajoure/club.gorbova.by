@@ -230,6 +230,8 @@ Deno.serve(async (req) => {
             throw new Error('Канал события анкеты не указан');
           }
           if (isSiteFormEvent) {
+            const { data: allowed, error: eligibilityError } = await supabase.rpc('site_questionnaire_delivery_allowed', { p_delivery_id: delivery.id });
+            if (eligibilityError || allowed !== true) throw new Error('Событие анкеты отменено или больше не соответствует правилу');
             const { data: profile, error: profileError } = await supabase.from('profiles')
               .select('id,status,is_archived,merged_to_profile_id').eq('user_id',delivery.user_id).single();
             const { data: account, error: accountError } = await supabase.auth.admin.getUserById(delivery.user_id);

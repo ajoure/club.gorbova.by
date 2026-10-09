@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { SiteFormEventCondition } from "@/lib/siteFormEventCondition";
 
@@ -21,7 +22,16 @@ export function SiteFormEventSettings({ value, onChange }: { value: SiteFormEven
     return [{ id: block.id, title: typeof content.title === "string" && content.title ? content.title : "Анкета", enabled: content.questionnaire_first === true }];
   });
   return <div className="space-y-3 rounded-lg border p-3">
-    <p className="text-sm">После сохранения анкеты — один раз на человека и форму. Telegram ждёт привязки бота.</p>
+    <Label htmlFor="broadcast-site-form-event">Когда отправлять</Label>
+    <Select value={value.event} onValueChange={event => onChange({ ...value, event: event as SiteFormEventCondition["event"], delay_minutes: event === "email_confirmed_incomplete" ? 60 : undefined })}>
+      <SelectTrigger id="broadcast-site-form-event"><SelectValue /></SelectTrigger>
+      <SelectContent><SelectItem value="submitted">Анкета сохранена</SelectItem><SelectItem value="email_confirmed_incomplete">Почта подтверждена, анкета не отправлена</SelectItem></SelectContent>
+    </Select>
+    {value.event === "email_confirmed_incomplete" ? <div className="space-y-2">
+      <Label htmlFor="broadcast-site-form-delay">Подождать после подтверждения почты (минут)</Label>
+      <Input id="broadcast-site-form-delay" type="number" min={15} max={10080} value={value.delay_minutes ?? 60} onChange={e => onChange({ ...value, delay_minutes: Number(e.target.value) })} />
+      <p className="text-sm">Напоминание отменяется после отправки анкеты. Только email, один раз на человека и форму.</p>
+    </div> : <p className="text-sm">После сохранения анкеты — один раз на человека и форму. Telegram ждёт привязки бота.</p>}
     <Label htmlFor="broadcast-site-form-page">Страница анкеты</Label>
     <Select value={value.page_id || undefined} onValueChange={page_id => onChange({ ...value, page_id, block_id: "" })}>
       <SelectTrigger id="broadcast-site-form-page"><SelectValue placeholder={isPending ? "Загрузка…" : "Выберите страницу"} /></SelectTrigger>

@@ -84,6 +84,19 @@ describe("useInlineEmailOtp", () => {
     expect(verifyOtp).not.toHaveBeenCalled();
   });
 
+  it("attaches questionnaire context without answer metadata and clears it for a new email", async () => {
+    mockRequestOtp();
+    const { result } = renderHook(() => useInlineEmailOtp());
+    const flow = "site-questionnaire:00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000008";
+    await act(async () => { await result.current.requestQuestionnaireCode("test@example.com",flow); });
+    expect(functionsInvoke.mock.calls[0][1].body).toEqual({ email:"test@example.com",purpose:"auth",meta:undefined,flowId:flow });
+    // Changing email starts a new questionnaire/auth attempt, not a remembered flow.
+    act(() => result.current.changeEmail());
+    mockRequestOtp();
+    await act(async () => { await result.current.requestQuestionnaireCode("other@example.com"); });
+    expect(functionsInvoke.mock.calls[1][1].body.flowId).toBeUndefined();
+  });
+
   it("submitEmail for NEW email → routes to details, does NOT request OTP", async () => {
     mockIdentify({ exists: false, hasPassword: false, profile_name: null });
     const { result } = renderHook(() => useInlineEmailOtp());
