@@ -20315,6 +20315,65 @@ export type Database = {
           },
         ]
       }
+      site_questionnaire_bonus_channels: {
+        Row: {
+          block_id: string
+          bot_id: string
+          channel_id: number
+          is_enabled: boolean
+          legacy_channel_snapshot: Json
+          legacy_club_id: string | null
+          page_id: string
+        }
+        Insert: {
+          block_id: string
+          bot_id: string
+          channel_id: number
+          is_enabled?: boolean
+          legacy_channel_snapshot?: Json
+          legacy_club_id?: string | null
+          page_id: string
+        }
+        Update: {
+          block_id?: string
+          bot_id?: string
+          channel_id?: number
+          is_enabled?: boolean
+          legacy_channel_snapshot?: Json
+          legacy_club_id?: string | null
+          page_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_legacy_club_id_fkey"
+            columns: ["legacy_club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_questionnaire_bonus_channels_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_questionnaire_confirmations: {
         Row: {
           block_id: string
@@ -25275,6 +25334,10 @@ export type Database = {
         Args: { p_order_id: string }
         Returns: Json
       }
+      configure_cb21_bonus_channel: {
+        Args: { p_expected_mappings?: number }
+        Returns: Json
+      }
       consume_inline_otp_attempt: {
         Args: {
           p_code_hash: string
@@ -27607,6 +27670,14 @@ export type Database = {
           has_telegram: boolean
           user_id: string
         }[]
+      }
+      resolve_site_questionnaire_bonus_join: {
+        Args: {
+          p_bot_id: string
+          p_channel_id: number
+          p_telegram_user_id?: number
+        }
+        Returns: Json
       }
       resolve_telegram_conversation_v1: {
         Args: {
