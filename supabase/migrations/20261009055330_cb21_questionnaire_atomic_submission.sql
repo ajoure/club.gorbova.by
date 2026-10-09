@@ -8,7 +8,10 @@ CREATE OR REPLACE FUNCTION public.submit_site_questionnaire(
   p_page_id uuid, p_block_id uuid, p_user_id uuid, p_submission_key uuid,
   p_fields jsonb, p_source_code text, p_consent_version text
 ) RETURNS jsonb
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+-- Managed production service_role cannot SELECT auth.users directly. This
+-- narrowly scoped function runs as its migration owner, with only service_role
+-- allowed to call it; verified identity and routing are rechecked below.
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_page public.site_pages%ROWTYPE;
   v_profile public.profiles%ROWTYPE;

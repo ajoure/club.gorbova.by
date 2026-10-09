@@ -168,6 +168,19 @@ test('missing contact fields are filled without rewriting identity, and arbitrar
     assert.deepEqual(grants,{anon:false,authenticated:false,service:true});
   }finally{await db.close()}
 });
+test('service-only submission works without granting service_role access to auth.users',async()=>{
+  const {db,submit}=await fixture();try{
+    await db.exec('GRANT USAGE ON SCHEMA auth TO service_role');
+    assert.equal((await db.query("SELECT has_table_privilege('service_role','auth.users','SELECT') allowed")).rows[0].allowed,false);
+    await db.exec('SET ROLE service_role');
+    assert.equal((await submit()).success,true);
+    await db.exec('RESET ROLE');
+    assert.equal((await counts(db)).submissions,1);
+    await db.exec('SET ROLE authenticated');
+    await assert.rejects(submit(),/permission denied for function/);
+    await db.exec('RESET ROLE');
+  }finally{await db.close()}
+});
 test('questionnaire notifications wait for Telegram linking and are unique independently for each channel',async()=>{
   const {db,submit}=await fixture();try{
     await notifications(db);await submit();
