@@ -77,6 +77,7 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE site_questionnaire_test'
           node --test scripts/tests/site-questionnaire-database.test.mjs
+          node --test scripts/tests/site-questionnaire-bonus-channel.test.mjs
           node scripts/tests/site-questionnaire-concurrency.test.mjs
       - name: Accounting regulations migration safety
         run: node --test scripts/tests/accounting-regulations-migration.test.mjs

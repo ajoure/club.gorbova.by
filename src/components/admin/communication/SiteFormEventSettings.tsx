@@ -31,7 +31,11 @@ export function SiteFormEventSettings({ value, onChange }: { value: SiteFormEven
       <Label htmlFor="broadcast-site-form-delay">Подождать после подтверждения почты (минут)</Label>
       <Input id="broadcast-site-form-delay" type="number" min={15} max={10080} value={value.delay_minutes ?? 60} onChange={e => onChange({ ...value, delay_minutes: Number(e.target.value) })} />
       <p className="text-sm">Напоминание отменяется после отправки анкеты. Только email, один раз на человека и форму.</p>
-    </div> : <p className="text-sm">После сохранения анкеты — один раз на человека и форму. Telegram ждёт привязки бота.</p>}
+    </div> : <div className="space-y-2">
+      <Label htmlFor="broadcast-site-form-delay">Задержка после попадания под правило (минут)</Label>
+      <Input id="broadcast-site-form-delay" type="number" min={0} max={10080} value={value.delay_minutes ?? 0} onChange={e => onChange({ ...value, delay_minutes: Number(e.target.value) })} />
+      <p className="text-sm">0 — сразу. После сохранения анкеты — один раз на человека и форму. Telegram ждёт привязки бота.</p>
+    </div>}
     <Label htmlFor="broadcast-site-form-page">Страница анкеты</Label>
     <Select value={value.page_id || undefined} onValueChange={page_id => onChange({ ...value, page_id, block_id: "" })}>
       <SelectTrigger id="broadcast-site-form-page"><SelectValue placeholder={isPending ? "Загрузка…" : "Выберите страницу"} /></SelectTrigger>

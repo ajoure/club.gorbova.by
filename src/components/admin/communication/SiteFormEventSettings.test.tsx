@@ -16,6 +16,14 @@ const pageA = "00000000-0000-4000-8000-000000000003";
 const pageB = "00000000-0000-4000-8000-000000000004";
 const block = "00000000-0000-4000-8000-000000000008";
 describe("site form event destination", () => {
+  it("allows immediate delivery or a delay after a completed questionnaire", () => {
+    const onChange = vi.fn();
+    render(<SiteFormEventSettings value={{ page_id: pageA, block_id: block, event: "submitted" }} onChange={onChange} />);
+    const delay = screen.getByLabelText("Задержка после попадания под правило (минут)");
+    expect(delay).toHaveValue(0);
+    fireEvent.change(delay, { target: { value: "90" } });
+    expect(onChange).toHaveBeenCalledWith({ page_id: pageA, block_id: block, event: "submitted", delay_minutes: 90 });
+  });
   it("offers authenticated forms only and clears the previous form when the page changes", () => {
     query.data = [
       { id: pageA, title: "Предзапись", slug: "preregistration", blocks: [

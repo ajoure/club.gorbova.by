@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 const migration = await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql', import.meta.url), 'utf8');
 const notificationsMigration = await readFile(new URL('../../supabase/migrations/20261009062003_site_questionnaire_notifications.sql', import.meta.url), 'utf8');
 const remindersMigration = await readFile(new URL('../../supabase/migrations/20261009064000_site_questionnaire_incomplete_reminders.sql', import.meta.url), 'utf8');
+const submissionDelayMigration = await readFile(new URL('../../supabase/migrations/20261009072000_site_questionnaire_submission_delay.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -97,6 +98,26 @@ async function notifications(db) {
   await db.query(`INSERT INTO broadcast_templates VALUES($1,'email',ARRAY['email','telegram'],'site_form_event','recurring','approved',$2)`,
     [id(60),JSON.stringify({site_form_condition:{page_id:id(3),block_id:id(8),event:'submitted'}})]);
 }
+
+test('new questionnaire entrants wait for the configured delay and retries do not reset or duplicate delivery',async()=>{
+  const {db,submit}=await fixture();try{
+    await notifications(db);
+    await db.exec("CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$SELECT 'service_role'::text$$");
+    await db.exec(remindersMigration); await db.exec(submissionDelayMigration);
+    await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,delay_minutes}','90'::jsonb) WHERE id=$1",[id(60)]);
+    await submit(); await submit();
+    const delivery=(await db.query('SELECT * FROM broadcast_automation_deliveries')).rows[0];
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,1);
+    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,0);
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery.id])).rows[0].allowed,false);
+    await db.exec("UPDATE broadcast_automation_deliveries SET created_at=now()-interval '91 minutes',available_at=now()-interval '1 minute'");
+    assert.equal((await db.query('SELECT * FROM claim_broadcast_automation_deliveries(50)')).rows.length,1);
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[delivery.id])).rows[0].allowed,true);
+    await submit(id(11));
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,1);
+    assert.equal((await counts(db)).access,0);
+  }finally{await db.close()}
+});
 
 test('incomplete reminders require verified identity, wait until due and stop after a completed form',async()=>{
   const {db,submit}=await fixture();try{
