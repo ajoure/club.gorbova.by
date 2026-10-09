@@ -44,7 +44,7 @@ BEGIN
  IF NEW.transport IS DISTINCT FROM 'business' THEN RETURN NEW; END IF;
  SELECT * INTO p FROM public.sales_campaigns WHERE bot_id=NEW.bot_id AND business_account_id=NEW.business_account_id
    AND (test_user_id=NEW.user_id OR test_user_id IS NULL)
-   ORDER BY test_user_id NULLS LAST LIMIT 1;
+   ORDER BY test_user_id NULLS LAST LIMIT 1 FOR SHARE;
  IF NOT FOUND OR NEW.user_id IS NULL THEN RETURN NEW; END IF;
  SELECT * INTO c FROM public.sales_conversations WHERE campaign_id=p.id AND user_id=NEW.user_id FOR UPDATE;
  IF p.test_user_id IS NULL THEN

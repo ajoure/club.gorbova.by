@@ -51,5 +51,22 @@ try {
  assert.deepEqual(counts,{total:2,held:2});
  assert.equal((await sql`SELECT sales_begin_send(${other.job.id},${other.job.claim_token},'{}') sent`)[0].sent,false);
  assert.equal((await sql`SELECT count(*)::int n FROM notification_outbox`)[0].n,1);
- console.log('PASS: parallel workers claim different customers; duplicate dispatch has one exact recipient; disable locks and holds both chats.');
+ // A fresh client arriving during disable must read the committed OFF campaign.
+ // Otherwise an old snapshot may create a started dialogue after disable has finished.
+ const late={id:randomUUID(),tg:7003};
+ await sql`INSERT INTO auth.users(id) VALUES(${late.id})`;
+ const [profile]=await sql`INSERT INTO profiles(user_id,telegram_user_id,telegram_link_bot_id) VALUES(${late.id},${late.tg},${template.bot_id}) RETURNING id`;
+ await sql`INSERT INTO telegram_access_audit VALUES(${late.id},${late.tg},'telegram_link_confirmed',${sql.json({bot_id:template.bot_id})},now())`;
+ await sql`INSERT INTO site_form_submissions(profile_id,page_id,status,source,metadata) VALUES(${profile.id},${page},'processed','site_form_auth',${sql.json({questionnaire_first:true,block_id:block,user_id:late.id})})`;
+ await sql`UPDATE sales_campaigns SET mode='questionnaire_customer' WHERE id=${campaign}`;
+ let finishDisable,disabledSignal;const disabled=new Promise(resolve=>disabledSignal=resolve),finish=new Promise(resolve=>finishDisable=resolve);
+ const disabling=workerA.begin(async tx=>{await tx`SELECT sales_control(${campaign},'disable',${template.test_user_id})`;disabledSignal();await finish;});
+ await disabled;
+ const lateIncoming=workerB`INSERT INTO telegram_messages(transport,user_id,bot_id,business_account_id,direction,message_origin,message_id,message_text,telegram_user_id,meta)
+ VALUES('business',${late.id},${template.bot_id},${template.business_account_id},'incoming','client',901,${phrase},${late.tg},${sql.json({source:'telegram_business',raw:{date:1789214400}})})`.execute();
+ waits=false;
+ for(let i=0;i<100;i++){const [activity]=await sql`SELECT wait_event_type FROM pg_stat_activity WHERE pid=${pid}`;if(activity?.wait_event_type==='Lock'){waits=true;break}await new Promise(resolve=>setTimeout(resolve,20));}
+ finishDisable();await disabling;await lateIncoming;assert.ok(waits);
+ assert.equal((await sql`SELECT count(*)::int n FROM sales_conversations WHERE campaign_id=${campaign} AND user_id=${late.id}`)[0].n,0);
+ console.log('PASS: parallel claims are isolated; duplicate dispatch sends once; disable locks both chats; concurrent incoming cannot start a new chat after disable.');
 } finally {await Promise.all([sql.end({timeout:1}),workerA.end({timeout:1}),workerB.end({timeout:1})]);}
