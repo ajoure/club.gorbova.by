@@ -284,3 +284,6 @@ verify_jwt = false
 
 [functions.instagram-monitor-worker]
 verify_jwt = false
+
+[functions.site-questionnaire-visit]
+verify_jwt = false

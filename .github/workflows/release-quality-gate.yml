@@ -78,6 +78,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE site_questionnaire_test'
           node --test scripts/tests/site-questionnaire-database.test.mjs
           node --test scripts/tests/site-questionnaire-bonus-channel.test.mjs
+          node --test scripts/tests/site-questionnaire-journeys.test.mjs
           node scripts/tests/site-questionnaire-concurrency.test.mjs
       - name: Accounting regulations migration safety
         run: node --test scripts/tests/accounting-regulations-migration.test.mjs
@@ -91,7 +92,7 @@ jobs:
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts
           deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts supabase/functions/instagram-monitor/release-health_test.ts supabase/functions/instagram-monitor-worker/provider_test.ts
       - name: Site questionnaire Edge types
-        run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/site-form-submit/index.ts supabase/functions/process-scheduled-broadcasts/index.ts supabase/functions/verify-inline-otp/index.ts
+        run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/site-form-submit/index.ts supabase/functions/process-scheduled-broadcasts/index.ts supabase/functions/verify-inline-otp/index.ts supabase/functions/site-questionnaire-visit/index.ts
       - name: MNS current-law Edge types
         run: node scripts/verify-mns-function-bundles.mjs
       - name: Browser application types
