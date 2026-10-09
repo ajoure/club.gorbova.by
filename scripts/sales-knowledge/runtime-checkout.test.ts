@@ -1,5 +1,6 @@
 import {cbAlumniOfferAllowed} from '../../supabase/functions/_shared/sales-runtime/checkout-auth.ts';
 import {checkoutReply} from '../../supabase/functions/_shared/sales-runtime/checkout.ts';
+import {campaignForConversation} from '../../supabase/functions/_shared/sales-runtime/recipient.mjs';
 function eq(a:unknown,b:unknown){if(JSON.stringify(a)!==JSON.stringify(b))throw Error(`mismatch: ${JSON.stringify(a)} / ${JSON.stringify(b)}`);}
 function fixture(){
  const state:any={price:1790,ops:[],calls:[],kind:'pay_now',method:'full_payment'};
@@ -39,6 +40,33 @@ Deno.test('confirmed quote uses recipient-bound canonical writer and repeated in
   let r:any=await checkoutReply(f.db,f.p,f.c,f.j,f.context,f.selection);eq(r.stage,'closed');eq(f.state.calls.length,1);eq(f.state.calls[0].user_id,'buyer');eq(f.state.calls[0].amount,179000);eq(f.state.calls[0].composable_quote.adjustment_amount,0);
   r=await checkoutReply(f.db,f.p,f.c,{id:'second-inbound'},f.context,f.selection);eq(r.stage,'closed');eq(f.state.calls.length,1);
  }finally{globalThis.fetch=original;Deno.env.delete('SUPABASE_URL');Deno.env.delete('SUPABASE_SERVICE_ROLE_KEY');}
+});
+Deno.test('customer campaign checkout targets each conversation, never its campaign test account',async()=>{
+ const campaign={id:'11111111-1111-4111-8111-111111111111',mode:'questionnaire_customer',test_user_id:null,
+  bot_id:'44444444-4444-4444-8444-444444444444',business_account_id:'55555555-5555-4555-8555-555555555555'};
+ const original=globalThis.fetch;
+ Deno.env.set('SUPABASE_URL','https://example.invalid');Deno.env.set('SUPABASE_SERVICE_ROLE_KEY','synthetic-only');
+ const recipients:string[]=[];
+ globalThis.fetch=async(_url:any,init:any)=>{
+  recipients.push(JSON.parse(init.body).user_id);
+  return Response.json({public_url:'https://gorbova.by/pay/synthetic-test'});
+ };
+ try {
+  for(const user of ['22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333']) {
+   const f=fixture();
+   const c={...f.c,campaign_id:campaign.id,user_id:user};
+   const p=campaignForConversation({...f.p,...campaign},c,{user_id:user,telegram_user_id:123456789,
+    bot_id:campaign.bot_id,business_account_id:campaign.business_account_id,transport:'business'});
+   const preview:any=await checkoutReply(f.db,p,c,f.j,f.context,f.selection);
+   f.context.lastCheckout=preview.checkout_quote;f.context.lastQuestionId='checkout_confirm';
+   f.context.history.push({role:'customer',text:'Да'});f.selection.confirmed=true;f.selection.evidence=[1];
+   const result=await checkoutReply(f.db,p,c,f.j,f.context,f.selection);
+   if(result.action!=='reply')throw Error('expected confirmed checkout reply');
+   eq(result.stage,'closed');
+   eq(recipients.at(-1),user);
+  }
+  eq(new Set(recipients).size,2);eq(campaign.test_user_id,null);
+ } finally {globalThis.fetch=original;Deno.env.delete('SUPABASE_URL');Deno.env.delete('SUPABASE_SERVICE_ROLE_KEY');}
 });
 Deno.test('payment uncertainty is not retried and an existing CB21 purchase does not create another sale',async()=>{
  const f=fixture();const r:any=await checkoutReply(f.db,f.p,f.c,f.j,f.context,f.selection);
