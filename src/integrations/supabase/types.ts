@@ -27607,6 +27607,10 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      repair_cb21_legacy_questionnaires: {
+        Args: { p_execute?: boolean }
+        Returns: Json
+      }
       report_package_field_dependencies: {
         Args: { _field_id: string }
         Returns: Json
