@@ -2938,6 +2938,7 @@ export type Database = {
       broadcast_automation_deliveries: {
         Row: {
           attempted_at: string | null
+          available_at: string
           channel: string | null
           created_at: string
           error: string | null
@@ -2952,6 +2953,7 @@ export type Database = {
         }
         Insert: {
           attempted_at?: string | null
+          available_at?: string
           channel?: string | null
           created_at?: string
           error?: string | null
@@ -2966,6 +2968,7 @@ export type Database = {
         }
         Update: {
           attempted_at?: string | null
+          available_at?: string
           channel?: string | null
           created_at?: string
           error?: string | null
@@ -20312,6 +20315,35 @@ export type Database = {
           },
         ]
       }
+      site_questionnaire_confirmations: {
+        Row: {
+          block_id: string
+          confirmed_at: string
+          page_id: string
+          user_id: string
+        }
+        Insert: {
+          block_id: string
+          confirmed_at?: string
+          page_id: string
+          user_id: string
+        }
+        Update: {
+          block_id?: string
+          confirmed_at?: string
+          page_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_confirmations_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sms_messages: {
         Row: {
           company_id: string | null
@@ -25059,6 +25091,7 @@ export type Database = {
         Args: { _limit?: number }
         Returns: {
           attempted_at: string | null
+          available_at: string
           channel: string | null
           created_at: string
           error: string | null
@@ -27272,6 +27305,10 @@ export type Database = {
         }
         Returns: Json
       }
+      record_site_questionnaire_confirmation: {
+        Args: { p_block_id: string; p_page_id: string; p_user_id: string }
+        Returns: undefined
+      }
       referral_admin_attach_historical_profile: {
         Args: {
           p_partner_profile_id: string
@@ -28088,6 +28125,10 @@ export type Database = {
       settle_composable_order_group: {
         Args: { _payment_id: string; _primary_order_id: string }
         Returns: Json
+      }
+      site_questionnaire_delivery_allowed: {
+        Args: { p_delivery_id: string }
+        Returns: boolean
       }
       site_questionnaire_telegram_link_ready: {
         Args: { p_user_id: string }
