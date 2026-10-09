@@ -5,7 +5,95 @@ import { PGlite } from '@electric-sql/pglite';
 
 const migration = await readFile(new URL('../../supabase/migrations/20261009071000_site_questionnaire_bonus_channel.sql',import.meta.url),'utf8');
 const inviteMigration = await readFile(new URL('../../supabase/migrations/20261009074000_site_questionnaire_bonus_invites.sql',import.meta.url),'utf8');
+const legacyMigration = await readFile(new URL('../../supabase/migrations/20261009080000_cb21_legacy_questionnaire_repair.sql',import.meta.url),'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+async function legacyFixture() {
+  const {db}=await fixture();
+  await db.exec(`ALTER TABLE auth.users ADD COLUMN email text;
+    UPDATE auth.users SET email='owner@example.test';
+    ALTER TABLE site_form_submissions ADD COLUMN source text, ADD COLUMN created_at timestamptz,
+      ADD COLUMN order_id uuid, ADD COLUMN form_data jsonb, ADD COLUMN field_mapping jsonb;
+    CREATE TABLE products_v2(id uuid PRIMARY KEY,is_active boolean);
+    CREATE TABLE tariffs(id uuid PRIMARY KEY,product_id uuid,is_active boolean);
+    CREATE TABLE orders_v2(id uuid PRIMARY KEY,profile_id uuid,user_id uuid,status text,is_deleted boolean,
+      base_price numeric,final_price numeric,paid_amount numeric,product_id uuid,tariff_id uuid);
+    ALTER TABLE orders_v2 ADD COLUMN pipeline_id uuid, ADD COLUMN pipeline_stage_id uuid;
+    CREATE TABLE crm_pipeline_automation_rules(pipeline_id uuid,stage_id uuid,status text,trigger_type text);
+    CREATE TABLE payments_v2(id uuid PRIMARY KEY,order_id uuid);`);
+  const page='c8c5c19a-a10d-4f6b-8049-449f37230ed0',block='7f144dcc-1a71-4225-8399-efd4d91502cd';
+  const bot='1a560e98-574e-4fd9-82ab-4b7bbdc300b4',product='0c98e21a-5300-4cfb-ac82-51c2d6184650',tariff='1a7bf501-c654-46d3-8665-1febd7eb59eb';
+  const maps=['email','full_name','instagram_url','phone','telegram_username'];
+  const fields=Array.from({length:15},(_,i)=>({label:`Field ${i}`,type:i===0?'email':'text',mapping:maps[i]||'none',required:true}));
+  const data=Object.fromEntries(fields.map((f,i)=>[f.label,i===0?' Owner@Example.Test ':'answer']));
+  const mapping=Object.fromEntries(fields.slice(0,5).map(f=>[f.label,f.mapping]));
+  await db.query("INSERT INTO site_pages VALUES($1,'published',$2)",[page,JSON.stringify([{id:block,type:'form',content:{fields}}])]);
+  await db.query("INSERT INTO telegram_bots VALUES($1,'active',true)",[bot]);
+  await db.query('INSERT INTO products_v2 VALUES($1,true)',[product]);
+  await db.query('INSERT INTO tariffs VALUES($1,$2,true)',[tariff,product]);
+  await db.query('INSERT INTO orders_v2 VALUES($1,$2,NULL,\'draft\',false,0,0,0,NULL,NULL,$3,$4)',[id(20),id(2),id(40),id(41)]);
+  await db.query('INSERT INTO site_questionnaire_bonus_channels(page_id,block_id,bot_id,channel_id,is_enabled) VALUES($1,$2,$3,-1002091043395,true)',[page,block,bot]);
+  for(const n of [21,22]) await db.query(`INSERT INTO site_form_submissions
+    (id,profile_id,page_id,status,metadata,source,created_at,order_id,form_data,field_mapping)
+    VALUES($1,$2,$3,'processed',$4,'site_form_auth','2026-10-08 12:00:00+00',$5,$6,$7)`,
+    [id(n),id(2),page,JSON.stringify({auth_mode:true,user_id:id(1)}),id(20),JSON.stringify(data),JSON.stringify(mapping)]);
+  await db.exec(legacyMigration);
+  return db;
+}
+
+test('bounded legacy repair preserves dates, answers, identity and money, supports dry-run and replay',async()=>{
+  const db=await legacyFixture();try{
+    const original=(await db.query('SELECT id,created_at,form_data,source FROM site_form_submissions ORDER BY id')).rows;
+    assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(false) result')).rows[0].result,
+      {dry_run:true,histories:2,orders:1,bonus_grants:1});
+    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
+    assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(true) result')).rows[0].result,
+      {dry_run:false,histories:2,orders:1,bonus_grants:1});
+    assert.deepEqual((await db.query('SELECT id,created_at,form_data,source FROM site_form_submissions ORDER BY id')).rows,original);
+    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'questionnaire_first'")).rows[0].n,0);
+    assert.deepEqual((await db.query('SELECT user_id,status,base_price,final_price,paid_amount FROM orders_v2')).rows[0],
+      {user_id:null,status:'draft',base_price:'0',final_price:'0',paid_amount:'0'});
+    assert.deepEqual((await db.query('SELECT repair_cb21_legacy_questionnaires(true) result')).rows[0].result,
+      {dry_run:false,histories:0,orders:0,bonus_grants:0});
+    assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs WHERE action='site_questionnaire.legacy_repaired'")).rows[0].n,1);
+    assert.equal((await db.query("SELECT has_function_privilege('authenticated','repair_cb21_legacy_questionnaires(boolean)','EXECUTE') allowed")).rows[0].allowed,false);
+  }finally{await db.close();}
+});
+
+test('legacy repair rejects wrong email, changed amounts and unexpected payments before any mutation',async()=>{
+  const db=await legacyFixture();try{
+    await db.query("UPDATE site_form_submissions SET form_data=jsonb_set(form_data,'{Field 0}','\"other@example.test\"') WHERE id=$1",[id(21)]);
+    await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_submission_changed/);
+    await db.query("UPDATE site_form_submissions SET form_data=jsonb_set(form_data,'{Field 0}','\"owner@example.test\"') WHERE id=$1",[id(21)]);
+    await db.exec('UPDATE orders_v2 SET final_price=500');
+    await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_order_changed/);
+    await db.exec('UPDATE orders_v2 SET final_price=0');
+    await db.query('INSERT INTO payments_v2 VALUES($1,$2)',[id(30),id(20)]);
+    await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_order_changed/);
+    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_bonus_verified'")).rows[0].n,0);
+    assert.equal((await db.query('SELECT product_id FROM orders_v2')).rows[0].product_id,null);
+  }finally{await db.close();}
+});
+
+test('unexpected order trigger effects roll back history and bonus changes together',async()=>{
+  const db=await legacyFixture();try{
+    await db.exec(`CREATE FUNCTION fixture_bad_order_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN NEW.final_price:=100; RETURN NEW; END; $$;
+      CREATE TRIGGER fixture_bad_order BEFORE UPDATE ON orders_v2 FOR EACH ROW EXECUTE FUNCTION fixture_bad_order_trigger();`);
+    await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_order_side_effect/);
+    assert.equal((await db.query('SELECT final_price,product_id FROM orders_v2')).rows[0].final_price,'0');
+    assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata ? 'legacy_bonus_verified'")).rows[0].n,0);
+    assert.equal((await db.query('SELECT count(*)::int n FROM site_questionnaire_bonus_channel_grants')).rows[0].n,0);
+  }finally{await db.close();}
+});
+
+test('new CRM automation blocks legacy repair rather than enqueueing unexpected messages',async()=>{
+  const db=await legacyFixture();try{
+    await db.query("INSERT INTO crm_pipeline_automation_rules VALUES($1,$2,'active','deal_field_changed')",[id(40),id(41)]);
+    await assert.rejects(db.query('SELECT repair_cb21_legacy_questionnaires(true)'),/legacy_repair_automation_changed/);
+    assert.equal((await db.query('SELECT product_id FROM orders_v2')).rows[0].product_id,null);
+  }finally{await db.close();}
+});
 async function fixture() {
   const db = new PGlite();
   await db.exec(`CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
