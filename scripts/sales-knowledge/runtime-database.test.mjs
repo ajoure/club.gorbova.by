@@ -73,8 +73,9 @@ before(async()=>{
  const atomic=await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql',import.meta.url),'utf8');
  await db.exec(atomic.slice(0,atomic.indexOf('-- Questionnaire-first submission')));
  await db.exec(await readFile(new URL('../../supabase/migrations/20261009120000_questionnaire_sales_identity.sql',import.meta.url),'utf8'));
- const legacy=(await one(`INSERT INTO sales_campaigns(code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version)
-  VALUES('upgrade-fixture',$1,$2,$3,$3,$4,'Legacy phrase','v1','k1') RETURNING id`,[bot,connection,owner,product])).id;
+ const legacy=randomUUID();
+ await db.query(`INSERT INTO sales_campaigns(id,code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version)
+  VALUES($1,'upgrade-fixture',$2,$3,$4,$4,$5,'Legacy phrase','v1','k1')`,[legacy,bot,connection,owner,product]);
  await db.query("INSERT INTO sales_conversations(campaign_id,state,human_hold,stage,revision,answered_seq) VALUES($1,'HUMAN_HOLD',true,'offer',7,8)",[legacy]);
  await db.exec(await readFile(new URL('../../supabase/migrations/20261009121000_sales_customer_conversations.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../../supabase/migrations/20261009122000_sales_questionnaire_route.sql',import.meta.url),'utf8'));
