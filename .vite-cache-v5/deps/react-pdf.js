@@ -1,4 +1,7 @@
 import {
+  invariant
+} from "./chunk-KDZ7CXOI.js";
+import {
   AnnotationLayer,
   AnnotationMode,
   GlobalWorkerOptions,
@@ -6,9 +9,6 @@ import {
   getDocument,
   pdf_exports
 } from "./chunk-TVQQVJC2.js";
-import {
-  invariant
-} from "./chunk-KDZ7CXOI.js";
 import {
   dequal
 } from "./chunk-W2HZVVEF.js";
