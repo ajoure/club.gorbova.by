@@ -132,10 +132,9 @@ async function fetchSiteForms(
   const { data: forms, count, error } = await query;
   if (error) throw error;
 
-  // Batch-resolve profile user_ids
+  // Batch-resolve the exact linked profile identity and fallback email
   const profileIdsToResolve: string[] = [];
   for (const f of forms || []) {
-    const meta = (f.metadata || {}) as any;
     if (f.profile_id) {
       profileIdsToResolve.push(f.profile_id);
     }

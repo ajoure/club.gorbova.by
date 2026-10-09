@@ -1886,7 +1886,7 @@ export default function AdminContacts() {
         onOpenChange={(open) => {
           if (!open) {
             setSelectedContactId(null);
-            if (fromPage) {
+            if (fromPage || contactFromUrl) {
               setSearchParams({}, { replace: true });
             }
           }
