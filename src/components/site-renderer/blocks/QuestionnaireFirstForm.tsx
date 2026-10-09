@@ -11,6 +11,7 @@ import { clearQuestionnaireDraft, questionnaireDraftKey, readQuestionnaireDraft,
 import { parseQuestionnaireSource } from "../../../../supabase/functions/site-form-submit/questionnaire-source";
 import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {
@@ -126,8 +127,8 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   return (
     <section className="py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
-        {typeof content.title === "string" && content.title && <h2 className="text-2xl font-bold">{content.title}</h2>}
-        {typeof content.subtitle === "string" && content.subtitle && <p>{content.subtitle}</p>}
+        {typeof content.title === "string" && content.title && <SafeHtml html={content.title} as="h2" className="text-2xl font-bold" />}
+        {typeof content.subtitle === "string" && content.subtitle && <SafeHtml html={content.subtitle} as="p" />}
         {step === "success" ? (
           <div className="space-y-4">
             <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
@@ -159,7 +160,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
               <input id={`questionnaire-consent-${blockId}`} type="checkbox" checked={privacyConsent} disabled={pending} onChange={e => setPrivacyConsent(e.target.checked)} className="mt-1" />
               <label htmlFor={`questionnaire-consent-${blockId}`}>Я согласен с <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">политикой конфиденциальности</a> и даю <a href="/consent" target="_blank" rel="noopener noreferrer" className="underline">согласие на обработку персональных данных</a>.</label>
             </div>
-            <Button type="submit" className="w-full" disabled={pending}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{typeof content.buttonText === "string" ? content.buttonText : "Отправить анкету"}</Button>
+            <Button type="submit" className="w-full" disabled={pending}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<SafeHtml html={typeof content.buttonText === "string" ? content.buttonText : "Отправить анкету"} /></Button>
           </form>
         )}
         {(error || otp.error) && <p role="alert" className="text-sm text-destructive">{error || otp.error}</p>}
