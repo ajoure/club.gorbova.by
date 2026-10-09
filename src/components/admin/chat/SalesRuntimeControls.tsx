@@ -14,10 +14,17 @@ type Status = {
   scope?: { user_id: string; business_account_id: string };
   available: boolean;
   can_configure?: boolean;
+  can_edit_campaign?: boolean;
+  can_switch_test?: boolean;
+  questionnaire_sources?: {page_id:string;block_id:string;label:string}[];
+  customer_route?: {id:string;page_id:string;block_id:string;trigger_phrase:string}|null;
+  customer_mode?: string;
   ai_models?: string[];
   catalog_products?: {id:string;name:string}[];
   campaign?: {
     mode: string;
+    knowledge_version: string;
+    source_page_id?: string|null;
     trigger_phrase: string;
     delay_min_seconds: number;
     delay_max_seconds: number;
@@ -48,13 +55,16 @@ export function SalesRuntimeControls(
     cache = useQueryClient(),
     allowed = access.canAccessSection("communication", "manage");
   const [settings, setSettings] = useState(false),
+    [campaignScope,setCampaignScope]=useState<'questionnaire_customer'|undefined>(),
+    [questionnaireSource,setQuestionnaireSource]=useState(''),
+    [triggerPhrase,setTriggerPhrase]=useState(''),
     [ai,setAi]=useState<Status['campaign']['ai_config']>(),
     [productIds,setProductIds]=useState<string[]>([]),
     [min, setMin] = useState("60"),
     [max, setMax] = useState("180"),
     [followupMin, setFollowupMin] = useState("10"),
     [followupMax, setFollowupMax] = useState("15");
-  const queryKey = ["sales-runtime", userId, businessAccountId];
+  const queryKey = ["sales-runtime", userId, businessAccountId,campaignScope??'auto'];
   async function invoke(action: string, extra: Record<string, unknown> = {}) {
     const { data, error } = await supabase.functions.invoke(
       "sales-runtime-control",
@@ -63,6 +73,7 @@ export function SalesRuntimeControls(
           action,
           user_id: userId,
           business_account_id: businessAccountId,
+          campaign_scope:campaignScope,
           ...extra,
         },
       },
@@ -90,6 +101,7 @@ export function SalesRuntimeControls(
             "sales-runtime",
             data.scope.user_id,
             data.scope.business_account_id,
+            campaignScope??'auto',
           ]
           : queryKey,
         data,
@@ -102,7 +114,12 @@ export function SalesRuntimeControls(
     setSettings(false);
     setAi(undefined);
     setProductIds([]);
-  }, [userId, businessAccountId]);
+  }, [userId, businessAccountId,campaignScope]);
+  useEffect(()=>{
+    const route=query.data?.customer_route;
+    setQuestionnaireSource(route?`${route.page_id}|${route.block_id}`:'');
+    setTriggerPhrase(route?.trigger_phrase??'');
+  },[query.data?.customer_route?.id,query.data?.customer_route?.page_id,query.data?.customer_route?.block_id,query.data?.customer_route?.trigger_phrase]);
   useEffect(() => {
     if (query.data?.campaign) {
       setMin(String(query.data.campaign.delay_min_seconds));
@@ -134,8 +151,11 @@ export function SalesRuntimeControls(
   }
   if (!query.data?.available) return null;
   const { campaign, conversation, job } = query.data,
-    enabled = campaign.mode === "owner_test",
+    enabled = ['owner_test','questionnaire_customer'].includes(campaign.mode),
     state = conversation?.state || "OFF";
+  const customerCampaign=!!campaign.source_page_id;
+  const editable=query.data.can_edit_campaign===true;
+  const selectedSource=query.data.questionnaire_sources?.find(s=>`${s.page_id}|${s.block_id}`===questionnaireSource);
   const sending = job?.status === "sending",
     blocked = ["STOPPED", "DELIVERY_UNKNOWN"].includes(state);
   const waiting = job?.status === "queued" && enabled && state === "READY";
@@ -157,7 +177,11 @@ export function SalesRuntimeControls(
       className="rounded-xl border bg-muted/30 p-2 space-y-2 min-w-0"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium">Автопродажи ЦБ21 · тест</span>
+        <span className="text-xs font-medium">Автопродажи ЦБ21 · {customerCampaign?'клиенты':'тест'}</span>
+        {query.data.can_configure&&query.data.can_switch_test&&query.data.customer_route&&<Button size="sm" variant="ghost"
+          onClick={()=>setCampaignScope(customerCampaign?undefined:'questionnaire_customer')}>
+          {customerCampaign?'Открыть тест':'Открыть клиентскую кампанию'}
+        </Button>}
         <span
           role="status"
           className="text-xs text-muted-foreground break-words"
@@ -172,7 +196,7 @@ export function SalesRuntimeControls(
               disabled={mutation.isPending}
               onClick={() => act("enable")}
             >
-              <Play className="h-3 w-3 mr-1" />Включить
+              <Play className="h-3 w-3 mr-1" />{customerCampaign?'Включить клиентскую кампанию':'Включить'}
             </Button>
           )}
           {enabled && state !== "HUMAN_HOLD" && !blocked && (
@@ -236,6 +260,26 @@ export function SalesRuntimeControls(
         <DialogDescription>Задержка ответов, модель ИИ, продукты и база знаний для консультации.</DialogDescription>
       </DialogHeader>
         <div className="space-y-2">
+          {query.data.can_configure&&<div className="space-y-2 border-b pb-3">
+            <p className="text-sm font-medium">Анкета для клиентской кампании</p>
+            <p className="text-xs text-muted-foreground">Начинает диалог после сохранённой анкеты и сообщения клиента. Настройка маршрута оставляет клиентскую кампанию выключенной.</p>
+            <label className="block text-xs">Анкета
+              <select aria-label="Анкета клиентской кампании" className="mt-1 block w-full min-w-0 rounded border bg-background p-2"
+                value={questionnaireSource} disabled={mutation.isPending||query.data.customer_mode!=='off'} onChange={e=>setQuestionnaireSource(e.target.value)}>
+                <option value="">Выберите опубликованную анкету</option>
+                {(query.data.questionnaire_sources??[]).map(source=><option key={`${source.page_id}|${source.block_id}`} value={`${source.page_id}|${source.block_id}`}>{source.label}</option>)}
+              </select>
+            </label>
+            <label className="block text-xs">Сообщение клиента для запуска
+              <Input aria-label="Кодовая фраза клиентской кампании" value={triggerPhrase} maxLength={240}
+                disabled={mutation.isPending||query.data.customer_mode!=='off'} onChange={e=>setTriggerPhrase(e.target.value)}/>
+            </label>
+            <Button size="sm" variant="outline" disabled={mutation.isPending||query.data.customer_mode!=='off'||!selectedSource||triggerPhrase.trim().length<8}
+              onClick={()=>mutation.mutate({action:'questionnaire_route',source_page_id:selectedSource.page_id,source_block_id:selectedSource.block_id,
+                trigger_phrase:triggerPhrase.trim(),expected_route:query.data.customer_route??null,expected_knowledge_version:campaign.knowledge_version})}>
+              Сохранить маршрут анкеты
+            </Button>
+          </div>}
           <p className="text-xs text-muted-foreground">
             Первый ответ после кодовой фразы, в секундах.
           </p>
@@ -282,7 +326,7 @@ export function SalesRuntimeControls(
                 disabled={mutation.isPending}
                 onClick={() => act("disable")}
               >
-                Выключить
+                {customerCampaign?'Выключить клиентскую кампанию':'Выключить'}
               </Button>
             )}
           </div>
@@ -315,7 +359,7 @@ export function SalesRuntimeControls(
               <label className="text-xs">Ожидание ИИ, секунд<Input aria-label="Ожидание ИИ" type="number" className="w-28" value={ai.timeout_seconds} min={15} max={90} disabled={enabled} onChange={e=>setAi({...ai,timeout_seconds:+e.target.value})}/></label>
             </div>
             <p className="text-xs text-muted-foreground">Для смены модели выключите автопродажи. История сохраняется. Неразборчивое вложение передаётся человеку.</p>
-            <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||!Number.isInteger(ai.max_tokens)||ai.max_tokens<2000||ai.max_tokens>16000||!Number.isInteger(ai.timeout_seconds)||ai.timeout_seconds<15||ai.timeout_seconds>90}
+            <Button size="sm" variant="outline" disabled={!editable||mutation.isPending||!Number.isInteger(ai.max_tokens)||ai.max_tokens<2000||ai.max_tokens>16000||!Number.isInteger(ai.timeout_seconds)||ai.timeout_seconds<15||ai.timeout_seconds>90}
               onClick={()=>mutation.mutate({action:'ai_config',ai_config:ai,expected_ai_config:campaign.ai_config})}>Сохранить настройки ИИ</Button>
           </div>}
           {!!query.data.catalog_products?.length&&<div className="space-y-2 border-t pt-2">
@@ -327,11 +371,11 @@ export function SalesRuntimeControls(
                   onChange={e=>setProductIds(e.target.checked?[...productIds,product.id]:productIds.filter(id=>id!==product.id))}/>{product.name}
               </label>)}
             </div>
-            <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||productIds.length>20}
+            <Button size="sm" variant="outline" disabled={!editable||mutation.isPending||productIds.length>20}
               onClick={()=>mutation.mutate({action:'knowledge_products',product_ids:productIds,expected_product_ids:campaign.consultation_product_ids??[]})}>Сохранить продукты</Button>
           </div>}
-          {query.data.can_configure && !enabled && conversation?.state === "HUMAN_HOLD" && <SalesScenarioPreview />}
-          {settings&&query.data.can_configure&&<SalesKnowledgeEditor key={userId+businessAccountId} userId={userId} businessAccountId={businessAccountId} editable={!enabled&&!sending&&!blocked&&conversation?.state==='HUMAN_HOLD'}/>}
+          {query.data.can_configure && !customerCampaign && editable && <SalesScenarioPreview />}
+          {settings&&query.data.can_configure&&<SalesKnowledgeEditor key={userId+businessAccountId+(campaignScope??'auto')} userId={userId} businessAccountId={businessAccountId} campaignScope={campaignScope} editable={editable}/>}
         </div>
     </DialogContent>
     </Dialog>

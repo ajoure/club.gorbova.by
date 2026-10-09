@@ -44,10 +44,18 @@ Deno.serve(async (request) => {
     else campaignQuery=campaignQuery.or(`test_user_id.eq.${body.user_id},test_user_id.is.null`);
     const campaign = await must(campaignQuery.order('test_user_id',{ascending:true,nullsFirst:false}).limit(1).maybeSingle());
     if (!campaign) return json({ available: false, can_manage: true });
-    if(['knowledge_status','knowledge_preview','knowledge_apply','knowledge_version'].includes(body.action)) {
+    if(body.action==='questionnaire_route') {
+      await rpc(db,'sales_configure_questionnaire_campaign',{
+        p_template:campaign.id,p_actor:actor.id,p_page:body.source_page_id,p_block:body.source_block_id,
+        p_phrase:body.trigger_phrase,p_expected_route:body.expected_route??null,
+        p_expected_knowledge_version:body.expected_knowledge_version,
+      });
+    } else if(['knowledge_status','knowledge_preview','knowledge_apply','knowledge_version'].includes(body.action)) {
       return json(await knowledgeEditor(db,campaign,actor.id,body));
     }
-    if(body.action==='knowledge_products') {
+    if(body.action==='questionnaire_route') {
+      // Read back the owner campaign and the separate customer route below.
+    } else if(body.action==='knowledge_products') {
       await rpc(db,'sales_configure_knowledge_products',{p_campaign:campaign.id,p_actor:actor.id,
         p_ids:body.product_ids,p_expected:body.expected_product_ids});
     } else if(body.action==='followup_delay') {
@@ -97,6 +105,14 @@ Deno.serve(async (request) => {
       _role_code: "super_admin",
     });
     const catalogProducts=owner?await must(db.from('products_v2').select('id,name').eq('is_active',true).eq('status','active').neq('id',campaign.product_id).order('name')):[];
+    const sourcePages=owner?await must(db.from('site_pages').select('id,title,blocks').eq('status','published').order('title')):[];
+    const questionnaireSources=(sourcePages??[]).flatMap((page:any)=>(Array.isArray(page.blocks)?page.blocks:[])
+      .filter((block:any)=>block.type==='form'&&block.content?.auth_mode===true)
+      .map((block:any,index:number)=>({page_id:page.id,block_id:block.id,label:`${page.title} · Форма ${index+1}`})));
+    const customer=owner?await must(db.from('sales_campaigns').select('id,source_page_id,source_block_id,trigger_phrase,mode')
+      .eq('bot_id',campaign.bot_id).eq('business_account_id',campaign.business_account_id).is('test_user_id',null).maybeSingle()):null;
+    const ownerTest=owner?await must(db.from('sales_campaigns').select('id').eq('business_account_id',campaign.business_account_id)
+      .eq('bot_id',campaign.bot_id).eq('test_user_id',body.user_id).maybeSingle()):null;
     if(!fresh) throw Error('campaign_unavailable');
     const {knowledge,...campaignView}=fresh;
     return json({
@@ -107,8 +123,13 @@ Deno.serve(async (request) => {
       available: true,
       can_manage: true,
       can_configure: !!owner,
+      can_edit_campaign:owner?await rpc(db,'sales_campaign_configuration_ready',{p_campaign:campaign.id}):false,
       ai_models:AI_MODELS,
       catalog_products:catalogProducts,
+      questionnaire_sources:questionnaireSources,
+      customer_route:customer?{id:customer.id,page_id:customer.source_page_id,block_id:customer.source_block_id,trigger_phrase:customer.trigger_phrase}:null,
+      customer_mode:customer?.mode??'off',
+      can_switch_test:!!ownerTest,
       campaign: {...campaignView,consultation_product_ids:knowledge?.consultation_product_ids??[]},
       conversation,
       job,

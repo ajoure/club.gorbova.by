@@ -49,6 +49,18 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ffmpeg
           node --test scripts/sales-knowledge/*.test.mjs
+      - name: Sales customer real PostgreSQL concurrency
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: referral-test-only
+          PGDATABASE: sales_runtime_test
+          CB21_EXPORT_RUNTIME_FIXTURE: '1'
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE sales_runtime_test'
+          node --test scripts/sales-knowledge/runtime-database.test.mjs
+          node scripts/tests/sales-customer-concurrency.mjs
       - name: Referral redemption money and access contracts
         run: node scripts/referrals/redemption-database.test.mjs
       - name: Referral wallet real PostgreSQL concurrency

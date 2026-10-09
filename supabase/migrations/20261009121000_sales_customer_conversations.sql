@@ -551,7 +551,8 @@ BEGIN
  SELECT * INTO p FROM public.sales_campaigns WHERE id=p_campaign FOR UPDATE;
  PERFORM id FROM public.sales_conversations WHERE campaign_id=p.id ORDER BY id FOR UPDATE;
  IF p.id IS NULL THEN RAISE EXCEPTION 'campaign_missing'; END IF;
- IF p.mode<>'off' OR EXISTS(SELECT 1 FROM public.sales_conversations WHERE campaign_id=p.id AND (NOT human_hold OR state<>'HUMAN_HOLD')) THEN RAISE EXCEPTION 'disable_and_pause_required'; END IF;
+ IF p.mode<>'off' OR EXISTS(SELECT 1 FROM public.sales_conversations WHERE campaign_id=p.id
+   AND (NOT human_hold OR (p.test_user_id IS NOT NULL AND state<>'HUMAN_HOLD'))) THEN RAISE EXCEPTION 'disable_and_pause_required'; END IF;
  IF EXISTS(SELECT 1 FROM public.sales_jobs WHERE conversation_id IN (SELECT id FROM public.sales_conversations WHERE campaign_id=p.id) AND status IN ('sending','unknown')) THEN RAISE EXCEPTION 'delivery_unresolved'; END IF;
  before_facts:=coalesce(p.knowledge->'facts','[]');
  old_sha:=encode(sha256(convert_to(before_facts::text,'UTF8')),'hex');
