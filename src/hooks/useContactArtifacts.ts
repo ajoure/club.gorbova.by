@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { questionnaireSourceMetadata } from "../../supabase/functions/site-form-submit/questionnaire-source";
 
 export type ArtifactSourceType = 'site_form' | 'lesson_answer' | 'lesson_completion' | 'quest_homework';
 
@@ -19,6 +20,7 @@ export interface ContactArtifact {
   max_score: number | null;
   summary: Record<string, unknown>;
   payload: Record<string, unknown>;
+  attribution?: { source_label: string; utm_campaign: string };
   /** Lesson ID for training artifacts */
   lesson_id?: string;
   /** Module ID for training artifacts */
@@ -67,6 +69,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
 
       return (data || []).map((row: any) => {
         const meta = row.metadata as Record<string, any> || {};
+        const attribution = questionnaireSourceMetadata(meta.source_code);
         const pageTitle = row.site_pages?.title || row.site_pages?.slug || null;
         const formData = (row.form_data || {}) as Record<string, unknown>;
         const hasFormData = Object.keys(formData).length > 0;
@@ -96,7 +99,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           source_type: 'site_form' as const,
           source_id: row.id,
           title,
-          subtitle: row.source || null,
+          subtitle: attribution ? `Источник: ${attribution.source_label}` : row.source || null,
           product_id: productId,
           product_title: productTitle,
           training_title: null,
@@ -107,6 +110,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: null,
           summary: hasFormData ? summary : {},
           payload,
+          ...(attribution ? { attribution } : {}),
         };
       });
     },

@@ -33,6 +33,7 @@ interface RequestBody {
   email?: string;
   purpose?: string;
   flowId?: string | null;
+  journey?: { journey_id?: string; journey_key?: string };
   meta?: {
     firstName?: string;
     lastName?: string;
@@ -79,12 +80,31 @@ Deno.serve(async (req) => {
   if (email.length > 320) return json({ error: "invalid_email" }, 400);
   if (!PURPOSE_ALLOWED.has(purpose)) return json({ error: "invalid_purpose" }, 400);
 
-  const meta = {
+  const meta: Record<string, string | undefined> = {
     firstName: body.meta?.firstName ? String(body.meta.firstName).slice(0, 128) : undefined,
     lastName: body.meta?.lastName ? String(body.meta.lastName).slice(0, 128) : undefined,
     fullName: body.meta?.fullName ? String(body.meta.fullName).slice(0, 256) : undefined,
     phone: body.meta?.phone ? String(body.meta.phone).slice(0, 64) : undefined,
   };
+
+  // Validate private attribution ownership before persisting any OTP context.
+  // Browser-supplied new/existing flags and arbitrary metadata are never accepted.
+  const questionnaireFlow = /^site-questionnaire:([0-9a-f-]{36}):([0-9a-f-]{36})$/i.exec(flowId || "");
+  if (body.journey) {
+    const journeyId = body.journey.journey_id;
+    const journeyKey = body.journey.journey_key;
+    if (!questionnaireFlow || !/^[0-9a-f-]{36}$/i.test(journeyId || "") || !/^[a-f0-9]{64}$/.test(journeyKey || "")) {
+      return json({ error: "questionnaire_context_invalid" }, 400);
+    }
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(journeyKey!));
+    const keyHash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+    const { error: journeyError } = await supabase.rpc("validate_site_questionnaire_otp_journey", {
+      p_journey_id: journeyId, p_key_hash: keyHash, p_page_id: questionnaireFlow[1], p_block_id: questionnaireFlow[2], p_email: email,
+    });
+    if (journeyError) return json({ error: "questionnaire_context_invalid" }, 400);
+    meta.questionnaire_journey_id = journeyId;
+    meta.questionnaire_journey_hash = keyHash;
+  }
 
   const ip = getClientIp(req);
   const ua = (req.headers.get("user-agent") || "").slice(0, 512);

@@ -103,6 +103,9 @@ Deno.serve(async (req) => {
   if (consume.status !== "consumed") return json({ error: "no_active_code" }, 400);
 
   const meta = (row.meta || {}) as Record<string, string | undefined>;
+  const questionnaireFlow = /^site-questionnaire:([0-9a-f-]{36}):([0-9a-f-]{36})$/i.exec(row.flow_id || "");
+  const signupJourney = questionnaireFlow && meta.questionnaire_journey_id && meta.questionnaire_journey_hash
+    ? meta.questionnaire_journey_id : null;
   const fullName =
     meta.fullName ||
     [meta.firstName, meta.lastName].filter(Boolean).join(" ") ||
@@ -139,6 +142,7 @@ Deno.serve(async (req) => {
     const { data: created, error: createErr } = await supabase.auth.admin.createUser({
       email,
       email_confirm: true,
+      ...(signupJourney ? { app_metadata: { questionnaire_signup_journey_id: signupJourney } } : {}),
       user_metadata: {
         ...(fullName ? { full_name: fullName } : {}),
         ...(meta.firstName ? { first_name: meta.firstName } : {}),
@@ -195,6 +199,15 @@ Deno.serve(async (req) => {
     return json({ error: "profile_provision_failed" }, 500);
   }
 
+  // Record before session minting. A new account carries the server-only signup
+  // marker, so a fresh OTP after a downstream failure remains a new registration.
+  if (signupJourney) {
+    const { error: outcomeError } = await supabase.rpc("record_site_questionnaire_account_outcome", {
+      p_journey_id: signupJourney, p_key_hash: meta.questionnaire_journey_hash, p_user_id: userId,
+    });
+    if (outcomeError) return json({ error: "questionnaire_attribution_failed" }, 500);
+  }
+
   // Mint session token via generateLink — does NOT send an email.
   let tokenHash: string | null = null;
   try {
@@ -213,6 +226,18 @@ Deno.serve(async (req) => {
   }
 
   if (!tokenHash) return json({ error: "session_mint_failed" }, 500);
+
+  // The durable context comes from the consumed code, never from this request.
+  // Other login forms have no questionnaire flow and remain unchanged.
+  if (questionnaireFlow) {
+    const { error: confirmationError } = await supabase.rpc("record_site_questionnaire_confirmation", {
+      p_page_id: questionnaireFlow[1], p_block_id: questionnaireFlow[2], p_user_id: userId,
+    });
+    if (confirmationError) {
+      console.error("[verify-inline-otp] questionnaire confirmation failed:", confirmationError.code);
+      return json({ error: "questionnaire_confirmation_failed" }, 500);
+    }
+  }
 
   return json({
     ok: true,

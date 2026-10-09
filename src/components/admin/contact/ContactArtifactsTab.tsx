@@ -453,6 +453,7 @@ function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact
             </div>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap pl-8">
+            {artifact.attribution && <span>Источник: {artifact.attribution.source_label} · {artifact.attribution.utm_campaign}</span>}
             {artifact.submitted_at && (
               <span>{format(new Date(artifact.submitted_at), "dd MMMM yyyy, HH:mm", { locale: ru })}</span>
             )}

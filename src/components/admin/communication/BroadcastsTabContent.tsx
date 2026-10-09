@@ -1,4 +1,6 @@
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
+import { SiteFormEventSettings } from "./SiteFormEventSettings";
+import { readSiteFormEventCondition, type SiteFormEventCondition } from "@/lib/siteFormEventCondition";
 import { lazy, Suspense, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import {
   AlertDialog,
@@ -229,6 +231,8 @@ export function BroadcastsTabContent() {
 
   // Send mode
   const [sendMode, setSendMode] = useState<SendMode>("now");
+  const [siteFormCondition, setSiteFormCondition] = useState<SiteFormEventCondition | null>(null);
+  const templateMetadataRef = useRef<Record<string, unknown>>({});
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState<string>("10:00");
   const [recurrence, setRecurrence] = useState<RecurrenceRule>(DEFAULT_RECURRENCE);
@@ -500,6 +504,7 @@ export function BroadcastsTabContent() {
       sendToTelegram,
       sendToEmail,
       sendMode,
+      siteFormCondition,
       scheduledName,
       message,
       emailSubject,
@@ -517,7 +522,7 @@ export function BroadcastsTabContent() {
       scheduledTime,
     });
   }, [
-    sendToTelegram, sendToEmail, sendMode, scheduledName, message, emailSubject,
+    sendToTelegram, sendToEmail, sendMode, siteFormCondition, scheduledName, message, emailSubject,
     emailBody, includeButton, buttonText, buttonUrl, filters, includeArchived, mediaFile, recurrence,
     scheduledAt, scheduledTime,
   ]);
@@ -539,6 +544,8 @@ export function BroadcastsTabContent() {
     setScheduledName("");
     setScheduledAt(null);
     setSendMode("now");
+    setSiteFormCondition(null);
+    templateMetadataRef.current = {};
     setIncludeButton(true);
     setButtonText("Открыть платформу");
     setButtonUrl("https://club.gorbova.by/products");
@@ -901,6 +908,8 @@ export function BroadcastsTabContent() {
         });
       }
       const mode = String(tpl.send_mode || "manual");
+      templateMetadataRef.current = (tpl.metadata && typeof tpl.metadata === "object" && !Array.isArray(tpl.metadata)) ? tpl.metadata as Record<string, unknown> : {};
+      setSiteFormCondition(tpl.trigger_kind === "site_form_event" ? readSiteFormEventCondition(templateMetadataRef.current.site_form_condition) || { page_id: "", block_id: "", event: "submitted" } : null);
       if (String(tpl.trigger_kind || "") === "lesson_event" || mode === "event") {
         setSendMode("event");
       } else if (mode === "scheduled") {
@@ -992,8 +1001,9 @@ export function BroadcastsTabContent() {
         recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
         scheduled_for: isTemplate || isRecurring || isEvent ? null : composeScheduledAt(),
         next_run_at: nextRunAt,
-        trigger_kind: isEvent ? "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
-        education_condition: filters.education || null,
+        trigger_kind: isEvent ? siteFormCondition ? "site_form_event" : "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
+        education_condition: isEvent && siteFormCondition ? null : filters.education || null,
+        metadata: { ...templateMetadataRef.current, site_form_condition: isEvent ? siteFormCondition : null },
       };
 
       if (editTemplateId) {
@@ -1069,15 +1079,24 @@ export function BroadcastsTabContent() {
       toast.error(sendMode === "template" ? "Укажите название шаблона" : "Укажите название автоматической рассылки");
       return;
     }
-    if (filters.education && !filters.education.lesson_id) {
+    if (!(sendMode === "event" && siteFormCondition) && filters.education && !filters.education.lesson_id) {
       toast.error("Выберите урок для условия по обучению");
       return;
     }
-    if (sendMode === "event" && !filters.education) {
+    if (sendMode === "event" && siteFormCondition && (!siteFormCondition.page_id || !siteFormCondition.block_id)) {
+      toast.error("Выберите страницу и форму анкеты");
+      return;
+    }
+    if (sendMode === "event" && siteFormCondition?.event === "email_confirmed_incomplete" &&
+        (!Number.isInteger(siteFormCondition.delay_minutes) || (siteFormCondition.delay_minutes ?? 0) < 15 || (siteFormCondition.delay_minutes ?? 0) > 10080 || sendToTelegram || !sendToEmail)) {
+      toast.error("Для напоминания выберите только email и задержку от 15 до 10080 минут");
+      return;
+    }
+    if (sendMode === "event" && !siteFormCondition && !filters.education) {
       toast.error("Для отправки по событию задайте условие по обучению");
       return;
     }
-    if (sendMode === "event" && filters.education && ![
+    if (sendMode === "event" && !siteFormCondition && filters.education && ![
       "lesson_completed",
       "homework_submitted",
       "form_answered",
@@ -1410,12 +1429,23 @@ export function BroadcastsTabContent() {
               </RadioGroup>
 
               {sendMode === "event" && (
+                <div className="space-y-3">
+                <Label>Источник события</Label>
+                <Select value={siteFormCondition ? "site_form" : "lesson"} onValueChange={value => {
+                  setSiteFormCondition(value === "site_form" ? { page_id: "", block_id: "", event: "submitted" } : null);
+                  if (value === "site_form") setFilters(current => ({ ...current, education: undefined }));
+                }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="lesson">Урок, домашнее задание или анкета урока</SelectItem><SelectItem value="site_form">Анкета на сайте</SelectItem></SelectContent>
+                </Select>
+                {siteFormCondition && <SiteFormEventSettings value={siteFormCondition} onChange={setSiteFormCondition} />}
                 <Alert>
                   <Sparkles className="h-4 w-4" />
                   <AlertDescription>
                     После прохождения урока, сдачи домашнего задания или заполнения анкеты сообщение будет поставлено в очередь автоматически. Повторная отправка одному ученику по тому же событию блокируется.
                   </AlertDescription>
                 </Alert>
+                </div>
               )}
 
               {/* Scheduled DateTime — canonical platform DateTimePicker */}

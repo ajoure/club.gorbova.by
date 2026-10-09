@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { toast } from "sonner";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { OptionsEditor } from "@/components/admin/shared/OptionsEditor";
+import { QuestionnaireSourceLinks } from "./QuestionnaireSourceLinks";
 
 // Типы полей формы. Совместимы по смыслу с lesson editor (не дублируют его движок).
 const FIELD_TYPES = [
@@ -72,6 +73,7 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
     ? `<div data-gorbova-form data-page-id="${pageId}" data-block-id="${blockId}"></div>\n<script src="${window.location.origin}/embed/form.js" async></script>`
     : "";
   const authMode = (content.auth_mode as boolean) ?? false;
+  const questionnaireFirst = content.questionnaire_first === true;
   const telegramLink = (content.telegram_link as boolean) ?? false;
   const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
   const dealCreationEnabled = (content.deal_creation_enabled as boolean) ?? false;
@@ -283,12 +285,18 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
           />
         </div>
         <p className="text-[10px] text-muted-foreground">
-          При включении форма запросит email и пароль. Новым пользователям создастся аккаунт, существующие войдут в систему.
+          {questionnaireFirst ? "Сначала посетитель заполнит анкету, затем подтвердит почту кодом в этом же окне." : "При включении форма запросит email и пароль. Новым пользователям создастся аккаунт, существующие войдут в систему."}
         </p>
 
         {authMode && (
           <div className="space-y-3 pt-2 border-t">
-            <div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Сначала анкета, затем код из письма</Label>
+              <Switch checked={questionnaireFirst} onCheckedChange={v => onChange({ ...content, questionnaire_first: v })} />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Черновик сохраняется на устройстве на 7 дней. В полях анкеты должен быть Email с привязкой к email контакта.</p>
+            {questionnaireFirst && <QuestionnaireSourceLinks pageId={pageId} />}
+            {!questionnaireFirst && <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
               <div className="space-y-1">
                 {SYSTEM_AUTH_FIELDS.map((sf) => (
@@ -298,19 +306,19 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
                   </div>
                 ))}
               </div>
-            </div>
+            </div>}
 
             {/* Telegram link toggle */}
-            <div className="flex items-center justify-between">
+            {!questionnaireFirst && <div className="flex items-center justify-between">
               <Label className="text-xs">Привязка Telegram-бота</Label>
               <Switch
                 checked={telegramLink}
                 onCheckedChange={(v) => onChange({ ...content, telegram_link: v })}
               />
-            </div>
-            <p className="text-[10px] text-muted-foreground">
+            </div>}
+            {!questionnaireFirst && <p className="text-[10px] text-muted-foreground">
               Предложит привязать Telegram. Пользователь может пропустить.
-            </p>
+            </p>}
           </div>
         )}
       </div>

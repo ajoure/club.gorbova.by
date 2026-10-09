@@ -50,6 +50,8 @@ export default function AdminFormsHub() {
               return (
                 <button
                   key={tab.id}
+                  aria-label={tab.label}
+                  title={tab.label}
                   onClick={() => handleTabChange(tab.id)}
                   className={cn(
                     "relative flex items-center gap-1.5 px-3 h-8 rounded-full text-xs transition-all duration-200 whitespace-nowrap",

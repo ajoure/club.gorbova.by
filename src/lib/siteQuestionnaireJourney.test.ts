@@ -1,0 +1,52 @@
+import {describe,it,expect,vi,beforeEach} from 'vitest';
+const mocks=vi.hoisted(()=>({invoke:vi.fn()}));
+vi.mock('@/integrations/supabase/client',()=>({supabase:{functions:{invoke:mocks.invoke}}}));
+import {trackQuestionnaireJourney,prepareQuestionnaireJourneyForEmail} from './siteQuestionnaireJourney';
+const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+function storage(){const map=new Map<string,string>();return {getItem:(k:string)=>map.get(k)||null,setItem:(k:string,v:string)=>{map.set(k,v);}};}
+describe('questionnaire visitor persistence',()=>{
+ beforeEach(()=>{vi.useRealTimers();vi.clearAllMocks();});
+ it('coalesces replayed requests, resumes with the issued key and preserves first UTM source',async()=>{
+  const store=storage();mocks.invoke.mockResolvedValue({data:{success:true,journey_id:id(3),journey_key:'a'.repeat(64)},error:null});
+  const one=trackQuestionnaireJourney(id(1),id(2),'?utm_source=Stories&utm_campaign=ЦБ21',store);
+  const two=trackQuestionnaireJourney(id(1),id(2),'?utm_source=Telegram',store);
+  expect(await one).toEqual(await two);expect(mocks.invoke).toHaveBeenCalledOnce();
+  await trackQuestionnaireJourney(id(1),id(4),'?utm_source=Telegram',store);
+  const body=mocks.invoke.mock.calls[1][1].body;
+  expect(body.attribution).toEqual({utm_source:'Stories',utm_campaign:'ЦБ21'});
+  expect(body.journey_id).toBe(id(3));expect(body.journey_key).toBe('a'.repeat(64));
+  expect(JSON.stringify(body)).not.toMatch(/email|answers|password|session/);
+ });
+ it('a stalled tracker does not hold up the questionnaire and can retry the same visit',async()=>{
+  vi.useFakeTimers();const store=storage();mocks.invoke.mockImplementationOnce(()=>new Promise(()=>{}));
+  const stalled=trackQuestionnaireJourney(id(21),id(22),'?utm_source=Stories',store);
+  await vi.advanceTimersByTimeAsync(8000);expect(await stalled).toBeNull();
+  expect(mocks.invoke.mock.calls[0][1].signal.aborted).toBe(true);
+  const nonce=mocks.invoke.mock.calls[0][1].body.request_key;
+  mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(23),journey_key:'a'.repeat(64)},error:null});
+  expect(await trackQuestionnaireJourney(id(21),id(22),'?utm_source=Other',store)).not.toBeNull();
+  expect(mocks.invoke.mock.calls[1][1].body.request_key).toBe(nonce);
+  vi.useRealTimers();
+ });
+ it('keeps retries on one journey but separates a second email in a shared browser',async()=>{
+  const store=storage();mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(33),journey_key:'a'.repeat(64)},error:null});
+  const first=trackQuestionnaireJourney(id(31),id(32),'?utm_source=Stories',store);
+  expect(await prepareQuestionnaireJourneyForEmail(id(31),id(32),'','one@example.invalid',first,store)).toEqual(await first);
+  expect(await prepareQuestionnaireJourneyForEmail(id(31),id(32),'','ONE@example.invalid',first,store)).toEqual(await first);
+  expect(mocks.invoke).toHaveBeenCalledOnce();
+  mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(34),journey_key:'b'.repeat(64)},error:null});
+  expect((await prepareQuestionnaireJourneyForEmail(id(31),id(32),'?utm_source=Other','two@example.invalid',first,store))?.journey_id).toBe(id(34));
+  expect(mocks.invoke.mock.calls[1][1].body.attribution).toEqual({utm_source:'Stories'});
+  expect(mocks.invoke.mock.calls[1][1].body.visit_id).not.toBe(id(32));
+  expect(store.getItem(`site-questionnaire-journey:v1:${id(31)}`)).not.toMatch(/one@example|two@example/);
+ });
+ it('keeps a private request nonce when a first response is lost and accepts a later visit',async()=>{
+  const store=storage();mocks.invoke.mockResolvedValueOnce({data:null,error:new Error('network')});
+  expect(await trackQuestionnaireJourney(id(11),id(12),'?utm_source=Email',store)).toBeNull();
+  const nonce=mocks.invoke.mock.calls[0][1].body.request_key;
+  mocks.invoke.mockResolvedValueOnce({data:{success:true,journey_id:id(13),journey_key:'b'.repeat(64)},error:null});
+  await trackQuestionnaireJourney(id(11),id(14),'?utm_source=Other',store);
+  expect(mocks.invoke.mock.calls[1][1].body.request_key).toBe(nonce);
+  expect(mocks.invoke.mock.calls[1][1].body.attribution).toEqual({utm_source:'Email'});
+ });
+});

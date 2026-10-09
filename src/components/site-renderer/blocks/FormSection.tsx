@@ -24,6 +24,7 @@ import { SafeHtml } from "@/components/ui/SafeHtml";
 import { getFieldDisplayLabel } from "@/lib/formFieldLabel";
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 import { getAccessAwareUrl } from "@/utils/accessAlias";
+import { QuestionnaireFirstForm } from "./QuestionnaireFirstForm";
 
 interface FormField {
   label: string;
@@ -96,6 +97,10 @@ export function FormSection({ content, pageId, blockId, isPreview }: FormSection
   const fields = (content.fields as FormField[]) || [];
   const authMode = (content.auth_mode as boolean) ?? false;
   const telegramLinkEnabled = (content.telegram_link as boolean) ?? false;
+
+  if (authMode && content.questionnaire_first === true) {
+    return <QuestionnaireFirstForm content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} />;
+  }
 
   if (!authMode) {
     return <LegacyFormSection content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} />;

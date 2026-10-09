@@ -3,6 +3,7 @@ import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
 import { persistMonitoredTelegramMessage } from '../_shared/telegram-monitoring.ts';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { CB21_RELEASE_DIGEST } from '../_shared/cb21-release.ts';
+import { handleQuestionnaireBonusJoin } from './questionnaire-bonus.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1000,6 +1001,29 @@ Deno.serve(async (req) => {
       const chatType = joinRequest.chat.type;
 
       console.log(`Join request from ${telegramUserId} to chat ${chatId}`);
+
+      const { data: bonusContext, error: bonusError } = await supabase.rpc('resolve_site_questionnaire_bonus_join', {
+        p_bot_id: botId, p_channel_id: chatId, p_telegram_user_id: telegramUserId,
+      });
+      if (bonusError || !bonusContext || typeof bonusContext.configured !== 'boolean') {
+        return new Response(JSON.stringify({ ok: false, error: 'bonus_channel_resolution_failed' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const bonusResult = await handleQuestionnaireBonusJoin(bonusContext, chatId, telegramUserId,
+        (method, params) => telegramRequest(botToken, method, params));
+      if (bonusResult.handled) {
+        if (bonusResult.success && !bonusResult.alreadyMember) {
+          await logAudit(supabase, {
+            user_id: bonusContext.user_id ?? null, telegram_user_id: telegramUserId,
+            event_type: bonusResult.approved ? 'QUESTIONNAIRE_BONUS_JOIN_APPROVED' : 'QUESTIONNAIRE_BONUS_JOIN_DECLINED',
+            actor_type: 'system', meta: { bot_id: botId, channel_id: chatId, free_permanent: true },
+          });
+        }
+        return new Response(JSON.stringify({ ok: bonusResult.success }), {
+          status: bonusResult.success ? 200 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
       // Find which club this chat belongs to
       const { data: club } = await supabase
@@ -2269,6 +2293,17 @@ Deno.serve(async (req) => {
             chat_status: 'active',
           }).eq('bot_id', botId).is('chat_id', null);
         } else if (chatType === 'channel') {
+          const { data: bonusRoute, error: bonusRouteError } = await supabase.rpc('resolve_site_questionnaire_bonus_join', {
+            p_bot_id: botId, p_channel_id: chatIdValue,
+          });
+          if (bonusRouteError || !bonusRoute || typeof bonusRoute.configured !== 'boolean') {
+            return new Response(JSON.stringify({ ok: false, error: 'bonus_channel_resolution_failed' }), {
+              status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          if (bonusRoute.configured) {
+            return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
           await supabase.from('telegram_clubs').update({
             channel_id: chatIdValue,
             channel_status: 'active',

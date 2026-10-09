@@ -7,6 +7,7 @@ import { FormsHubTable } from "./FormsHubTable";
 import { FormsHubPaginator } from "./FormsHubPaginator";
 import { FormsDetailOpener } from "./FormsDetailOpener";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
+import { QuestionnaireStatsTab } from "./QuestionnaireStatsTab";
 import { FormsHubLoadError } from "./FormsHubLoadError";
 
 export function FormsSiteTabContent() {
@@ -30,6 +31,10 @@ export function FormsSiteTabContent() {
 
   return (
     <div className="space-y-3">
+      <details className="rounded-lg border p-3">
+        <summary className="cursor-pointer font-medium">Статистика предзаписи по источникам</summary>
+        <QuestionnaireStatsTab />
+      </details>
       <div className="flex items-start gap-2">
         <div className="flex-1">
           <FormsHubFiltersPanel filters={filters} onChange={setFilters} hideSourceType />

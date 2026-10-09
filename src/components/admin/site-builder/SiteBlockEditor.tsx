@@ -34,6 +34,7 @@ import { SocialBlockEditor } from "./blocks/SocialBlockEditor";
 import { LogosBlockEditor } from "./blocks/LogosBlockEditor";
 import { SpacerBlockEditor } from "./blocks/SpacerBlockEditor";
 import { FormBlockEditor } from "./blocks/FormBlockEditor";
+import { QuestionnaireBonusesBlockEditor } from "./blocks/QuestionnaireBonusesBlockEditor";
 import { SiteAudioBlockEditor } from "./blocks/SiteAudioBlockEditor";
 import { SiteEmbedBlockEditor } from "./blocks/SiteEmbedBlockEditor";
 import { QuestionnaireBlockEditor } from "./blocks/QuestionnaireBlockEditor";
@@ -70,6 +71,7 @@ const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] =
   { type: "logos", label: "Логотипы", icon: <Grip className="h-4 w-4" /> },
   { type: "spacer", label: "Отступ", icon: <Space className="h-4 w-4" /> },
   { type: "form", label: "Форма", icon: <FileText className="h-4 w-4" /> },
+  { type: "questionnaire_bonuses", label: "Бонусы после анкеты", icon: <Share2 className="h-4 w-4" /> },
   { type: "accordion", label: "Аккордеон", icon: <ChevronsUpDown className="h-4 w-4" /> },
   { type: "tabs", label: "Вкладки", icon: <LayoutList className="h-4 w-4" /> },
   { type: "callout", label: "Выноска", icon: <Info className="h-4 w-4" /> },
@@ -103,6 +105,7 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "logos": return { items: [], logoHeight: 48, grayscale: false };
     case "spacer": return { height: 40 };
     case "form": return { title: "", subtitle: "", buttonText: "Отправить", redirectUrl: "", fields: [], auth_mode: false, telegram_link: false, product_binding_enabled: false, product_id: "", tariff_id: "", deal_creation_enabled: false, pipeline_id: "", pipeline_stage_id: "" };
+    case "questionnaire_bonuses": return { source_page_id: "", source_block_id: "", personal_chat_url: "", channel_url: "", channel_title: "" };
     case "accordion": return { items: [], allowMultiple: false };
     case "tabs": return { tabs: [] };
     case "callout": return { type: "info", content: "", title: "" };
@@ -138,6 +141,7 @@ function BlockEditorComponent({ block, onChange, registry }: { block: SiteBlock;
     case "logos": return <LogosBlockEditor content={block.content} onChange={onChange} />;
     case "spacer": return <SpacerBlockEditor content={block.content} onChange={onChange} />;
     case "form": return <FormBlockEditor content={block.content} onChange={onChange} />;
+    case "questionnaire_bonuses": return <QuestionnaireBonusesBlockEditor content={block.content} onChange={onChange} />;
     case "accordion": return <AccordionBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
     case "tabs": return <TabsBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
     case "callout": return <CalloutBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
