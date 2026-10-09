@@ -30,4 +30,9 @@ describe("thank-you page personal Telegram bonuses", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("не настроены");
     expect(mocks.telegram).not.toHaveBeenCalled();
   });
+  it("uses the administrator's configured business link rather than hardcoding a recipient or message", () => {
+    render(<QuestionnaireBonusesSection content={{ ...content, personal_chat_url: "https://t.me/m/fixtureSlug" }} />);
+    expect(screen.getByRole("link", { name: "Написать Катерине в Telegram" })).toHaveAttribute("href", "https://t.me/m/fixtureSlug");
+    expect(screen.getByText(/Нажмите «Отправить»/)).toBeInTheDocument();
+  });
 });
