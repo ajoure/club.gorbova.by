@@ -11,6 +11,7 @@ const sql=postgres(options),workerA=postgres(options),workerB=postgres(options);
 try {
  const fixture=(await readFile('/tmp/cb21-sales-runtime-fixture.sql','utf8')).replace(/CREATE ROLE (anon|authenticated|service_role)( BYPASSRLS)?;/g,(_,name,extra='')=>`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${name}') THEN CREATE ROLE ${name}${extra}; END IF; END $$;`);
  await sql.unsafe(fixture).simple();
+ await Promise.all([workerA`SELECT set_config('test.sales_now','2026-09-12T12:00:00Z',false)`,workerB`SELECT set_config('test.sales_now','2026-09-12T12:00:00Z',false)`]);
  const [template]=await sql`SELECT * FROM sales_campaigns WHERE code='upgrade-fixture'`;
  const page=randomUUID(),block=randomUUID(),campaign=randomUUID(),phrase='Synthetic questionnaire customer phrase';
  await sql`INSERT INTO site_pages VALUES(${page},'published',${sql.json([{id:block,type:'form',content:{auth_mode:true,questionnaire_first:true}}])})`;
