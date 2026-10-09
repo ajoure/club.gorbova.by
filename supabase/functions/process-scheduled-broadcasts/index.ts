@@ -60,6 +60,7 @@ interface AutomationDelivery {
   template_id: string;
   user_id: string;
   event_key: string;
+  channel?: string | null;
 }
 
 interface BroadcastFunctionResult {
@@ -224,7 +225,23 @@ Deno.serve(async (req) => {
             throw new Error('Автоматическая рассылка выключена или не одобрена');
           }
           const eventTemplate = automationTemplate as BroadcastTemplate;
-          const eventChannels = eventTemplate.channels?.length ? eventTemplate.channels : [eventTemplate.channel];
+          const isSiteFormEvent = eventTemplate.trigger_kind === 'site_form_event';
+          if (isSiteFormEvent && !['email','telegram'].includes(delivery.channel || '')) {
+            throw new Error('Канал события анкеты не указан');
+          }
+          if (isSiteFormEvent) {
+            const { data: profile, error: profileError } = await supabase.from('profiles')
+              .select('id,status,is_archived,merged_to_profile_id').eq('user_id',delivery.user_id).single();
+            const { data: account, error: accountError } = await supabase.auth.admin.getUserById(delivery.user_id);
+            const bannedUntil = (account.user as (typeof account.user & { banned_until?: string }))?.banned_until;
+            if (profileError || accountError || !account.user?.email_confirmed_at ||
+                !profile || profile.status !== 'active' || profile.is_archived || profile.merged_to_profile_id ||
+                (bannedUntil && new Date(bannedUntil).getTime() > Date.now())) {
+              throw new Error('Получатель уведомления анкеты недоступен');
+            }
+          }
+          const eventChannels = isSiteFormEvent ? [delivery.channel!]
+            : eventTemplate.channels?.length ? eventTemplate.channels : [eventTemplate.channel];
           const internalSecret = Deno.env.get('BROADCAST_INTERNAL_SECRET') || Deno.env.get('BROADCAST_FORCE_SECRET') || '';
           const systemHeaders = {
             'x-system-actor': 'broadcast-dispatcher',
@@ -232,7 +249,7 @@ Deno.serve(async (req) => {
           };
           let sent = 0;
           let failed = 0;
-          const analyticsCampaignId = crypto.randomUUID();
+          const analyticsCampaignId = isSiteFormEvent ? delivery.id : crypto.randomUUID();
           for (const channel of eventChannels) {
             const directFilters = {
               ...(eventTemplate.audience_filters || {}),

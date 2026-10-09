@@ -90,7 +90,7 @@ jobs:
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts
           deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts supabase/functions/instagram-monitor/release-health_test.ts supabase/functions/instagram-monitor-worker/provider_test.ts
       - name: Site questionnaire Edge types
-        run: deno check --no-lock supabase/functions/site-form-submit/index.ts
+        run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/site-form-submit/index.ts supabase/functions/process-scheduled-broadcasts/index.ts
       - name: MNS current-law Edge types
         run: node scripts/verify-mns-function-bundles.mjs
       - name: Browser application types

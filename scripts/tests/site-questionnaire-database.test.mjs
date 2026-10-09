@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration = await readFile(new URL('../../supabase/migrations/20261009055330_cb21_questionnaire_atomic_submission.sql', import.meta.url), 'utf8');
+const notificationsMigration = await readFile(new URL('../../supabase/migrations/20261009062003_site_questionnaire_notifications.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -15,6 +16,7 @@ const answers = [
   { ...fields[0],value:'buyer@example.invalid' }, { ...fields[1],value:'Test Buyer' },
   { ...fields[2],value:'+375 29 111 22 33' }, { ...fields[3],mapping:'none',value:'My complete answer' },
 ];
+let exportedFixtureVerified = false;
 async function fixture() {
   const db = new PGlite();
   const schemaSQL = `CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
@@ -54,7 +56,7 @@ async function fixture() {
     assert.equal(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, '/tmp/site-questionnaire-fixture.sql');
     const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
     const safeRoles = schemaSQL.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;',
-      "DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
+      () => "DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
     const seed = `INSERT INTO auth.users VALUES(${quote(id(1))},'buyer@example.invalid',now(),null,null);
       INSERT INTO profiles VALUES(${quote(id(2))},${quote(id(1))},'active',false,null,'Existing name','Existing phone');
       INSERT INTO site_pages VALUES(${quote(id(3))},${quote(id(30))},'published',${quote(JSON.stringify([{id:id(8),type:'form',content}]))});
@@ -62,7 +64,13 @@ async function fixture() {
       INSERT INTO tariffs VALUES(${quote(id(5))},${quote(id(4))},true);
       INSERT INTO crm_pipelines VALUES(${quote(id(6))});
       INSERT INTO crm_pipeline_stages VALUES(${quote(id(7))},${quote(id(6))});`;
-    await writeFile(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, safeRoles + seed + migration);
+    const exportedSQL = safeRoles + seed + migration;
+    if (!exportedFixtureVerified) {
+      const exportedDatabase = new PGlite();
+      try { await exportedDatabase.exec(exportedSQL); } finally { await exportedDatabase.close(); }
+      exportedFixtureVerified = true;
+    }
+    await writeFile(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, exportedSQL);
   }
   await db.exec(migration);
   const submit = (key=id(10),payload=answers,source='reels') => db.query(
@@ -76,6 +84,16 @@ async function counts(db) {
     (SELECT count(*)::int FROM orders_v2) orders,(SELECT count(*)::int FROM domain_events) events,
     (SELECT count(*)::int FROM consent_logs) consents,(SELECT count(*)::int FROM audit_logs) audits,
     (SELECT count(*)::int FROM commercial_access) access`)).rows[0];
+}
+async function notifications(db) {
+  await db.exec(`ALTER TABLE profiles ADD COLUMN telegram_user_id bigint;
+    CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
+      CONSTRAINT broadcast_templates_trigger_kind_check CHECK(trigger_kind IN ('manual','lesson_event','scheduled_condition')));
+    CREATE TABLE broadcast_automation_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),template_id uuid,user_id uuid,event_key text,status text DEFAULT 'pending',
+      UNIQUE(template_id,user_id,event_key));`);
+  await db.exec(notificationsMigration);
+  await db.query(`INSERT INTO broadcast_templates VALUES($1,'email',ARRAY['email','telegram'],'site_form_event','recurring','approved',$2)`,
+    [id(60),JSON.stringify({site_form_condition:{page_id:id(3),block_id:id(8),event:'submitted'}})]);
 }
 
 test('atomic questionnaire creates complete history and draft deal; retries never duplicate or grant course access',async()=>{
@@ -148,5 +166,28 @@ test('missing contact fields are filled without rewriting identity, and arbitrar
     assert.equal(JSON.stringify(metadata).includes('buyer-secret'),false);
     const grants=(await db.query("SELECT has_function_privilege('anon','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') anon, has_function_privilege('authenticated','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') authenticated,has_function_privilege('service_role','submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text)','EXECUTE') service")).rows[0];
     assert.deepEqual(grants,{anon:false,authenticated:false,service:true});
+  }finally{await db.close()}
+});
+test('questionnaire notifications wait for Telegram linking and are unique independently for each channel',async()=>{
+  const {db,submit}=await fixture();try{
+    await notifications(db);await submit();
+    assert.deepEqual((await db.query('SELECT channel FROM broadcast_automation_deliveries ORDER BY channel')).rows,[{channel:'email'}]);
+    await db.exec('UPDATE profiles SET telegram_user_id=123456');
+    assert.deepEqual((await db.query('SELECT channel FROM broadcast_automation_deliveries ORDER BY channel')).rows,[{channel:'email'},{channel:'telegram'}]);
+    await submit();await submit(id(11));
+    await db.exec('UPDATE profiles SET telegram_user_id=654321');
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,2);
+  }finally{await db.close()}
+});
+test('unapproved or unrelated form templates cannot send, and blocked profiles do not queue a Telegram notification',async()=>{
+  const {db,submit}=await fixture();try{
+    await notifications(db);
+    await db.exec("UPDATE broadcast_templates SET approval_status='pending_approval'");
+    await submit();assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0);
+    await db.query("UPDATE broadcast_templates SET approval_status='approved',metadata=$1",[JSON.stringify({site_form_condition:{page_id:id(99),block_id:id(8),event:'submitted'}})]);
+    await submit(id(11));assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0);
+    await db.query('UPDATE broadcast_templates SET metadata=$1',[JSON.stringify({site_form_condition:{page_id:id(3),block_id:id(8),event:'submitted'}})]);
+    await db.exec("UPDATE profiles SET status='blocked',telegram_user_id=123456");
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0);
   }finally{await db.close()}
 });
