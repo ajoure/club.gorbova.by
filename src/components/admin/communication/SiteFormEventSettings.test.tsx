@@ -16,6 +16,14 @@ const pageA = "00000000-0000-4000-8000-000000000003";
 const pageB = "00000000-0000-4000-8000-000000000004";
 const block = "00000000-0000-4000-8000-000000000008";
 describe("site form event destination", () => {
+  it("allows a personal invitation after questionnaire submission, never for an incomplete reminder", () => {
+    const onChange=vi.fn();
+    const {rerender}=render(<SiteFormEventSettings value={{page_id:pageA,block_id:block,event:"submitted"}} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(onChange).toHaveBeenCalledWith({page_id:pageA,block_id:block,event:"submitted",personal_bonus_invite:true});
+    rerender(<SiteFormEventSettings value={{page_id:pageA,block_id:block,event:"email_confirmed_incomplete",delay_minutes:60}} onChange={onChange} />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
   it("allows immediate delivery or a delay after a completed questionnaire", () => {
     const onChange = vi.fn();
     render(<SiteFormEventSettings value={{ page_id: pageA, block_id: block, event: "submitted" }} onChange={onChange} />);

@@ -16,6 +16,8 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
+import { resolveQuestionnaireTelegramButton } from './site-questionnaire-invitation.ts';
+import type { BonusBackend } from '../site-form-submit/questionnaire-bonus-invite.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -53,6 +55,7 @@ interface BroadcastTemplate {
   template_type: string | null;
   live_event_id: string | null;
   trigger_kind?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface AutomationDelivery {
@@ -258,13 +261,16 @@ Deno.serve(async (req) => {
               direct_user_ids: [delivery.user_id],
             };
             if (channel === 'telegram') {
+              const buttonUrl = isSiteFormEvent
+                ? await resolveQuestionnaireTelegramButton(supabase as unknown as BonusBackend,eventTemplate.metadata || null,delivery.user_id,eventTemplate.button_url)
+                : eventTemplate.button_url;
               const { data, error } = await supabase.functions.invoke('telegram-mass-broadcast', {
                 headers: systemHeaders,
                 body: {
                   message: eventTemplate.message_text || '',
-                  include_button: !!eventTemplate.button_url,
-                  button_text: eventTemplate.button_text || undefined,
-                  button_url: eventTemplate.button_url || undefined,
+                  include_button: !!buttonUrl,
+                  button_text: eventTemplate.button_text || (isSiteFormEvent && buttonUrl !== eventTemplate.button_url ? 'Вступить в бонусный канал' : undefined),
+                  button_url: buttonUrl || undefined,
                   filters: directFilters,
                   media_storage_path: eventTemplate.media_storage_path || undefined,
                   media_type: eventTemplate.media_type || undefined,

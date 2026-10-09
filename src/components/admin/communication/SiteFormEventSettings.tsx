@@ -35,6 +35,11 @@ export function SiteFormEventSettings({ value, onChange }: { value: SiteFormEven
       <Label htmlFor="broadcast-site-form-delay">Задержка после попадания под правило (минут)</Label>
       <Input id="broadcast-site-form-delay" type="number" min={0} max={10080} value={value.delay_minutes ?? 0} onChange={e => onChange({ ...value, delay_minutes: Number(e.target.value) })} />
       <p className="text-sm">0 — сразу. После сохранения анкеты — один раз на человека и форму. Telegram ждёт привязки бота.</p>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" checked={value.personal_bonus_invite === true} onChange={e => onChange({ ...value, personal_bonus_invite: e.target.checked })} />
+        В Telegram добавить персональную бессрочную ссылку в бонусный канал
+      </label>
+      <p className="text-sm text-muted-foreground">Ссылка создаётся для Telegram получателя после привязки бота. Нужна отдельная настройка бонусного канала этой анкеты; общая ссылка не используется.</p>
     </div>}
     <Label htmlFor="broadcast-site-form-page">Страница анкеты</Label>
     <Select value={value.page_id || undefined} onValueChange={page_id => onChange({ ...value, page_id, block_id: "" })}>
