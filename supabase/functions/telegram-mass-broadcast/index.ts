@@ -1,3 +1,4 @@
+import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from '../process-scheduled-broadcasts/questionnaireBroadcast.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
@@ -219,6 +220,7 @@ Deno.serve(async (req) => {
     let analyticsTemplateId: string | null = null;
     let analyticsRunId: string | null = null;
     let analyticsSendMode: string | null = null;
+    let questionnaireProtectedUrls: string[] = [];
 
     const contentType = req.headers.get('content-type') || '';
     
@@ -278,6 +280,9 @@ Deno.serve(async (req) => {
       analyticsTemplateId = typeof body.analytics_template_id === 'string' ? body.analytics_template_id : null;
       analyticsRunId = typeof body.analytics_run_id === 'string' ? body.analytics_run_id : null;
       analyticsSendMode = typeof body.analytics_send_mode === 'string' ? body.analytics_send_mode : null;
+      questionnaireProtectedUrls = questionnaireProtectedUrlsForRequest(body.questionnaire_protected_urls, {
+        systemActor: isSystemActor, sendMode: analyticsSendMode, recipientCount: filters.direct_user_ids?.length || 0,
+      });
 
       // ===== add-only: support media_url (signed/public URL or storage path) =====
       // Used by scheduled/recurring dispatcher (process-scheduled-broadcasts)
@@ -896,7 +901,7 @@ Deno.serve(async (req) => {
         if (!analyticsDelivery) {
           throw new Error(`analytics_delivery_missing:${profile.id}:${botId}`);
         }
-        const tracking = analyticsTracking.get(analyticsDelivery.id) ?? { clickTokens: new Map() };
+        const tracking = preserveQuestionnaireUrls(analyticsTracking.get(analyticsDelivery.id) ?? { clickTokens: new Map() }, questionnaireProtectedUrls);
         // Dedup guard
         if (sentToUserIds.has(profile.user_id)) {
           perBotStats[botId].skipped_duplicate++;

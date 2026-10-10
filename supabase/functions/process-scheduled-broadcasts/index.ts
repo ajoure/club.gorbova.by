@@ -15,6 +15,8 @@
  *   4) anti-empty-audience guard → never sends if audience_count = 0 (logs as skipped)
  */
 
+import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from './questionnaireBroadcast.ts';
+
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 
 const corsHeaders = {
@@ -260,10 +262,35 @@ Deno.serve(async (req) => {
             };
             if (channel === 'telegram') {
               const buttonUrl = eventTemplate.button_url;
+              let eventMessage = eventTemplate.message_text || '';
+              let protectedUrls: string[] = [];
+              if (hasQuestionnaireLinks(eventMessage)) {
+                if (!isSiteFormEvent) throw new Error('questionnaire_tokens_wrong_event');
+                const condition = eventTemplate.metadata?.site_form_condition as { page_id?: string; block_id?: string; submissions_from?: string } | undefined;
+                if (!condition?.page_id || !condition.block_id || !condition.submissions_from || !Number.isFinite(Date.parse(condition.submissions_from))) throw new Error('questionnaire_condition_missing');
+                const { data: source, error: sourceError } = await supabase.from('site_pages')
+                  .select('id,workspace_id,status,blocks').eq('id', condition.page_id).single();
+                if (sourceError || !source) throw new Error('questionnaire_source_missing');
+                const origin = Deno.env.get('PUBLIC_APP_HOST') || 'https://gorbova.by';
+                const slug = questionnaireThanksSlug(source, condition.block_id, origin);
+                const { data: thanks, error: thanksError } = await supabase.from('site_pages')
+                  .select('id,workspace_id,status,slug,blocks').eq('workspace_id', source.workspace_id)
+                  .eq('slug', slug).eq('status', 'published').single();
+                if (thanksError || !thanks) throw new Error('questionnaire_thanks_missing');
+                const rendered = renderQuestionnaireBroadcast(eventMessage, source, condition.block_id, thanks, origin);
+                eventMessage = rendered.message;
+                protectedUrls = rendered.protectedUrls;
+                const { data: primaryBots, error: botError } = await supabase.from('telegram_bots')
+                  .select('id').eq('status', 'active').eq('is_primary', true);
+                const selectedBots = eventTemplate.audience_filters?.bot_ids;
+                if (botError || primaryBots?.length !== 1 || !Array.isArray(selectedBots) ||
+                    selectedBots.length !== 1 || selectedBots[0] !== primaryBots[0].id) throw new Error('questionnaire_primary_bot_invalid');
+              }
               const { data, error } = await supabase.functions.invoke('telegram-mass-broadcast', {
                 headers: systemHeaders,
                 body: {
-                  message: eventTemplate.message_text || '',
+                  message: eventMessage,
+                  questionnaire_protected_urls: protectedUrls,
                   include_button: !!buttonUrl,
                   button_text: eventTemplate.button_text || undefined,
                   button_url: buttonUrl || undefined,

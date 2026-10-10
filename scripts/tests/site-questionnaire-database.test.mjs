@@ -380,3 +380,31 @@ test('production offer schema rejects old RPC atomically; migration uses amount 
     assert.deepEqual(await counts(db),{submissions:1,orders:1,events:1,consents:1,audits:1,access:0});
   } finally {await db.close()}
 });
+
+const cutoffMigration=await readFile(new URL('../../supabase/migrations/20261010150000_questionnaire_notification_cutoff.sql',import.meta.url),'utf8');
+test('activation cutoff rejects historic/relinked forms and is checked again at dispatch',async()=>{
+  const {db,submit}=await fixture();try{
+    await notifications(db);await db.exec("CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$SELECT 'service_role'::text$$");await db.exec(remindersMigration);await db.exec(submissionDelayMigration);await db.exec(cutoffMigration);
+    await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,submissions_from}',$1::jsonb)",[JSON.stringify(new Date(Date.now()+3600000).toISOString())]);
+    await submit();
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0);
+    const submission=(await db.query('SELECT id FROM site_form_submissions')).rows[0].id;
+    await db.query('SELECT queue_site_questionnaire_broadcasts($1,\'telegram\')',[submission]);
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,0,'late Telegram link must not backfill');
+    await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,submissions_from}',$1::jsonb)",[JSON.stringify(new Date(Date.now()+-3600000).toISOString())]);
+    await db.query('SELECT queue_site_questionnaire_broadcasts($1)',[submission]);
+    const deliveries=(await db.query('SELECT id FROM broadcast_automation_deliveries')).rows;
+    assert.equal(deliveries.length,2);
+    await db.query('SELECT queue_site_questionnaire_broadcasts($1)',[submission]);
+    assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_automation_deliveries')).rows[0].n,2,'replay is idempotent');
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[deliveries[0].id])).rows[0].allowed,true);
+    await db.exec("UPDATE site_form_submissions SET created_at=now()-interval '2 hours'");
+    assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[deliveries[0].id])).rows[0].allowed,false);
+    for(const cutoff of ['bad','2026-02-31T10:00:00Z','2026-10-10T10:00:00']){
+      await db.query("UPDATE broadcast_templates SET metadata=jsonb_set(metadata,'{site_form_condition,submissions_from}',$1::jsonb)",[JSON.stringify(cutoff)]);
+      assert.equal((await db.query('SELECT site_questionnaire_delivery_allowed($1) allowed',[deliveries[0].id])).rows[0].allowed,false);
+    }
+    for(const role of ['anon','authenticated','service_role']) assert.equal((await db.query("SELECT has_function_privilege($1,'site_questionnaire_after_cutoff(timestamptz,jsonb)','EXECUTE') allowed",[role])).rows[0].allowed,role==='service_role');
+    assert.equal((await counts(db)).access,0);
+  }finally{await db.close();}
+});
