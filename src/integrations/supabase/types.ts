@@ -28317,6 +28317,10 @@ export type Database = {
         Args: { _payment_id: string; _primary_order_id: string }
         Returns: Json
       }
+      site_questionnaire_after_cutoff: {
+        Args: { p_condition: Json; p_created_at: string }
+        Returns: boolean
+      }
       site_questionnaire_delivery_allowed: {
         Args: { p_delivery_id: string }
         Returns: boolean
