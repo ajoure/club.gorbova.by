@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { questionnaireAttributionLabel } from "@/lib/questionnaireAttributionLabels";
 interface StatsRow {
   attribution: Record<string,string>; visits:number; visitors:number; questionnaires:number;
   contacts:number; new_accounts:number; existing_accounts:number; unclassified_accounts:number;
@@ -46,7 +47,7 @@ export function QuestionnaireStatsTab(){
   {selected&&valid&&!stats.isFetching&&!stats.isError&&rows.length===0&&<p>За выбранный период переходов и заполнений пока нет.</p>}
   {unknown>0&&<p role="status">Для {unknown} контактов результат регистрации ещё не установлен. Они не считаются автоматически новыми клиентами.</p>}
   {rows.length>0&&valid&&!stats.isError&&<div className="max-w-full overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["Источник","Канал","Кампания","Размещение","Запрос","Переходы","Посетители","Анкеты","Контакты","Новые аккаунты","Существующие"].map(label=><th key={label} className="whitespace-nowrap p-3 text-left">{label}</th>)}</tr></thead><tbody>{rows.map((row,index)=><tr key={index} className="border-t">
-   {[row.attribution.utm_source||row.attribution.src||"Без метки",row.attribution.utm_medium,row.attribution.utm_campaign,row.attribution.utm_content,row.attribution.utm_term].map((value,i)=><td key={i} className="min-w-28 max-w-64 break-words p-3">{value||"—"}</td>)}
+   {[row.attribution.utm_source||row.attribution.src||"Без метки",row.attribution.utm_medium,row.attribution.utm_campaign,row.attribution.utm_content,row.attribution.utm_term].map((value,i)=><td key={i} title={value||undefined} className="min-w-28 max-w-64 break-words p-3">{questionnaireAttributionLabel(value)}</td>)}
    {[row.visits,row.visitors,row.questionnaires,row.contacts,row.new_accounts,row.existing_accounts].map((value,i)=><td key={i} className="p-3">{Number(value||0)}</td>)}
   </tr>)}</tbody></table></div>}
  </div>;
