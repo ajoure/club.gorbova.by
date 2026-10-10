@@ -29,6 +29,7 @@ import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
 import Link from "@tiptap/extension-link";
+import { PlaceholderLinkProtection } from "@/lib/tokens/placeholderLinkProtection";
 import TextAlign from "@tiptap/extension-text-align";
 import {
   loadProductFields,
@@ -495,6 +496,7 @@ export function TokenizedRichInput({
       Italic.configure({}),
       Code.configure({}),
       Link.configure({ openOnClick: false }),
+      PlaceholderLinkProtection,
       TextAlign.configure({ types: ["paragraph"] }),
       TokenNode,
     ];

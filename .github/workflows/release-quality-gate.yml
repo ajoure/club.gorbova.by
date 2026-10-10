@@ -92,6 +92,8 @@ jobs:
           node --test scripts/tests/site-questionnaire-bonus-channel.test.mjs
           node --test scripts/tests/site-questionnaire-journeys.test.mjs
           node scripts/tests/site-questionnaire-concurrency.test.mjs
+      - name: Questionnaire notification editor placeholders
+        run: npx vitest run src/lib/tokens/placeholderLinkProtection.test.ts
       - name: Accounting regulations migration safety
         run: node --test scripts/tests/accounting-regulations-migration.test.mjs
       - name: Instagram monitor queue, budget and RLS
