@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { questionnaireThanksSlug, renderQuestionnaireBroadcast, preserveQuestionnaireUrls, questionnaireProtectedUrls } from '../../supabase/functions/_shared/questionnaireBroadcast';
+import { questionnaireThanksSlug, renderQuestionnaireBroadcast, preserveQuestionnaireUrls, questionnaireProtectedUrls } from '../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast';
 import { instrumentTelegramText } from '../../supabase/functions/_shared/broadcastAnalytics';
 import { readSiteFormEventCondition } from './siteFormEventCondition';
 const source = { id: 'source', workspace_id: 'workspace', status: 'published', blocks: [{ id:'form', type:'form', content:{ auth_mode:true, questionnaire_first:true, redirectUrl:'/thanks' } }] };

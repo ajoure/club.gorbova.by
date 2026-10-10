@@ -15,7 +15,7 @@
  *   4) anti-empty-audience guard → never sends if audience_count = 0 (logs as skipped)
  */
 
-import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from '../_shared/questionnaireBroadcast.ts';
+import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from './questionnaireBroadcast.ts';
 
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 
