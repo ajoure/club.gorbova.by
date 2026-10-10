@@ -9,6 +9,7 @@ const remindersMigration = await readFile(new URL('../../supabase/migrations/202
 const journeysMigration = await readFile(new URL('../../supabase/migrations/20261009083000_site_questionnaire_journeys.sql',import.meta.url),'utf8');
 const submissionDelayMigration = await readFile(new URL('../../supabase/migrations/20261009072000_site_questionnaire_submission_delay.sql', import.meta.url), 'utf8');
 const salesIdentityMigration = await readFile(new URL('../../supabase/migrations/20261009120000_questionnaire_sales_identity.sql', import.meta.url), 'utf8');
+const offerPriceMigration = await readFile(new URL('../../supabase/migrations/20261010140309_cb21_questionnaire_offer_price.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -21,7 +22,7 @@ const answers = [
   { ...fields[2],value:'+375 29 111 22 33' }, { ...fields[3],mapping:'none',value:'My complete answer' },
 ];
 let exportedFixtureVerified = false;
-async function fixture() {
+async function fixture({ applyOfferPriceFix = true } = {}) {
   const db = new PGlite();
   const schemaSQL = `CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz,raw_app_meta_data jsonb DEFAULT '{}');
@@ -31,7 +32,7 @@ async function fixture() {
     CREATE TABLE site_pages(id uuid PRIMARY KEY,workspace_id uuid,status text,blocks jsonb);
     CREATE TABLE products_v2(id uuid PRIMARY KEY,is_active boolean);
     CREATE TABLE tariffs(id uuid PRIMARY KEY,product_id uuid,is_active boolean);
-    CREATE TABLE tariff_offers(id uuid PRIMARY KEY,tariff_id uuid,is_active boolean,is_primary boolean,base_price numeric,final_price numeric);
+    CREATE TABLE tariff_offers(id uuid PRIMARY KEY,tariff_id uuid,is_active boolean,is_primary boolean,amount numeric);
     CREATE TABLE crm_pipelines(id uuid PRIMARY KEY);
     CREATE TABLE crm_pipeline_stages(id uuid PRIMARY KEY,pipeline_id uuid);
     CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_number text UNIQUE NOT NULL,profile_id uuid,user_id uuid,
@@ -74,7 +75,7 @@ async function fixture() {
       INSERT INTO tariffs VALUES(${quote(id(5))},${quote(id(4))},true);
       INSERT INTO crm_pipelines VALUES(${quote(id(6))});
       INSERT INTO crm_pipeline_stages VALUES(${quote(id(7))},${quote(id(6))});`;
-    const exportedSQL = safeRoles + seed + migration;
+    const exportedSQL = safeRoles + seed + migration + offerPriceMigration;
     if (!exportedFixtureVerified) {
       const exportedDatabase = new PGlite();
       try { await exportedDatabase.exec(exportedSQL); } finally { await exportedDatabase.close(); }
@@ -83,6 +84,7 @@ async function fixture() {
     await writeFile(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, exportedSQL);
   }
   await db.exec(migration);
+  if (applyOfferPriceFix) await db.exec(offerPriceMigration);
   const submit = (key=id(10),payload=answers,source='reels',journey=null,journeyHash=null) => db.query(
     'SELECT submit_site_questionnaire($1,$2,$3,$4,$5,$6,$7,$8,$9) result',
     [id(3),id(8),id(1),key,JSON.stringify(payload),source,'v2026-04-10',journey,journeyHash],
@@ -358,4 +360,23 @@ test('saved questionnaires bind the verified first-touch journey atomically, wit
   await assert.rejects(submit(id(10)),/questionnaire_retry_conflict/);
   assert.equal((await counts(db)).submissions,1);assert.equal((await counts(db)).access,0);
  }finally{await db.close();}
+});
+
+// Reproduce the published failure using the actual tariff_offers price column.
+test('production offer schema rejects old RPC atomically; migration uses amount and preserves retry safety', async () => {
+  const {db,submit} = await fixture({applyOfferPriceFix:false});
+  try {
+    await assert.rejects(submit(), error => error.code === '42703');
+    assert.deepEqual(await counts(db),{submissions:0,orders:0,events:0,consents:0,audits:0,access:0});
+    await db.query('INSERT INTO tariff_offers(id,tariff_id,is_active,is_primary,amount) VALUES($1,$2,true,true,442)',[id(91),id(5)]);
+    await db.exec(offerPriceMigration);
+    const saved=await submit();
+    const replay=await submit();
+    assert.equal(saved.success,true);
+    assert.equal(replay.replayed,true);
+    assert.equal(saved.order_id,replay.order_id);
+    const order=(await db.query('SELECT offer_id,base_price,final_price,status FROM orders_v2')).rows[0];
+    assert.deepEqual(order,{offer_id:id(91),base_price:'442',final_price:'442',status:'draft'});
+    assert.deepEqual(await counts(db),{submissions:1,orders:1,events:1,consents:1,audits:1,access:0});
+  } finally {await db.close()}
 });
