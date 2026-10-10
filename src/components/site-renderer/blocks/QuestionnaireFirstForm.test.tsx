@@ -77,6 +77,19 @@ describe("questionnaire-first journey", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
     expect(localStorage.getItem("site-questionnaire:v1:page:block")).toContain("Тестовый комментарий");
   });
+  it("rejects a one-digit phone before requesting a code, then accepts a corrected phone", async () => {
+    render(<QuestionnaireFirstForm content={{ ...content, fields: [...content.fields, { label: "Телефон", type: "phone", mapping: "phone", required: true }] }} pageId="page" blockId="block" />);
+    fillAnswers();
+    fireEvent.change(screen.getByLabelText("Телефон*"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить анкету" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("от 8 до 15 цифр");
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Телефон*"), { target: { value: "+375291234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить анкету" }));
+    await screen.findByLabelText("Код из письма");
+    expect(mocks.request).toHaveBeenCalledOnce();
+  });
   it("a failed request can be retried with the same key and double-click does not create concurrent requests", async () => {
     mocks.user = { email: "test@example.com" };
     let fail: (v: unknown) => void = () => {};

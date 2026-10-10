@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { ChevronDown, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
+export { isValidPhoneNumber } from "../../../supabase/functions/_shared/phone-validation";
 
 // Country data with codes
 const countries = [
@@ -324,9 +325,3 @@ export function getFullPhoneNumber(countryDial: string, number: string): string 
 }
 
 // Validate phone number (basic validation)
-export function isValidPhoneNumber(value: string): boolean {
-  // Remove all non-digits except +
-  const cleaned = value.replace(/[^\d+]/g, '');
-  // Must start with + and have at least 8 digits
-  return /^\+\d{8,15}$/.test(cleaned);
-}

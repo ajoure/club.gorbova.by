@@ -1,3 +1,4 @@
+import { validateConfiguredPhoneAnswers } from "../_shared/phone-validation.ts";
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -14,6 +15,7 @@ export function validateQuestionnaireAnswers(config: unknown, submitted: unknown
     throw new Error("questionnaire_fields_invalid");
   }
   const formData: Record<string, string> = Object.create(null);
+  validateConfiguredPhoneAnswers(config, submitted);
   const fieldMapping: Record<string, string> = Object.create(null);
   const mappedValues: Record<string, string> = Object.create(null);
   let email = "";
