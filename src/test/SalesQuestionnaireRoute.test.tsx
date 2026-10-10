@@ -20,6 +20,27 @@ beforeEach(()=>{mocks.invoke.mockReset();mocks.invoke.mockResolvedValue({data:ba
 afterEach(()=>cleanup());
 
 describe('existing sales controls configure the questionnaire route',()=>{
+ it('keeps legacy owner settings usable without offering an unsupported questionnaire route',async()=>{
+  const ai={model:'test-model',max_tokens:8000,timeout_seconds:60,max_context_chars:750000,vision_enabled:true,max_image_bytes:8388608};
+  mocks.invoke.mockResolvedValue({error:null,data:{available:true,can_configure:true,
+   campaign:{...base.campaign,mode:'off',ai_config:ai},conversation:{state:'HUMAN_HOLD'},job:null}});
+  const client=mount();await screen.findByText('Автопродажи ЦБ21 · тест');
+  fireEvent.click(screen.getByRole('button',{name:'Настройки задержки автопродаж'}));
+  expect(screen.queryByLabelText('Анкета клиентской кампании')).not.toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Сохранить настройки ИИ'})).toBeEnabled();
+  fireEvent.click(screen.getByRole('button',{name:'Сохранить настройки ИИ'}));
+  await waitFor(()=>expect(mocks.invoke).toHaveBeenCalledWith('sales-runtime-control',expect.objectContaining({body:expect.objectContaining({action:'ai_config',expected_ai_config:ai})})));
+  client.clear();
+ });
+ it('respects an explicit server denial even for an off and held owner campaign',async()=>{
+  const ai={model:'test-model',max_tokens:8000,timeout_seconds:60,max_context_chars:750000,vision_enabled:true,max_image_bytes:8388608};
+  mocks.invoke.mockResolvedValue({error:null,data:{...base,can_edit_campaign:false,
+   campaign:{...base.campaign,mode:'off',ai_config:ai},conversation:{state:'HUMAN_HOLD'},job:null}});
+  const client=mount();await screen.findByText('Автопродажи ЦБ21 · тест');
+  fireEvent.click(screen.getByRole('button',{name:'Настройки задержки автопродаж'}));
+  expect(screen.getByRole('button',{name:'Сохранить настройки ИИ'})).toBeDisabled();
+  client.clear();
+ });
  it('saves server-selected page, form, exact previous route and knowledge version without enabling a campaign',async()=>{
   const client=mount();await screen.findByText('Автопродажи ЦБ21 · тест');
   fireEvent.click(screen.getByRole('button',{name:'Настройки задержки автопродаж'}));
