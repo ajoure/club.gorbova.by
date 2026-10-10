@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { resolveServerFormSettings } from "./form_settings.ts";
 import { validateQuestionnaireAnswers } from "./questionnaire-fields.ts";
 import { parseQuestionnaireSource } from "./questionnaire-source.ts";
+import { validateConfiguredPhoneAnswers } from "./phone-validation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,6 +147,12 @@ Deno.serve(async (req) => {
     const formSettings = resolveServerFormSettings(page.blocks, body.block_id);
     if (!formSettings) {
       return json({ error: "Form configuration not found or ambiguous" }, 400);
+    }
+    // Validate every path before a profile, questionnaire or CRM write.
+    try {
+      validateConfiguredPhoneAnswers(formSettings.fields, fields);
+    } catch {
+      return json({ error: "phone_invalid" }, 400);
     }
 
     if (formSettings.questionnaireFirst) {

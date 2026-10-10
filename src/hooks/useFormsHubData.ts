@@ -100,6 +100,15 @@ function pickField(obj: any, keys: string[]): string | null {
   return null;
 }
 
+function pickMappedField(formData: Record<string, unknown>, fieldMapping: unknown, mapping: string): string | null {
+  if (!fieldMapping || typeof fieldMapping !== "object" || Array.isArray(fieldMapping)) return null;
+  for (const [label, target] of Object.entries(fieldMapping)) {
+    const value = formData[label];
+    if (target === mapping && typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 async function fetchSiteForms(
   filters: FormsHubFilters,
   pagination?: FormsHubPagination
@@ -107,7 +116,7 @@ async function fetchSiteForms(
   let query = supabase
     .from("site_form_submissions")
     .select(
-      "id, form_data, metadata, status, created_at, profile_id, order_id, page_id, site_pages!site_form_submissions_page_id_fkey(title, product_id)",
+      "id, form_data, field_mapping, metadata, status, created_at, profile_id, order_id, page_id, site_pages!site_form_submissions_page_id_fkey(title, product_id)",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })
@@ -190,7 +199,7 @@ async function fetchSiteForms(
       id: f.id,
       source_type: "site_form",
       client_name: pickField(formData, NAME_KEYS) || meta.full_name || "—",
-      client_email: pickField(formData, EMAIL_KEYS) || meta.email || (f.profile_id ? profileMap[f.profile_id]?.email : null) || null,
+      client_email: pickMappedField(formData, f.field_mapping, "email") || pickField(formData, EMAIL_KEYS) || meta.email || (f.profile_id ? profileMap[f.profile_id]?.email : null) || null,
       client_phone: pickField(formData, PHONE_KEYS) || meta.phone || null,
       profile_id: f.profile_id,
       user_id: resolvedUserId,

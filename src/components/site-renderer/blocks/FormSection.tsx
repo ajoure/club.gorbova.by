@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
+import { PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/site-form-submit/phone-validation";
 import { Loader2, Upload, X, CalendarIcon, Eye, EyeOff } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -223,6 +224,11 @@ function LegacyFormSection({ content, pageId, blockId, isPreview }: FormSectionP
       }
       if (field.type === "email" && typeof v === "string" && v && !validateEmail(v)) {
         setError("Введите корректный email");
+        return;
+      }
+      if ((field.type === "phone" || field.mapping === "phone") && !isEmpty(v) &&
+          (typeof v !== "string" || !isValidPhoneNumber(v))) {
+        setError(PHONE_VALIDATION_MESSAGE);
         return;
       }
       if (field.type === "number" && v !== undefined && v !== null && v !== "") {
@@ -930,6 +936,10 @@ function AuthFormSection({
       }
       if (field.type === "email" && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
         setError("Введите корректный email");
+        return;
+      }
+      if ((field.type === "phone" || field.mapping === "phone") && val && !isValidPhoneNumber(val)) {
+        setError(PHONE_VALIDATION_MESSAGE);
         return;
       }
     }

@@ -14,6 +14,7 @@ import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { trackQuestionnaireJourney, prepareQuestionnaireJourneyForEmail, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
+import { isValidPhoneNumber, PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/site-form-submit/phone-validation";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {
@@ -73,6 +74,11 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     for (let i = 0; i < fields.length; i++) {
       if (fields[i].required && !(answers[String(i)] || "").trim()) {
         setError(`Заполните поле «${fields[i].label}».`);
+        return false;
+      }
+      if ((fields[i].type === "phone" || fields[i].mapping === "phone") &&
+          answers[String(i)]?.trim() && !isValidPhoneNumber(answers[String(i)])) {
+        setError(PHONE_VALIDATION_MESSAGE);
         return false;
       }
     }
@@ -177,6 +183,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
               const id = `questionnaire-${blockId}-${i}`;
               return <div className="space-y-2" key={id}>
                 <Label htmlFor={id} className="leading-relaxed">{field.label}{field.required ? "*" : ""}</Label>
+                {field.type === "phone" && <p className="text-sm text-muted-foreground">С кодом страны, например +375291234567.</p>}
                 {field.type === "textarea" ? <Textarea id={id} value={answers[String(i)] || ""} rows={4} maxLength={10_000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />
                   : <Input id={id} type={field.type === "phone" ? "tel" : field.type === "email" ? "email" : "text"} value={answers[String(i)] || ""} maxLength={1000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />}
               </div>;

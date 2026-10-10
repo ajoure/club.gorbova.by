@@ -31,4 +31,19 @@ describe('site form contact email', () => {
     await waitFor(()=>expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.rows[0].client_email).toBe('original@example.invalid');
   });
+  it('reads a custom email label through its saved mapping even without a profile email', async () => {
+    mocks.forms[0].form_data={' Email для доступа к предложениям': ' entered@example.invalid '};
+    mocks.forms[0].field_mapping={' Email для доступа к предложениям': 'email'};
+    mocks.profiles=[];
+    const {result}=renderHook(()=>useFormsHubData({...DEFAULT_FILTERS,source_type:'site_form'}),{wrapper});
+    await waitFor(()=>expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.rows[0].client_email).toBe('entered@example.invalid');
+  });
+  it('does not mistake an unrelated answer containing email wording for the email field', async () => {
+    mocks.forms[0].form_data={'Email для предложений': 'entered@example.invalid', 'Комментарий email': 'другой ответ'};
+    mocks.forms[0].field_mapping={'Email для предложений': 'email', 'Комментарий email':'none'};
+    const {result}=renderHook(()=>useFormsHubData({...DEFAULT_FILTERS,source_type:'site_form'}),{wrapper});
+    await waitFor(()=>expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.rows[0].client_email).toBe('entered@example.invalid');
+  });
 });
