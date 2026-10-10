@@ -154,10 +154,17 @@ export function SalesRuntimeControls(
     enabled = ['owner_test','questionnaire_customer'].includes(campaign.mode),
     state = conversation?.state || "OFF";
   const customerCampaign=!!campaign.source_page_id;
-  const editable=query.data.can_edit_campaign===true;
+  const customerControlsSupported = Array.isArray(query.data.questionnaire_sources) &&
+    typeof query.data.customer_mode === 'string';
   const selectedSource=query.data.questionnaire_sources?.find(s=>`${s.page_id}|${s.block_id}`===questionnaireSource);
   const sending = job?.status === "sending",
     blocked = ["STOPPED", "DELIVERY_UNKNOWN"].includes(state);
+  // Older deployed controllers use the owner-only OFF/HUMAN_HOLD contract.
+  // An explicit permission from a newer controller always takes precedence.
+  const editable = typeof query.data.can_edit_campaign === 'boolean'
+    ? query.data.can_edit_campaign
+    : query.data.can_configure === true && !customerCampaign && !enabled &&
+      !sending && !blocked && state === 'HUMAN_HOLD';
   const waiting = job?.status === "queued" && enabled && state === "READY";
   const label = !enabled
     ? "Выключены"
@@ -260,7 +267,7 @@ export function SalesRuntimeControls(
         <DialogDescription>Задержка ответов, модель ИИ, продукты и база знаний для консультации.</DialogDescription>
       </DialogHeader>
         <div className="space-y-2">
-          {query.data.can_configure&&<div className="space-y-2 border-b pb-3">
+          {query.data.can_configure&&customerControlsSupported&&<div className="space-y-2 border-b pb-3">
             <p className="text-sm font-medium">Анкета для клиентской кампании</p>
             <p className="text-xs text-muted-foreground">Начинает диалог после сохранённой анкеты и сообщения клиента. Настройка маршрута оставляет клиентскую кампанию выключенной.</p>
             <label className="block text-xs">Анкета
