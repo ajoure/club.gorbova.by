@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { ChevronDown, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
-export { isValidPhoneNumber } from "../../../supabase/functions/_shared/phone-validation";
+export { isValidPhoneNumber } from "../../../supabase/functions/site-form-submit/phone-validation";
 
 // Country data with codes
 const countries = [

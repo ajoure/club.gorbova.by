@@ -1,4 +1,4 @@
-import { validateConfiguredPhoneAnswers } from "../_shared/phone-validation.ts";
+import { validateConfiguredPhoneAnswers } from "./phone-validation.ts";
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => !!value && typeof value === "object" && !Array.isArray(value);
 

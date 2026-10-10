@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidPhoneNumber, validateConfiguredPhoneAnswers } from "../../supabase/functions/_shared/phone-validation";
+import { isValidPhoneNumber, validateConfiguredPhoneAnswers } from "../../supabase/functions/site-form-submit/phone-validation";
 import { validateQuestionnaireAnswers } from "../../supabase/functions/site-form-submit/questionnaire-fields";
 
 const config = [{ label: "Телефон", type: "phone", mapping: "phone", required: true }];

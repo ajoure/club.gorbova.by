@@ -6,7 +6,7 @@ import ts from "typescript";
 import { resolveServerFormSettings } from "../../supabase/functions/site-form-submit/form_settings";
 import { validateQuestionnaireAnswers } from "../../supabase/functions/site-form-submit/questionnaire-fields";
 import { parseQuestionnaireSource } from "../../supabase/functions/site-form-submit/questionnaire-source";
-import { validateConfiguredPhoneAnswers } from "../../supabase/functions/_shared/phone-validation";
+import { validateConfiguredPhoneAnswers } from "../../supabase/functions/site-form-submit/phone-validation";
 
 const source = readFileSync(path.resolve(__dirname, "../../supabase/functions/site-form-submit/index.ts"), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -35,7 +35,7 @@ describe("real site-form-submit phone guard", () => {
         if (module === "./form_settings.ts") return { resolveServerFormSettings };
         if (module === "./questionnaire-fields.ts") return { validateQuestionnaireAnswers };
         if (module === "./questionnaire-source.ts") return { parseQuestionnaireSource };
-        if (module === "../_shared/phone-validation.ts") return { validateConfiguredPhoneAnswers };
+        if (module === "./phone-validation.ts") return { validateConfiguredPhoneAnswers };
         throw new Error(`Unexpected import: ${module}`);
       },
     });

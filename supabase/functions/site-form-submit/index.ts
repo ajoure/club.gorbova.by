@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { resolveServerFormSettings } from "./form_settings.ts";
 import { validateQuestionnaireAnswers } from "./questionnaire-fields.ts";
 import { parseQuestionnaireSource } from "./questionnaire-source.ts";
-import { validateConfiguredPhoneAnswers } from "../_shared/phone-validation.ts";
+import { validateConfiguredPhoneAnswers } from "./phone-validation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

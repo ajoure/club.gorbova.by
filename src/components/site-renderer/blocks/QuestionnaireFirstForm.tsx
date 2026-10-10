@@ -14,7 +14,7 @@ import { QuestionnaireTelegramStep } from "./QuestionnaireTelegramStep";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { trackQuestionnaireJourney, prepareQuestionnaireJourneyForEmail, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
-import { isValidPhoneNumber, PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/_shared/phone-validation";
+import { isValidPhoneNumber, PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/site-form-submit/phone-validation";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {

@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
-import { PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/_shared/phone-validation";
+import { PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/site-form-submit/phone-validation";
 import { Loader2, Upload, X, CalendarIcon, Eye, EyeOff } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
