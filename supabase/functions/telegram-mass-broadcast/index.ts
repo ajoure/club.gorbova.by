@@ -1,4 +1,4 @@
-import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from '../process-scheduled-broadcasts/questionnaireBroadcast.ts';
+import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
