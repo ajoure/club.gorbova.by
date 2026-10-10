@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { questionnaireThanksSlug, renderQuestionnaireBroadcast, preserveQuestionnaireUrls } from '../../supabase/functions/_shared/questionnaireBroadcast';
+import { questionnaireThanksSlug, renderQuestionnaireBroadcast, preserveQuestionnaireUrls, questionnaireProtectedUrls } from '../../supabase/functions/_shared/questionnaireBroadcast';
 import { instrumentTelegramText } from '../../supabase/functions/_shared/broadcastAnalytics';
 import { readSiteFormEventCondition } from './siteFormEventCondition';
 const source = { id: 'source', workspace_id: 'workspace', status: 'published', blocks: [{ id:'form', type:'form', content:{ auth_mode:true, questionnaire_first:true, redirectUrl:'/thanks' } }] };
@@ -33,6 +33,16 @@ describe('уведомление анкеты использует управл�
     expect(rendered).toContain('/broadcast-track/c/other-token');
     expect(tracking.clickTokens.size).toBe(3);
     expect(instrumentTelegramText(bonus.channel_url,tracking)).toContain('/broadcast-track/c/channel-token');
+  });
+  it('only the trusted event dispatcher with one recipient may preserve the two bonus URLs',()=>{
+    const urls=[bonus.channel_url,bonus.personal_chat_url];
+    const scope={systemActor:true,sendMode:'event',recipientCount:1};
+    expect(questionnaireProtectedUrls(urls,scope)).toEqual(urls);
+    expect(questionnaireProtectedUrls(undefined,{...scope,systemActor:false})).toEqual([]);
+    for(const invalid of [{...scope,systemActor:false},{...scope,sendMode:'manual'},{...scope,recipientCount:2}])
+      expect(()=>questionnaireProtectedUrls(urls,invalid)).toThrow();
+    for(const invalid of [urls.slice(0,1),[urls[1],urls[0]],['https://evil.test',urls[1]],'unexpected'])
+      expect(()=>questionnaireProtectedUrls(invalid,scope)).toThrow();
   });
   it('preserves the activation cutoff through the existing rule editor',()=>{
     const condition={page_id:'00000000-0000-4000-8000-000000000001',block_id:'00000000-0000-4000-8000-000000000002',event:'submitted',submissions_from:'2026-10-10T15:00:00Z'};
