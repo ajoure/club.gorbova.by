@@ -23,6 +23,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
+import { laterAccessEnd, resolvePaidCourseAddonWindow, shouldAlignPaidAddonWindow } from './paid_course_addon_window.ts';
 import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
@@ -268,7 +269,7 @@ Deno.serve(async (req) => {
     // Authenticated, read-only capability handshake. An old deployment returns
     // orderId-required on GET, so the exact UI can refuse POST without a write.
     if (req.method === 'GET') {
-      return new Response(JSON.stringify({ capabilities: { exact_existing_access_v1: true } }),
+      return new Response(JSON.stringify({ capabilities: { exact_existing_access_v1: true, paid_cb20_addon_course_window_v1: true } }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     // Audit actor derived from resolved caller. Body-provided source/context
@@ -658,6 +659,16 @@ Deno.serve(async (req) => {
     const isClubProduct = await isCalendarMonthProduct(supabase, productId);
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     const fixedCourseEnd = !customAccessDays && !customAccessEndAt ? courseAccessEnd(tariff?.meta) : null;
+    let paidAddonWindow: Awaited<ReturnType<typeof resolvePaidCourseAddonWindow>> = null;
+    if (shouldAlignPaidAddonWindow({ customDays: customAccessDays, customEnd: customAccessEndAt,
+      customStart: customAccessStartAt, source: _body.source, callerType: caller.type })) {
+      try {
+        paidAddonWindow = await resolvePaidCourseAddonWindow(supabase, order, productCode, now);
+      } catch (error) {
+        return new Response(JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'paid_addon_lineage_lookup_failed' }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
 
     // Resolve once, before replay detection. orders_v2 has no paid_at column.
     let confirmedPaidAt: string | null = null;
@@ -677,12 +688,14 @@ Deno.serve(async (req) => {
       }
       confirmedPaidAt = firstSuccessfulPayment?.paid_at ?? null;
     }
+    confirmedPaidAt ??= paidAddonWindow?.paidAt ?? null;
     let paymentWindow: ReturnType<typeof resolveGrantPaymentWindow>;
     try {
       paymentWindow = resolveGrantPaymentWindow({
         paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt || fixedCourseEnd?.toISOString(),
         durationDays, calendarMonth: isClubProduct && !customAccessDays,
       });
+      paymentWindow.expectedEnd = laterAccessEnd(paymentWindow.expectedEnd, paidAddonWindow?.expiresAt);
     } catch {
       return new Response(JSON.stringify({ success: false, error: "invalid_access_window" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1249,6 +1262,8 @@ Deno.serve(async (req) => {
       // For non-calendar-month or custom days: use duration in days
       accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
     }
+
+    accessEndAt = laterAccessEnd(accessEndAt, paidAddonWindow?.expiresAt)!;
 
     const results: any = {
       orderId,
@@ -2565,7 +2580,7 @@ Deno.serve(async (req) => {
         access_start: accessStartAt.toISOString(),
         access_end: accessEndAt.toISOString(),
         window_days: durationDays,
-        source_window_rule: fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
+        source_window_rule: paidAddonWindow ? 'paid_addon_primary_course' : fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
         previous_end: existingProductSub?.access_end_at || null,
         post_check: postCheck,
       },
