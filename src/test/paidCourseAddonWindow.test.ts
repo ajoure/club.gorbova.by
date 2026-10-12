@@ -46,6 +46,14 @@ describe('paid CB20 addon window', () => {
     const f = fixture(); f.order.meta.group_child_order = false; expect(await resolve(f)).toBeNull();
     const other = fixture(); other.tables.orders_v2[0].product_id = id(21); expect(await resolve(other)).toBeNull();
   });
+  it('protects manual/revoked older purchases but lets a new paid order replace an expired automatic Business gift', async () => {
+    const f = fixture();
+    f.tables.entitlements.push({ order_id:id(99),user_id:id(2),product_id:id(3),status:'expired',meta:{source:'historical_purchase_with_business'} });
+    expect(await resolve(f)).not.toBeNull();
+    f.tables.entitlements[1].status='revoked';await expect(resolve(f)).rejects.toThrow('existing_access_override');
+    f.tables.entitlements[1].status='active';f.tables.entitlements[1].meta.manual_access_edit_last_at='2026-10-01';
+    await expect(resolve(f)).rejects.toThrow('existing_access_override');
+  });
   it('permits another item partial refund and keep decisions without extending reduced/revoked access', async () => {
     const f = fixture(); f.tables.orders_v2[0].status = 'partial_refund'; f.tables.order_groups[0].status = 'partial_refund';
     f.tables.payments_v2[0].status = 'partially_refunded'; f.tables.payments_v2[0].refunded_amount = 100;

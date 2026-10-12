@@ -2579,7 +2579,7 @@ Deno.serve(async (req) => {
         access_start: accessStartAt.toISOString(),
         access_end: accessEndAt.toISOString(),
         window_days: durationDays,
-        source_window_rule: fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
+        source_window_rule: paidAddonWindow ? 'paid_addon_primary_course' : fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
         previous_end: existingProductSub?.access_end_at || null,
         post_check: postCheck,
       },

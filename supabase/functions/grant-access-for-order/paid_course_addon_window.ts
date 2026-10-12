@@ -40,7 +40,7 @@ export async function resolvePaidCourseAddonWindow(
       .eq('order_group_id', refs.orderGroupId).eq('product_id', order.product_id).eq('role', 'addon').maybeSingle()),
     read(db.from('payments_v2').select('id,order_id,user_id,status,is_deleted,amount,refunded_amount,paid_at')
       .eq('order_id', refs.primaryOrderId)),
-    read(db.from('entitlements').select('id,status,meta,expires_at').eq('order_id', order.id)
+    read(db.from('entitlements').select('id,status,meta,expires_at')
       .eq('user_id', order.user_id).eq('product_id', order.product_id).maybeSingle()),
   ]);
   const payment = payments?.find((p: any) => p.id === refs.paymentId);
@@ -57,7 +57,10 @@ export async function resolvePaidCourseAddonWindow(
     read(db.from('entitlements').select('id,status,expires_at').eq('order_id', parent.id)
       .eq('user_id', order.user_id).eq('product_id', parent.product_id).maybeSingle()),
   ]);
-  if (existing && (existing.status !== 'active' || existing.meta?.manual_access_edit_last_at)) {
+  // The writer merges by user/product, including an older purchase. Protect
+  // that row's explicit override too; an expired automatic Business gift does
+  // not prevent fulfillment of this independently paid new order.
+  if (existing && (existing.status === 'revoked' || existing.meta?.manual_access_edit_last_at)) {
     throw new Error('paid_addon_existing_access_override');
   }
   if (requests.some((q: any) => q.state !== 'failed' && ['revoke', 'reduce'].includes(q.access_action)) ||
