@@ -10,6 +10,8 @@ const labels: Record<string, string> = {
 export function questionnaireAttributionLabel(value?: string): string {
   if (!value) return "—";
   const code = value.toLowerCase();
-  const source = parseQuestionnaireSource(code);
+  // Known placement codes reuse the same source catalogue as their links.
+  const source = parseQuestionnaireSource(code)
+    || (code.startsWith("anketa_") ? parseQuestionnaireSource(code.slice(7)) : null);
   return source ? QUESTIONNAIRE_SOURCES[source].label : labels[code] || value;
 }
