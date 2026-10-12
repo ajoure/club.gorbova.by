@@ -78,6 +78,13 @@
       "when": 1791644075080,
       "tag": "0010_questionnaire_notification_cutoff",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791787766751,
+      "tag": "0011_purchased_module_independent_source",
+      "breakpoints": true
     }
   ]
 }

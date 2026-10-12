@@ -78,6 +78,8 @@ jobs:
         run: |
           node scripts/tests/cb21-learning-release.test.mjs
           node scripts/tests/cb21-oct31-schedule.test.mjs
+      - name: Paid module and historical Business access boundaries
+        run: node --test scripts/historical-purchases/independent-order.test.mjs
       - name: Site questionnaire atomicity and real PostgreSQL concurrency
         env:
           PGHOST: 127.0.0.1

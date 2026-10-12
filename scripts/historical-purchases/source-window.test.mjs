@@ -9,7 +9,7 @@ const business='7c748940-dcad-4c7c-a92e-76a2344622d3',rule='1b497fba-031a-4318-8
 const source='00000000-0000-4000-8000-000000000002',mod='00000000-0000-4000-8000-000000000003';
 const lesson='00000000-0000-4000-8000-000000000004';
 
-async function fixture(){
+export async function fixture(){
   const db=new PGlite();
   await db.exec(`CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
     CREATE SCHEMA auth;
@@ -55,7 +55,7 @@ async function fixture(){
   await db.query("SELECT set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claim.role','authenticated',false)",[user]);
   return db;
 }
-async function canRead(db){
+export async function canRead(db){
   await db.exec('SET ROLE authenticated');
   try {
     const r=(await db.query(`SELECT
