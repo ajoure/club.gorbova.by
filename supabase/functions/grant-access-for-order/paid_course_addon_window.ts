@@ -1,4 +1,4 @@
-import { getGroupChildReferences } from '../admin-repair-missing-payments/group_child_order.ts';
+import { getGroupChildReferences } from '../_shared/group_child_order.ts';
 
 // This repair follows the separate CB20 product, never legacy or CB21 rights.
 export const CB20_COURSE_PRODUCT_ID = '3e43fb28-8322-41bc-bfee-714731bdc630';
