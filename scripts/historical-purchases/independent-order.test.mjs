@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fixture, canRead } from './source-window.test.mjs';
 
 const migration = readFileSync(new URL('../../supabase/migrations/20261012063826_purchased_module_independent_source.sql', import.meta.url), 'utf8');
+assert.equal(readFileSync(new URL('../../drizzle/migrations/0011_purchased_module_independent_source.sql',import.meta.url),'utf8'),migration,'managed and Supabase migration SQL must be identical');
 const user = '00000000-0000-4000-8000-000000000001';
 const course = '7101ed3c-7839-4a74-ad95-aa0660369b22';
 const order = '00000000-0000-4000-8000-000000000020';
