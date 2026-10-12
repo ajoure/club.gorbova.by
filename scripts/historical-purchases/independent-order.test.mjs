@@ -107,6 +107,8 @@ test('group payment lineage denies full parent refunds, missing parents and revo
     }
     await db.query("INSERT INTO payment_refund_requests VALUES($1,'completed','keep')",[item]);
     assert.deepEqual(await canRead(db),allowed,'keep access decision is honored');
+    await db.exec("UPDATE payment_refund_requests SET access_action='reduce'");
+    assert.deepEqual(await canRead(db),allowed,'reduced access follows the still-valid entitlement expiry');
     await db.exec("UPDATE payment_refund_requests SET access_action='revoke'");
     assert.deepEqual(await canRead(db),denied);
     await db.exec("UPDATE payment_refund_requests SET state='failed'");

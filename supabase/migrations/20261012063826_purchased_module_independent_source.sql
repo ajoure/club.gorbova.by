@@ -50,15 +50,15 @@ BEGIN
       AND o.status::text = 'paid' AND NOT o.is_deleted
       AND o.final_price > 0 AND o.paid_amount > 0
       -- Refund decisions for this item do not affect unrelated paid modules.
-      -- Explicit keep decisions retain access; revoke/reduce still fail closed.
+      -- Keep/reduce decisions retain the effective entitlement window; revoke fails closed.
       AND NOT EXISTS (SELECT 1 FROM public.order_group_items i
         WHERE i.order_id = o.id AND (
           EXISTS (SELECT 1 FROM public.payment_refund_requests r
             WHERE r.order_group_item_id = i.id AND r.state <> 'failed'
-              AND r.access_action NOT IN ('keep','keep_subscription'))
+              AND r.access_action = 'revoke')
           OR EXISTS (SELECT 1 FROM public.composable_refund_intents ci
             WHERE ci.order_group_item_id = i.id AND ci.status NOT IN ('failed','cancelled')
-              AND ci.access_action NOT IN ('keep','keep_subscription'))))
+              AND ci.access_action = 'revoke')))
       AND (
         (o.meta->>'group_primary_order_id' IS NULL
           AND coalesce(o.meta->>'group_child_order','false') <> 'true'
