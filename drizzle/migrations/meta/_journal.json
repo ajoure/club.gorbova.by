@@ -85,6 +85,13 @@
       "when": 1791787766751,
       "tag": "0011_purchased_module_independent_source",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791789158661,
+      "tag": "0012_purchased_module_independent_source",
+      "breakpoints": true
     }
   ]
 }
