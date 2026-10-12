@@ -23,6 +23,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
+import { laterAccessEnd, resolvePaidCourseAddonWindow } from './paid_course_addon_window.ts';
 import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
@@ -658,6 +659,15 @@ Deno.serve(async (req) => {
     const isClubProduct = await isCalendarMonthProduct(supabase, productId);
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     const fixedCourseEnd = !customAccessDays && !customAccessEndAt ? courseAccessEnd(tariff?.meta) : null;
+    let paidAddonWindow: Awaited<ReturnType<typeof resolvePaidCourseAddonWindow>> = null;
+    if (customAccessDays == null && !customAccessEndAt && !customAccessStartAt) {
+      try {
+        paidAddonWindow = await resolvePaidCourseAddonWindow(supabase, order, productCode, now);
+      } catch (error) {
+        return new Response(JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'paid_addon_lineage_lookup_failed' }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
 
     // Resolve once, before replay detection. orders_v2 has no paid_at column.
     let confirmedPaidAt: string | null = null;
@@ -677,12 +687,14 @@ Deno.serve(async (req) => {
       }
       confirmedPaidAt = firstSuccessfulPayment?.paid_at ?? null;
     }
+    confirmedPaidAt ??= paidAddonWindow?.paidAt ?? null;
     let paymentWindow: ReturnType<typeof resolveGrantPaymentWindow>;
     try {
       paymentWindow = resolveGrantPaymentWindow({
         paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt || fixedCourseEnd?.toISOString(),
         durationDays, calendarMonth: isClubProduct && !customAccessDays,
       });
+      paymentWindow.expectedEnd = laterAccessEnd(paymentWindow.expectedEnd, paidAddonWindow?.expiresAt);
     } catch {
       return new Response(JSON.stringify({ success: false, error: "invalid_access_window" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1249,6 +1261,8 @@ Deno.serve(async (req) => {
       // For non-calendar-month or custom days: use duration in days
       accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
     }
+
+    accessEndAt = laterAccessEnd(accessEndAt, paidAddonWindow?.expiresAt)!;
 
     const results: any = {
       orderId,
