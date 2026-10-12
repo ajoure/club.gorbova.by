@@ -23,7 +23,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
-import { laterAccessEnd, resolvePaidCourseAddonWindow } from './paid_course_addon_window.ts';
+import { laterAccessEnd, resolvePaidCourseAddonWindow, shouldAlignPaidAddonWindow } from './paid_course_addon_window.ts';
 import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
     // Authenticated, read-only capability handshake. An old deployment returns
     // orderId-required on GET, so the exact UI can refuse POST without a write.
     if (req.method === 'GET') {
-      return new Response(JSON.stringify({ capabilities: { exact_existing_access_v1: true } }),
+      return new Response(JSON.stringify({ capabilities: { exact_existing_access_v1: true, paid_cb20_addon_course_window_v1: true } }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     // Audit actor derived from resolved caller. Body-provided source/context
@@ -660,7 +660,8 @@ Deno.serve(async (req) => {
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     const fixedCourseEnd = !customAccessDays && !customAccessEndAt ? courseAccessEnd(tariff?.meta) : null;
     let paidAddonWindow: Awaited<ReturnType<typeof resolvePaidCourseAddonWindow>> = null;
-    if (customAccessDays == null && !customAccessEndAt && !customAccessStartAt) {
+    if (shouldAlignPaidAddonWindow({ customDays: customAccessDays, customEnd: customAccessEndAt,
+      customStart: customAccessStartAt, source: _body.source, callerType: caller.type })) {
       try {
         paidAddonWindow = await resolvePaidCourseAddonWindow(supabase, order, productCode, now);
       } catch (error) {

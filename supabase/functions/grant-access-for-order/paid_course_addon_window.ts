@@ -3,6 +3,18 @@ import { getGroupChildReferences } from '../admin-repair-missing-payments/group_
 // This repair follows the separate CB20 product, never legacy or CB21 rights.
 export const CB20_COURSE_PRODUCT_ID = '3e43fb28-8322-41bc-bfee-714731bdc630';
 
+export function shouldAlignPaidAddonWindow(input: {
+  customDays?: unknown; customEnd?: unknown; customStart?: unknown;
+  source?: unknown; callerType: string;
+}): boolean {
+  if (input.customDays != null || input.customEnd) return false;
+  if (!input.customStart) return true;
+  // Scheduled opening supplies its activation time, not a manual duration.
+  // Body source never confers authorization: the caller is already resolved.
+  return input.callerType === 'service_role' &&
+    ['scheduled_module_fixed_date','scheduled_module_manual_open'].includes(String(input.source));
+}
+
 export function laterAccessEnd(normal: Date | null, courseEnd: string | undefined): Date | null {
   if (!courseEnd) return normal;
   const course = new Date(courseEnd);

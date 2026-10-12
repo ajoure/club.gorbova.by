@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CB20_COURSE_PRODUCT_ID, laterAccessEnd, resolvePaidCourseAddonWindow } from '../../supabase/functions/grant-access-for-order/paid_course_addon_window';
+import { CB20_COURSE_PRODUCT_ID, laterAccessEnd, resolvePaidCourseAddonWindow, shouldAlignPaidAddonWindow } from '../../supabase/functions/grant-access-for-order/paid_course_addon_window';
 import { resolveGrantPaymentWindow } from '../../supabase/functions/grant-access-for-order/payment_window';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -31,6 +31,23 @@ const now = new Date('2026-10-12T12:00:00Z');
 const resolve = (f: ReturnType<typeof fixture>, code = 'cb_module_retail') => resolvePaidCourseAddonWindow(f.db, f.order, code, now);
 
 describe('paid CB20 addon window', () => {
+  it.each(['scheduled_module_fixed_date','scheduled_module_manual_open'])('aligns %s to the course while preserving the opening date and explicit custom durations', async source => {
+    const opening = { callerType:'service_role', source, customStart:'2026-10-04T10:00:00Z' };
+    expect(shouldAlignPaidAddonWindow(opening)).toBe(true);
+    const course = await resolve(fixture());
+    const window = resolveGrantPaymentWindow({ customStart:opening.customStart,paidAt:course!.paidAt,durationDays:30,calendarMonth:false });
+    expect(window.start?.toISOString()).toBe('2026-10-04T10:00:00.000Z');
+    expect(laterAccessEnd(window.expectedEnd,course!.expiresAt)?.toISOString()).toBe(course!.expiresAt);
+    expect(shouldAlignPaidAddonWindow({ ...opening,customDays:30 })).toBe(false);
+    expect(shouldAlignPaidAddonWindow({ ...opening,customDays:0 })).toBe(false);
+    expect(shouldAlignPaidAddonWindow({ ...opening,customEnd:'2026-11-01' })).toBe(false);
+    expect(shouldAlignPaidAddonWindow({ ...opening,callerType:'admin' })).toBe(false);
+  });
+  it('does not replace an administrator custom opening window based on a claimed source', () => {
+    expect(shouldAlignPaidAddonWindow({ callerType:'admin',customStart:'2026-10-01' })).toBe(false);
+    expect(shouldAlignPaidAddonWindow({ callerType:'service_role',customStart:'2026-10-01',source:'other_source' })).toBe(false);
+    expect(shouldAlignPaidAddonWindow({ callerType:'admin' })).toBe(true);
+  });
   it('uses actual primary entitlement and canonical parent payment for a child without its own payment', async () => {
     const f = fixture(); const before = JSON.stringify(f.tables);
     const window = await resolve(f);
