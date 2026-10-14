@@ -37,7 +37,16 @@ describe("durable manual email batches", () => {
     deps.accepted.mockRejectedValueOnce(new Error("journal unavailable"));
     await expect(processManualEmailBatch(jobs, deps)).rejects.toThrow("journal unavailable");
     expect(deps.send).toHaveBeenCalledTimes(1);
-    expect(deps.settle).not.toHaveBeenCalled();
+    expect(deps.settle.mock.calls.map((call) => call[0].delivery_id)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+    expect(deps.settle.mock.calls.every((call) => call[1] === "queued")).toBe(true);
+  });
+
+  it("retries a connection failure before DATA without treating it as acceptance", async () => {
+    const deps = dependencies();
+    deps.send.mockRejectedValueOnce(new BroadcastSmtpError(0, false));
+    expect(await processManualEmailBatch(jobs, deps)).toEqual({ accepted: 0, failed: 0, deferred: 10 });
+    expect(deps.accepted).not.toHaveBeenCalled();
+    expect(deps.cooldown).toHaveBeenCalledTimes(1);
   });
 
   it("returns untouched jobs to the queue before the worker wall time expires", async () => {

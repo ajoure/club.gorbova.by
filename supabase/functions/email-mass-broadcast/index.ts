@@ -230,7 +230,7 @@ async function sendEmailViaSMTP(params: {
     await sendCommand(b64Utf8(username), [334]);
     
     const passResp = await sendCommand(b64Utf8(password));
-    if (parseSmtpCode(passResp) !== 235) throw new Error("SMTP auth failed");
+    if (parseSmtpCode(passResp) !== 235) throw new BroadcastSmtpError(parseSmtpCode(passResp), false);
 
     await sendCommand(`MAIL FROM:<${fromEmail}>`, [250]);
     await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);

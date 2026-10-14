@@ -41,7 +41,7 @@ export async function processManualEmailBatch(jobs: ManualEmailJob[], deps: Queu
       await deps.send(job);
     } catch (error) {
       // A definite 4xx SMTP rejection is safe to retry after a cooldown.
-      if (error instanceof BroadcastSmtpError && !error.ambiguous && error.code >= 400 && error.code < 500 && job.attempts < 8) {
+      if (error instanceof BroadcastSmtpError && !error.ambiguous && (error.code === 0 || (error.code >= 400 && error.code < 500)) && job.attempts < 8) {
         const retryAt = new Date(deps.now() + 15 * 60_000).toISOString();
         await deps.cooldown(retryAt);
         for (const remaining of jobs.slice(index)) {
@@ -57,8 +57,15 @@ export async function processManualEmailBatch(jobs: ManualEmailJob[], deps: Queu
     }
     // Do not catch journal errors as SMTP errors or mark an accepted mail failed.
     // If persistence fails, leave processing locked for operator reconciliation.
-    await deps.accepted(job);
-    await deps.settle(job, "accepted");
+    try {
+      await deps.accepted(job);
+      await deps.settle(job, "accepted");
+    } catch (error) {
+      // Only this attempted recipient has an uncertain outcome. The rest of
+      // the claimed batch was never sent and can safely wait for another tick.
+      for (const remaining of jobs.slice(index + 1)) await deps.settle(remaining, "queued");
+      throw error;
+    }
     accepted++;
   }
   return { accepted, failed, deferred };
