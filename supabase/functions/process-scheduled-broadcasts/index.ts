@@ -206,6 +206,17 @@ Deno.serve(async (req) => {
   let totalSent = 0, totalFailed = 0, totalSkipped = 0;
   const perTemplateLog: unknown[] = [];
 
+  // Existing approved minute cron processes only the new durable manual email
+  // payload queue. Force-template and read-only invocations never drain it.
+  if (isCronCaller && !isDryRun && !forceTemplateId) {
+    const { data, error } = await supabase.functions.invoke('email-mass-broadcast', {
+      headers: { 'x-system-actor': 'broadcast-dispatcher', 'x-broadcast-internal-secret': internalSecret },
+      body: { action: 'process_manual_email_queue' },
+    });
+    perTemplateLog.push({ manual_email_queue: error ? { error: 'email_queue_worker_failed' } : data });
+  }
+
+
   // Event-driven education broadcasts use a durable, idempotent queue. The
   // same dispatcher processes them so scheduling, kill-switch and audit rules
   // stay in one existing broadcast subsystem.
