@@ -38,10 +38,19 @@ describe("questionnaire draft and attribution", () => {
     const s = storage(); s.setItem("key", "{");
     expect(readQuestionnaireDraft(s, "key", draft.schema, 2)).toBeNull();
   });
-  it("creates ten different labelled URLs for the same page and accepts no arbitrary source", () => {
+  it("adds the exact webinar URL while preserving all ten existing source URLs", () => {
     const links = questionnaireSourceLinks("https://gorbova.by/predzapiscb21anketa");
-    expect(links).toHaveLength(10);
-    expect(new Set(links.map(l => l.url)).size).toBe(10);
+    expect(links).toHaveLength(11);
+    expect(new Set(links.map(l => l.url)).size).toBe(11);
+    const previousSources = [
+      ["main_channel", "telegram"], ["questionnaire_channel", "telegram"], ["extra_channel", "telegram"],
+      ["email", "email"], ["bot", "telegram"], ["stories", "instagram"], ["bio", "instagram"],
+      ["club", "club"], ["reels", "instagram"], ["direct", "instagram"],
+    ];
+    expect(links.slice(0, 10).map(link => link.url)).toEqual(previousSources.map(([code, source]) =>
+      `https://gorbova.by/predzapiscb21anketa?src=${code}&utm_source=${source}&utm_medium=${code}&utm_campaign=cb21_preregistration`));
+    expect(links[10]).toEqual({ label: "Продающий вебинар", url:
+      "https://gorbova.by/predzapiscb21anketa?src=platforma&utm_source=veb&utm_medium=141026&utm_campaign=cb21_preregistration&utm_content=anketa_veb" });
     for (const link of links) {
       const url = new URL(link.url);
       expect(url.pathname).toBe("/predzapiscb21anketa");

@@ -20,7 +20,7 @@ export function QuestionnaireSourceLinks({ pageId }: { pageId?: string }) {
     catch { toast.error("Не удалось скопировать. Выделите ссылку вручную."); }
   }
   return <div className="space-y-2 border rounded p-3">
-    <p className="text-xs font-medium">10 ссылок для источников предзаписи</p>
+    <p className="text-xs font-medium">{links.length ? `${links.length} ссылок для источников предзаписи` : "Ссылки для источников предзаписи"}</p>
     <p className="text-xs text-muted-foreground">Все ведут на эту анкету. Метка показывает в карточке контакта, откуда пришёл человек.</p>
     {links.map(link => <div key={link.label} className="space-y-1">
       <div className="flex items-center justify-between gap-2"><span className="text-xs">{link.label}</span><Button type="button" size="sm" variant="outline" onClick={() => { void copy(link.url); }}>Копировать</Button></div>
