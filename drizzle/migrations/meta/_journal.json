@@ -92,6 +92,13 @@
       "when": 1791789158661,
       "tag": "0012_purchased_module_independent_source",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791996993675,
+      "tag": "0013_manual_email_broadcast_queue",
+      "breakpoints": true
     }
   ]
 }

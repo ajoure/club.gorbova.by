@@ -3272,6 +3272,68 @@ export type Database = {
         }
         Relationships: []
       }
+      broadcast_email_queue: {
+        Row: {
+          account_id: string
+          attempts: number
+          delivery_id: string
+          error_code: string | null
+          html: string
+          next_attempt_at: string
+          recipient: string
+          status: string
+          subject: string
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          attempts?: number
+          delivery_id: string
+          error_code?: string | null
+          html: string
+          next_attempt_at?: string
+          recipient: string
+          status?: string
+          subject: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          attempts?: number
+          delivery_id?: string
+          error_code?: string | null
+          html?: string
+          next_attempt_at?: string
+          recipient?: string
+          status?: string
+          subject?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_email_queue_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: true
+            referencedRelation: "broadcast_deliveries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_email_queue_gate: {
+        Row: {
+          account_id: string
+          next_batch_at: string
+        }
+        Insert: {
+          account_id: string
+          next_batch_at?: string
+        }
+        Update: {
+          account_id?: string
+          next_batch_at?: string
+        }
+        Relationships: []
+      }
       broadcast_events: {
         Row: {
           campaign_id: string
@@ -25273,6 +25335,27 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_manual_broadcast_emails: {
+        Args: { _account_id: string }
+        Returns: {
+          account_id: string
+          attempts: number
+          delivery_id: string
+          error_code: string | null
+          html: string
+          next_attempt_at: string
+          recipient: string
+          status: string
+          subject: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "broadcast_email_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_media_jobs: {
         Args: { p_limit?: number; p_user_id?: string }
         Returns: {
@@ -26240,6 +26323,10 @@ export type Database = {
         Returns: Json
       }
       diag_broadcast_cron_state: { Args: never; Returns: Json }
+      enqueue_manual_broadcast_emails: {
+        Args: { _jobs: Json }
+        Returns: number
+      }
       expire_stale_entitlements: {
         Args: { p_batch_limit?: number }
         Returns: Json
