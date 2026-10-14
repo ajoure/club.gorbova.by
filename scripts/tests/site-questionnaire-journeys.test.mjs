@@ -31,6 +31,27 @@ test('first-touch stays immutable; duplicate events do not inflate views and unk
   await assert.rejects(track(id(6),id(3)),/journey_visit_conflict/);
  }finally{await db.close();}
 });
+test('webinar tags are a separate funnel group for visits, questionnaires and both account outcomes',async()=>{
+ const {db,track}=await fixture();try{
+  const webinar={src:'platforma',utm_source:'veb',utm_medium:'141026',utm_campaign:'cb21_preregistration',utm_content:'anketa_veb'};
+  for(const n of [20,30]) {
+   await track(id(n),id(n+1),webinar);
+   await db.query('INSERT INTO auth.users VALUES($1,$2,now(),null,null,$3)',[id(n+2),`fixture${n}@example.invalid`,JSON.stringify(n===20?{questionnaire_signup_journey_id:id(n)}:{})]);
+   await db.query('INSERT INTO profiles(id,user_id) VALUES($1,$2)',[id(n+3),id(n+2)]);
+   await db.query('SELECT record_site_questionnaire_account_outcome($1,$2,$3)',[id(n),key,id(n+2)]);
+   await db.query("INSERT INTO site_form_submissions(id,page_id,profile_id,status,metadata) VALUES($1,$2,$3,'processed','{}')",[id(n+4),id(1),id(n+3)]);
+   await db.query('SELECT bind_site_questionnaire_journey($1,$2,$3)',[id(n),key,id(n+4)]);
+  }
+  await track(id(40),id(41),{...webinar,utm_content:'anketa_direct'});
+  await db.query("SELECT set_config('fixture.uid',$1,false)",[id(90)]);await db.exec("SELECT set_config('fixture.allow','yes',false)");
+  const rows=(await db.query("SELECT * FROM site_questionnaire_funnel_stats($1,now()-interval '1 day',now()+interval '1 day')",[id(1)])).rows;
+  assert.equal(rows.length,2);
+  const row=rows.find(r=>r.attribution.utm_content==='anketa_veb');
+  assert.deepEqual(row.attribution,webinar);
+  assert.deepEqual([row.visits,row.visitors,row.questionnaires,row.contacts,row.new_accounts,row.existing_accounts],[2,2,2,2,1,1]);
+  assert.equal(rows.find(r=>r.attribution.utm_content==='anketa_direct').questionnaires,0);
+ }finally{await db.close();}
+});
 test('published questionnaire and bounded fields are required, and minute quota is atomic',async()=>{
  const {db,track}=await fixture();try{
   await assert.rejects(track(id(2),id(3),{email:'not-attribution'}),/journey_attribution_invalid/);

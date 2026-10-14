@@ -10,6 +10,7 @@ const journeysMigration = await readFile(new URL('../../supabase/migrations/2026
 const submissionDelayMigration = await readFile(new URL('../../supabase/migrations/20261009072000_site_questionnaire_submission_delay.sql', import.meta.url), 'utf8');
 const salesIdentityMigration = await readFile(new URL('../../supabase/migrations/20261009120000_questionnaire_sales_identity.sql', import.meta.url), 'utf8');
 const offerPriceMigration = await readFile(new URL('../../supabase/migrations/20261010140309_cb21_questionnaire_offer_price.sql', import.meta.url), 'utf8');
+const webinarSourceMigration = await readFile(new URL('../../supabase/migrations/20261014153210_cb21_webinar_source.sql', import.meta.url), 'utf8');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const fields = [
   { label:'Email',type:'email',mapping:'email',required:true },
@@ -75,7 +76,7 @@ async function fixture({ applyOfferPriceFix = true } = {}) {
       INSERT INTO tariffs VALUES(${quote(id(5))},${quote(id(4))},true);
       INSERT INTO crm_pipelines VALUES(${quote(id(6))});
       INSERT INTO crm_pipeline_stages VALUES(${quote(id(7))},${quote(id(6))});`;
-    const exportedSQL = safeRoles + seed + migration + offerPriceMigration;
+    const exportedSQL = safeRoles + seed + migration + offerPriceMigration + webinarSourceMigration;
     if (!exportedFixtureVerified) {
       const exportedDatabase = new PGlite();
       try { await exportedDatabase.exec(exportedSQL); } finally { await exportedDatabase.close(); }
@@ -84,7 +85,7 @@ async function fixture({ applyOfferPriceFix = true } = {}) {
     await writeFile(process.env.SITE_QUESTIONNAIRE_SQL_FIXTURE_PATH, exportedSQL);
   }
   await db.exec(migration);
-  if (applyOfferPriceFix) await db.exec(offerPriceMigration);
+  if (applyOfferPriceFix) { await db.exec(offerPriceMigration); await db.exec(webinarSourceMigration); }
   const submit = (key=id(10),payload=answers,source='reels',journey=null,journeyHash=null) => db.query(
     'SELECT submit_site_questionnaire($1,$2,$3,$4,$5,$6,$7,$8,$9) result',
     [id(3),id(8),id(1),key,JSON.stringify(payload),source,'v2026-04-10',journey,journeyHash],
@@ -97,6 +98,37 @@ async function counts(db) {
     (SELECT count(*)::int FROM consent_logs) consents,(SELECT count(*)::int FROM audit_logs) audits,
     (SELECT count(*)::int FROM commercial_access) access`)).rows[0];
 }
+test('webinar source binds to the verified contact and retains exact first-touch tags without learning access',async()=>{
+  const {db,submit}=await fixture();try {
+    await db.exec(journeysMigration);
+    const attribution={src:'platforma',utm_source:'veb',utm_medium:'141026',utm_campaign:'cb21_preregistration',utm_content:'anketa_veb'};
+    const hash='a'.repeat(64);
+    await db.query('SELECT track_site_questionnaire_visit($1,$2,$3,$4,$5,$6)',[id(70),hash,id(71),id(3),JSON.stringify(attribution),'b'.repeat(64)]);
+    const result=await submit(id(10),answers,'platforma',id(70),hash);
+    const row=(await db.query('SELECT metadata,profile_id FROM site_form_submissions WHERE id=$1',[result.submission_id])).rows[0];
+    assert.equal(row.profile_id,id(2));
+    assert.equal(row.metadata.source_label,'Продающий вебинар');
+    assert.equal(row.metadata.source_code,'platforma');
+    for(const [key,value] of Object.entries(attribution))assert.equal(row.metadata[key],value);
+    const retry=await submit(id(10),answers,'platforma',id(70),hash);
+    assert.equal(retry.replayed,true);
+    assert.deepEqual(await counts(db),{submissions:1,orders:1,events:1,consents:1,audits:1,access:0});
+  }finally{await db.close()}
+});
+test('webinar migration is idempotent, preserves function permissions and stops on unrelated source drift',async()=>{
+  const {db}=await fixture();try {
+    const proc=async()=>(await db.query("SELECT prosrc,proowner,prosecdef,proconfig,proacl FROM pg_proc WHERE oid='public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)'::regprocedure")).rows[0];
+    const after=await proc();await db.exec(webinarSourceMigration);assert.deepEqual(await proc(),after);
+    await db.exec(offerPriceMigration);const before=await proc();
+    await db.exec(webinarSourceMigration);const changed=await proc();
+    for(const key of ['proowner','prosecdef','proconfig','proacl'])assert.deepEqual(changed[key],before[key]);
+    const {rows:[{definition}]}=await db.query("SELECT pg_get_functiondef('public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)'::regprocedure) definition");
+    await db.exec(definition.replace('questionnaire_request_invalid','fixture_drift'));
+    const drift=await proc();
+    await assert.rejects(db.exec(webinarSourceMigration),/questionnaire_webinar_source_definition_drift/);
+    assert.deepEqual(await proc(),drift);
+  }finally{await db.close()}
+});
 test('sales identity requires this saved questionnaire and the genuinely linked Telegram recipient', async()=>{
   const {db,submit}=await fixture();try {
     await db.exec(salesIdentityMigration);
