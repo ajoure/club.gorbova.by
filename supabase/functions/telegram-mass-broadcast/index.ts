@@ -1,5 +1,6 @@
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from '../_shared/broadcastButtons.ts';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
@@ -204,6 +205,7 @@ Deno.serve(async (req) => {
     let includeButton = false;
     let buttonText = '';
     let buttonUrl = '';
+    let additionalButton: TelegramUrlButton | null = null;
     let filters: BroadcastFilters = {};
     let mediaType: string | null = null;
     let mediaBuffer: ArrayBuffer | null = null;
@@ -230,6 +232,8 @@ Deno.serve(async (req) => {
       includeButton = formData.get('include_button') === 'true';
       buttonText = formData.get('button_text') as string || '';
       buttonUrl = formData.get('button_url') as string || '';
+      const additionalButtonJson = formData.get('additional_button');
+      additionalButton = parseAdditionalTelegramButton(additionalButtonJson ? JSON.parse(String(additionalButtonJson)) : null);
       
       const filtersStr = formData.get('filters') as string;
       if (filtersStr) {
@@ -266,6 +270,7 @@ Deno.serve(async (req) => {
       includeButton = body.include_button || false;
       buttonText = body.button_text || '';
       buttonUrl = body.button_url || '';
+      additionalButton = parseAdditionalTelegramButton(body.additional_button);
       filters = body.filters || {};
       const rawPcid = body.product_context_id;
       productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
@@ -810,6 +815,7 @@ Deno.serve(async (req) => {
         has_media: Boolean(mediaBuffer),
         media_type: mediaType,
         include_button: includeButton,
+        additional_button: includeButton && !isWebinarInvite ? additionalButton : null,
       },
     });
 
@@ -839,7 +845,7 @@ Deno.serve(async (req) => {
     const analyticsLinks = await ensureAnalyticsLinks(
       supabase,
       analyticsContext,
-      extractTelegramLinks(messageAfterCf, includeButton && !isWebinarInvite ? appUrl : null),
+      extractTelegramLinks(messageAfterCf, includeButton && !isWebinarInvite ? appUrl : null, includeButton && !isWebinarInvite && additionalButton ? [additionalButton] : []),
     );
     const analyticsTracking = await prepareAnalyticsTracking(
       supabase,
@@ -919,14 +925,10 @@ Deno.serve(async (req) => {
         const afterContact = resolveContactTokens(messageAfterCf, profile);
         const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
         try {
-          let keyboard = includeButton && !isWebinarInvite ? {
-            inline_keyboard: [[
-              {
-                text: buttonText || 'Открыть платформу',
-                url: trackedTelegramButtonUrl(appUrl, tracking) || appUrl,
-              }
-            ]]
-          } : undefined;
+          let keyboard = includeButton && !isWebinarInvite ? telegramUrlKeyboard(
+            [{ text: buttonText || 'Открыть платформу', url: appUrl }, ...(additionalButton ? [additionalButton] : [])],
+            url => trackedTelegramButtonUrl(url, tracking) || url,
+          ) : undefined;
           let inviteLinkId: string | null = null;
 
           if (isWebinarInvite && liveEventId) {
@@ -1010,6 +1012,7 @@ Deno.serve(async (req) => {
             const internalMessageId = crypto.randomUUID();
             const msgMeta: Record<string, unknown> = {
               broadcast: true,
+              reply_markup: keyboard || null,
               bot_username: bot.bot_username,
               analytics_campaign_id: analyticsContext.campaignId,
               analytics_delivery_id: analyticsDelivery.id,
@@ -1146,6 +1149,7 @@ Deno.serve(async (req) => {
         include_button: includeButton,
         button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
         button_url: (includeButton && !isWebinarInvite) ? appUrl : null,
+        additional_button: includeButton && !isWebinarInvite ? additionalButton : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,

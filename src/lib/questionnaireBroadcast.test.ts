@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { questionnaireThanksSlug, renderQuestionnaireBroadcast } from '../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast';
+import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from '../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast';
+import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton, telegramUrlKeyboard } from '../../supabase/functions/_shared/broadcastButtons';
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls } from '../../supabase/functions/telegram-mass-broadcast/questionnaireLinks';
-import { instrumentTelegramText } from '../../supabase/functions/_shared/broadcastAnalytics';
+import { extractTelegramLinks, instrumentTelegramText, trackedTelegramButtonUrl } from '../../supabase/functions/_shared/broadcastAnalytics';
 import { readSiteFormEventCondition } from './siteFormEventCondition';
 const source = { id: 'source', workspace_id: 'workspace', status: 'published', blocks: [{ id:'form', type:'form', content:{ auth_mode:true, questionnaire_first:true, redirectUrl:'/thanks' } }] };
 const bonus = { source_page_id:'source', source_block_id:'form', channel_url:'https://t.me/+join_abc-def', personal_chat_url:'https://t.me/m/message_abc-def' };
@@ -9,6 +10,28 @@ const thanks = { id:'thanks', workspace_id:'workspace', status:'published', slug
 const message='Спасибо! 🎁 {{questionnaire.channel_url}} 💬 {{questionnaire.personal_chat_url}}';
 const origin='https://example.test';
 describe('уведомление анкеты использует управляемые ссылки',()=>{
+  it('resolves tokens present only in two buttons while keeping the message short and both URLs exact',()=>{
+    const text='Спасибо! Ваша анкета предзаписи получена ✅.';
+    const metadata={site_form_condition:{page_id:'source',block_id:'form',submissions_from:'2026-10-10T15:00:00Z'},additional_button:{text:'Получить бонус от Катерины',url:'{{questionnaire.personal_chat_url}}'}};
+    const extra=additionalTelegramButtonFromMetadata(metadata)!;
+    const buttons=[{text:'Ваш бонус',url:'{{questionnaire.channel_url}}'},extra];
+    expect(hasQuestionnaireLinks(text,buttons.map(b=>b.url))).toBe(true);
+    const rendered=renderQuestionnaireBroadcast(text,source,'form',thanks,origin,buttons);
+    expect(rendered.message).toBe(text);
+    expect(rendered.message).not.toMatch(/https?:|\]\(|подготовлен|Отправить/);
+    const tracking=preserveQuestionnaireUrls({clickTokens:new Map([[bonus.channel_url,'channel-token'],[bonus.personal_chat_url,'personal-token']])},rendered.protectedUrls);
+    expect(telegramUrlKeyboard(rendered.buttons,url=>trackedTelegramButtonUrl(url,tracking)||url)).toEqual({inline_keyboard:[
+      [{text:'Ваш бонус',url:bonus.channel_url}],
+      [{text:'Получить бонус от Катерины',url:bonus.personal_chat_url}],
+    ]});
+    expect(extractTelegramLinks(text,rendered.buttons[0].url,[rendered.buttons[1]]).map(l=>l.originalUrl)).toEqual([bonus.channel_url,bonus.personal_chat_url]);
+    expect(()=>telegramUrlKeyboard(buttons)).toThrow(); // unresolved tokens never reach Telegram
+    expect(()=>parseAdditionalTelegramButton({text:'Бонус',url:'javascript:alert(1)'})).toThrow();
+    expect(()=>renderQuestionnaireBroadcast(text,source,'form',thanks,origin,[{text:'Бонус',url:'{{questionnaire.unknown}}'}])).toThrow('questionnaire_message_unresolved');
+    expect(additionalTelegramButtonFromMetadata({})).toBeNull();
+    expect(telegramUrlKeyboard([])).toBeUndefined();
+    expect(telegramUrlKeyboard([{text:'Открыть',url:'https://example.test/products'}])).toEqual({inline_keyboard:[[{text:'Открыть',url:'https://example.test/products'}]]});
+  });
   it('reads both exact URLs and picks up administrator changes without code constants',()=>{
     const result=renderQuestionnaireBroadcast(message,source,'form',thanks,origin);
     expect(result.message).toContain(`[Telegram-канал](${bonus.channel_url})`);

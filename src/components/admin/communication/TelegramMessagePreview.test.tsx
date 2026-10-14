@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 describe("TelegramMessagePreview", () => {
+  it("shows two separate buttons below the short questionnaire receipt", () => {
+    const text="Спасибо! Ваша анкета предзаписи получена ✅.";
+    const { container }=render(<TelegramMessagePreview text={text} showButton buttonText="Ваш бонус" additionalButtonText="Получить бонус от Катерины" />);
+    expect(screen.getByText(text)).toBeInTheDocument();
+    const first=screen.getByText("Ваш бонус");
+    const second=screen.getByText("Получить бонус от Катерины");
+    expect(first.parentElement).toBe(second.parentElement);
+    expect(container.querySelectorAll('a')).toHaveLength(0);
+    expect(container.textContent).not.toMatch(/https?:|подготовлен|Отправить/);
+  });
   it("shows GIF, text and button as one Telegram message", () => {
     render(
       <TelegramMessagePreview

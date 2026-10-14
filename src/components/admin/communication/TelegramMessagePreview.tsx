@@ -8,6 +8,7 @@ interface TelegramMessagePreviewProps {
   fileName?: string;
   buttonText?: string;
   showButton?: boolean;
+  additionalButtonText?: string;
   deliveryHint?: string;
   willSplit?: boolean;
 }
@@ -19,6 +20,7 @@ export function TelegramMessagePreview({
   fileName,
   buttonText,
   showButton,
+  additionalButtonText,
   deliveryHint,
   willSplit,
 }: TelegramMessagePreviewProps) {
@@ -81,8 +83,12 @@ export function TelegramMessagePreview({
           <div className="text-muted-foreground text-sm italic">Введите текст сообщения...</div>
         ) : null}
         {showButton && (
-          <div className="mt-3 rounded-lg bg-white/80 dark:bg-black/20 text-center px-3 py-2 text-sm font-medium text-primary">
-            {buttonText || "Открыть"}
+          <div className="mt-3 space-y-2">
+            {[buttonText || "Открыть", ...(additionalButtonText ? [additionalButtonText] : [])].map((label, index) => (
+              <div key={index} className="rounded-lg bg-white/80 dark:bg-black/20 text-center px-3 py-2 text-sm font-medium text-primary break-words">
+                {label}
+              </div>
+            ))}
           </div>
         )}
       </div>

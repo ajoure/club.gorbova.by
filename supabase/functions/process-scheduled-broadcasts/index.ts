@@ -18,6 +18,7 @@
 import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from './questionnaireBroadcast.ts';
 
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
+import { additionalTelegramButtonFromMetadata } from '../_shared/broadcastButtons.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -261,10 +262,11 @@ Deno.serve(async (req) => {
               direct_user_ids: [delivery.user_id],
             };
             if (channel === 'telegram') {
-              const buttonUrl = eventTemplate.button_url;
+              let buttonUrl = eventTemplate.button_url;
+              let additionalButton = buttonUrl ? additionalTelegramButtonFromMetadata(eventTemplate.metadata) : null;
               let eventMessage = eventTemplate.message_text || '';
               let protectedUrls: string[] = [];
-              if (hasQuestionnaireLinks(eventMessage)) {
+              if (hasQuestionnaireLinks(eventMessage, [buttonUrl || '', additionalButton?.url || ''])) {
                 if (!isSiteFormEvent) throw new Error('questionnaire_tokens_wrong_event');
                 const condition = eventTemplate.metadata?.site_form_condition as { page_id?: string; block_id?: string; submissions_from?: string } | undefined;
                 if (!condition?.page_id || !condition.block_id || !condition.submissions_from || !Number.isFinite(Date.parse(condition.submissions_from))) throw new Error('questionnaire_condition_missing');
@@ -277,9 +279,12 @@ Deno.serve(async (req) => {
                   .select('id,workspace_id,status,slug,blocks').eq('workspace_id', source.workspace_id)
                   .eq('slug', slug).eq('status', 'published').single();
                 if (thanksError || !thanks) throw new Error('questionnaire_thanks_missing');
-                const rendered = renderQuestionnaireBroadcast(eventMessage, source, condition.block_id, thanks, origin);
+                const buttons = buttonUrl ? [{ text: eventTemplate.button_text || 'Открыть платформу', url: buttonUrl }, ...(additionalButton ? [additionalButton] : [])] : [];
+                const rendered = renderQuestionnaireBroadcast(eventMessage, source, condition.block_id, thanks, origin, buttons);
                 eventMessage = rendered.message;
                 protectedUrls = rendered.protectedUrls;
+                buttonUrl = rendered.buttons[0]?.url || null;
+                additionalButton = rendered.buttons[1] || null;
                 const { data: primaryBots, error: botError } = await supabase.from('telegram_bots')
                   .select('id').eq('status', 'active').eq('is_primary', true);
                 const selectedBots = eventTemplate.audience_filters?.bot_ids;
@@ -294,6 +299,7 @@ Deno.serve(async (req) => {
                   include_button: !!buttonUrl,
                   button_text: eventTemplate.button_text || undefined,
                   button_url: buttonUrl || undefined,
+                  additional_button: additionalButton || undefined,
                   filters: directFilters,
                   media_storage_path: eventTemplate.media_storage_path || undefined,
                   media_type: eventTemplate.media_type || undefined,
@@ -549,6 +555,7 @@ Deno.serve(async (req) => {
               include_button: !!tpl.button_url,
               button_text: tpl.button_text || undefined,
               button_url: tpl.button_url || undefined,
+              additional_button: tpl.template_type === 'webinar_invite' || !tpl.button_url ? undefined : additionalTelegramButtonFromMetadata(tpl.metadata) || undefined,
               filters: tgFilters,
               media_storage_path: tpl.media_storage_path || undefined,
               media_type: tpl.media_type || undefined,
