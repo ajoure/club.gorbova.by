@@ -17,3 +17,12 @@ for(const name of ['process-scheduled-broadcasts','telegram-mass-broadcast']) te
     assert.doesNotMatch(helper,/from ['"]\.\.\//,'helper has no sibling dependency');
   }
 });
+
+test('all three broadcast packages ship the same local button contract without changing shared bot release code', async()=>{
+  const canonical=await readFile(resolve(root,'telegram-mass-broadcast/broadcastButtons.ts'),'utf8');
+  for(const name of ['process-scheduled-broadcasts','telegram-send-test','telegram-mass-broadcast']) {
+    const entry=await readFile(resolve(root,name,'index.ts'),'utf8');
+    assert.match(entry,/from ['"]\.\/broadcastButtons\.ts['"]/);
+    assert.equal(await readFile(resolve(root,name,'broadcastButtons.ts'),'utf8'),canonical);
+  }
+});

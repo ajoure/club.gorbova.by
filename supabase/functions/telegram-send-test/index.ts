@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
+import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from "./broadcastButtons.ts";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 
@@ -109,6 +110,7 @@ Deno.serve(async (req: Request) => {
     let messageText = "";
     let buttonText = "";
     let buttonUrl = "";
+    let additionalButton: TelegramUrlButton | null = null;
     let product_context_id: string | null = null;
     let mediaType: string | null = null;
     let mediaFileName = "media";
@@ -121,6 +123,8 @@ Deno.serve(async (req: Request) => {
       messageText = String(form.get("messageText") || "");
       buttonText = String(form.get("buttonText") || "");
       buttonUrl = String(form.get("buttonUrl") || "");
+      const additionalButtonJson = form.get("additional_button");
+      additionalButton = parseAdditionalTelegramButton(additionalButtonJson ? JSON.parse(String(additionalButtonJson)) : null);
       product_context_id = String(form.get("product_context_id") || "") || null;
       mediaType = String(form.get("media_type") || "") || null;
       const media = form.get("media");
@@ -134,6 +138,7 @@ Deno.serve(async (req: Request) => {
       messageText = String(body.messageText || "");
       buttonText = String(body.buttonText || "");
       buttonUrl = String(body.buttonUrl || "");
+      additionalButton = parseAdditionalTelegramButton(body.additional_button);
       product_context_id = body.product_context_id || null;
       mediaType = body.media_type || null;
       mediaFileName = body.media_file_name || "media";
@@ -195,12 +200,9 @@ Deno.serve(async (req: Request) => {
     personalizedMessage = cfResult.text;
 
     // Build message with button
-    const keyboard = buttonText && buttonUrl ? {
-      inline_keyboard: [[{
-        text: buttonText,
-        url: buttonUrl
-      }]]
-    } : undefined;
+    const keyboard = buttonText && buttonUrl ? telegramUrlKeyboard(
+      [{ text: buttonText, url: buttonUrl }, ...(additionalButton ? [additionalButton] : [])],
+    ) : undefined;
 
     if (!mediaBuffer && mediaStoragePath) {
       const slash = mediaStoragePath.indexOf("/");

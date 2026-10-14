@@ -2,8 +2,8 @@ type Block = { id?: string; type?: string; content?: Record<string, unknown> };
 export type QuestionnaireSource = { id: string; workspace_id: string; status: string; blocks: unknown };
 export type QuestionnaireThanks = QuestionnaireSource & { slug: string };
 const tokens = ['{{questionnaire.channel_url}}', '{{questionnaire.personal_chat_url}}'];
-export function hasQuestionnaireLinks(message: string): boolean {
-  return message.includes('{{questionnaire.');
+export function hasQuestionnaireLinks(message: string, buttonUrls: string[] = []): boolean {
+  return [message, ...buttonUrls].some(value => value.includes('{{questionnaire.'));
 }
 function blocks(value: unknown): Block[] {
   return Array.isArray(value) ? value.filter(v => v && typeof v === 'object' && !Array.isArray(v)) : [];
@@ -19,7 +19,7 @@ export function questionnaireThanksSlug(source: QuestionnaireSource, blockId: st
   if (!slug || slug.includes('/')) throw new Error('questionnaire_thanks_invalid');
   return slug;
 }
-export function renderQuestionnaireBroadcast(message: string, source: QuestionnaireSource, blockId: string, thanks: QuestionnaireThanks, origin: string) {
+export function renderQuestionnaireBroadcast(message: string, source: QuestionnaireSource, blockId: string, thanks: QuestionnaireThanks, origin: string, buttons: { text: string; url: string }[] = []) {
   const slug = questionnaireThanksSlug(source, blockId, origin);
   if (thanks.status !== 'published' || thanks.workspace_id !== source.workspace_id || thanks.slug !== slug) throw new Error('questionnaire_thanks_invalid');
   const bonuses = blocks(thanks.blocks).filter(b => b.type === 'questionnaire_bonuses');
@@ -30,5 +30,10 @@ export function renderQuestionnaireBroadcast(message: string, source: Questionna
   // Markdown links preserve the exact URL, including underscores and invite '+'.
   let rendered = message.split(tokens[0]).join(`[Telegram-канал](${channel})`).split(tokens[1]).join(`[Переписка с Катериной](${personal})`);
   if (/\{\{[^}]*\}\}/.test(rendered)) throw new Error('questionnaire_message_unresolved');
-  return { message: rendered, protectedUrls: [channel, personal] };
+  const resolvedButtons = buttons.map(button => {
+    const url = button.url.split(tokens[0]).join(channel).split(tokens[1]).join(personal);
+    if (/\{\{[^}]*\}\}/.test(url) || /\{\{[^}]*\}\}/.test(button.text)) throw new Error('questionnaire_message_unresolved');
+    return { text: button.text, url };
+  });
+  return { message: rendered, buttons: resolvedButtons, protectedUrls: [channel, personal] };
 }

@@ -1,6 +1,8 @@
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { SiteFormEventSettings } from "./SiteFormEventSettings";
 import { readSiteFormEventCondition, type SiteFormEventCondition } from "@/lib/siteFormEventCondition";
+import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton } from "../../../../supabase/functions/telegram-mass-broadcast/broadcastButtons";
+import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from "../../../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast";
 import { lazy, Suspense, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import {
   AlertDialog,
@@ -245,6 +247,9 @@ export function BroadcastsTabContent() {
   const [includeButton, setIncludeButton] = useState(true);
   const [buttonText, setButtonText] = useState("Открыть платформу");
   const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
+  const [includeAdditionalButton, setIncludeAdditionalButton] = useState(false);
+  const [additionalButtonText, setAdditionalButtonText] = useState("");
+  const [additionalButtonUrl, setAdditionalButtonUrl] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
@@ -512,6 +517,9 @@ export function BroadcastsTabContent() {
       includeButton,
       buttonText,
       buttonUrl,
+      includeAdditionalButton,
+      additionalButtonText,
+      additionalButtonUrl,
       filters,
       includeArchived,
       mediaType: mediaFile?.type ?? null,
@@ -523,7 +531,7 @@ export function BroadcastsTabContent() {
     });
   }, [
     sendToTelegram, sendToEmail, sendMode, siteFormCondition, scheduledName, message, emailSubject,
-    emailBody, includeButton, buttonText, buttonUrl, filters, includeArchived, mediaFile, recurrence,
+    emailBody, includeButton, buttonText, buttonUrl, includeAdditionalButton, additionalButtonText, additionalButtonUrl, filters, includeArchived, mediaFile, recurrence,
     scheduledAt, scheduledTime,
   ]);
 
@@ -549,6 +557,9 @@ export function BroadcastsTabContent() {
     setIncludeButton(true);
     setButtonText("Открыть платформу");
     setButtonUrl("https://club.gorbova.by/products");
+    setIncludeAdditionalButton(false);
+    setAdditionalButtonText("");
+    setAdditionalButtonUrl("");
     setSendToTelegram(true);
     setSendToEmail(false);
     setIncludeArchived(false);
@@ -562,6 +573,10 @@ export function BroadcastsTabContent() {
     loadedTemplateSnapshotRef.current = null;
     resetComposer();
   }, [resetComposer]);
+
+  const composerAdditionalButton = () => includeButton && includeAdditionalButton
+    ? parseAdditionalTelegramButton({ text: additionalButtonText, url: additionalButtonUrl }, !!siteFormCondition)
+    : null;
 
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
@@ -593,6 +608,8 @@ export function BroadcastsTabContent() {
         if (includeButton) {
           formData.append("button_text", buttonText);
           formData.append("button_url", buttonUrl);
+          const extraButton = composerAdditionalButton();
+          if (extraButton) formData.append("additional_button", JSON.stringify(extraButton));
         }
         formData.append("filters", JSON.stringify(filters));
         formData.append("media_type", mediaFile.type || "");
@@ -632,6 +649,7 @@ export function BroadcastsTabContent() {
         include_button: includeButton,
         button_text: includeButton ? buttonText : undefined,
         button_url: includeButton ? buttonUrl : undefined,
+        additional_button: composerAdditionalButton() || undefined,
         filters,
         product_context_id: productContextId,
         analytics_campaign_id: analyticsCampaignId,
@@ -722,12 +740,32 @@ export function BroadcastsTabContent() {
         || bots?.[0];
       if (!selectedBot) throw new Error("Нет активного Telegram-бота");
 
-      const cleanMessage = message.trim().replace(/\[\[align:(left|center|right)\]\]/g, "");
+      let cleanMessage = message.trim().replace(/\[\[align:(left|center|right)\]\]/g, "");
+      let testButtonUrl = includeButton ? buttonUrl : undefined;
+      let testAdditionalButton = composerAdditionalButton();
+      if (hasQuestionnaireLinks(cleanMessage, [testButtonUrl || "", testAdditionalButton?.url || ""])) {
+        if (!siteFormCondition) throw new Error("Для ссылок анкеты выберите её условие события");
+        const { data: source, error: sourceError } = await supabase.from("site_pages")
+          .select("id,workspace_id,status,blocks").eq("id", siteFormCondition.page_id).single();
+        if (sourceError || !source) throw new Error("Не удалось прочитать настройки анкеты");
+        const origin = window.location.origin;
+        const slug = questionnaireThanksSlug(source, siteFormCondition.block_id, origin);
+        const { data: thanks, error: thanksError } = await supabase.from("site_pages")
+          .select("id,workspace_id,status,slug,blocks").eq("workspace_id", source.workspace_id)
+          .eq("slug", slug).eq("status", "published").single();
+        if (thanksError || !thanks) throw new Error("Не удалось прочитать страницу Спасибо");
+        const buttons = testButtonUrl ? [{ text: buttonText, url: testButtonUrl }, ...(testAdditionalButton ? [testAdditionalButton] : [])] : [];
+        const rendered = renderQuestionnaireBroadcast(cleanMessage, source, siteFormCondition.block_id, thanks, origin, buttons);
+        cleanMessage = rendered.message;
+        testButtonUrl = rendered.buttons[0]?.url;
+        testAdditionalButton = rendered.buttons[1] || null;
+      }
       const common = {
         botId: selectedBot.id,
         messageText: cleanMessage,
         buttonText: includeButton ? buttonText : undefined,
-        buttonUrl: includeButton ? buttonUrl : undefined,
+        buttonUrl: testButtonUrl,
+        additional_button: testAdditionalButton || undefined,
         product_context_id: productContextId,
         media_type: mediaFile?.type,
         media_storage_path: mediaFile?.storagePath,
@@ -737,7 +775,7 @@ export function BroadcastsTabContent() {
       if (mediaFile?.file) {
         const formData = new FormData();
         Object.entries(common).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) formData.append(key, String(value));
+          if (value !== undefined && value !== null) formData.append(key, key === "additional_button" ? JSON.stringify(value) : String(value));
         });
         formData.append("media", mediaFile.file);
         const { data: { session } } = await supabase.auth.getSession();
@@ -879,6 +917,10 @@ export function BroadcastsTabContent() {
       setIncludeButton(!!btnUrl);
       if (btnText) setButtonText(btnText);
       if (btnUrl) setButtonUrl(btnUrl);
+      const extraButton = additionalTelegramButtonFromMetadata(tpl.metadata);
+      setIncludeAdditionalButton(!!extraButton);
+      setAdditionalButtonText(extraButton?.text || "");
+      setAdditionalButtonUrl(extraButton?.url || "");
       const storedMediaPath = (tpl.media_storage_path as string) || "";
       const storedMediaType = (tpl.media_type as Exclude<MediaType, null>) || null;
       if (storedMediaPath && storedMediaType) {
@@ -1003,7 +1045,7 @@ export function BroadcastsTabContent() {
         next_run_at: nextRunAt,
         trigger_kind: isEvent ? siteFormCondition ? "site_form_event" : "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
         education_condition: isEvent && siteFormCondition ? null : filters.education || null,
-        metadata: { ...templateMetadataRef.current, site_form_condition: isEvent ? siteFormCondition : null },
+        metadata: { ...templateMetadataRef.current, additional_button: sendToTelegram ? composerAdditionalButton() : null, site_form_condition: isEvent ? siteFormCondition : null },
       };
 
       if (editTemplateId) {
@@ -1783,6 +1825,22 @@ export function BroadcastsTabContent() {
                         placeholder="https://club.gorbova.by/products"
                       />
                     </div>
+                    <div className="flex items-center gap-2">
+                      <Switch id="includeAdditionalButton" checked={includeAdditionalButton} onCheckedChange={setIncludeAdditionalButton} />
+                      <Label htmlFor="includeAdditionalButton" className="cursor-pointer">Добавить вторую кнопку-ссылку</Label>
+                    </div>
+                    {includeAdditionalButton && (
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="additionalButtonText">Текст второй кнопки</Label>
+                          <Input id="additionalButtonText" value={additionalButtonText} onChange={e => setAdditionalButtonText(e.target.value)} placeholder="Получить бонус" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="additionalButtonUrl">URL второй кнопки</Label>
+                          <Input id="additionalButtonUrl" value={additionalButtonUrl} onChange={e => setAdditionalButtonUrl(e.target.value)} placeholder="https://..." />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1796,6 +1854,7 @@ export function BroadcastsTabContent() {
                     fileName={mediaFile?.fileName}
                     showButton={includeButton}
                     buttonText={buttonText}
+                    additionalButtonText={includeAdditionalButton ? additionalButtonText : undefined}
                     deliveryHint={telegramDeliveryHint}
                     willSplit={telegramWillSplit}
                   />
@@ -2378,6 +2437,7 @@ export function BroadcastsTabContent() {
             const btnText = m?.button_text as string | null;
             const btnUrl = m?.button_url as string | null;
             const includeBtn = m?.include_button as boolean | undefined;
+            const extraButton = additionalTelegramButtonFromMetadata(m);
             const filtersData = m?.filters as Record<string, unknown> | null;
             const sentCount = Number(m?.sent || 0);
             const failedCount = Number(m?.failed || 0);
@@ -2399,17 +2459,19 @@ export function BroadcastsTabContent() {
 
                 {includeBtn && btnText && (
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Кнопка</p>
-                    <div className="flex items-center gap-2 rounded-lg bg-muted p-3 text-sm">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Кнопки</p>
+                    {[{ text: btnText, url: btnUrl }, ...(extraButton ? [extraButton] : [])].map((button, index) => (
+                    <div key={index} className="flex items-center gap-2 rounded-lg bg-muted p-3 text-sm">
                       <MousePointerClick className="h-4 w-4 shrink-0" />
-                      <span className="font-medium">{btnText}</span>
-                      {btnUrl && (
-                        <a href={btnUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-primary hover:underline flex items-center gap-1 text-xs">
+                      <span className="font-medium break-words">{button.text}</span>
+                      {button.url && (
+                        <a href={button.url} target="_blank" rel="noopener noreferrer" className="ml-auto text-primary hover:underline flex items-center gap-1 text-xs">
                           <ExternalLink className="h-3 w-3" />
                           Ссылка
                         </a>
                       )}
                     </div>
+                    ))}
                   </div>
                 )}
 
