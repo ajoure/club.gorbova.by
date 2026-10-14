@@ -1,3 +1,4 @@
+import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from './broadcastButtons.ts';
@@ -11,8 +12,6 @@ import {
   ensureBroadcastAnalyticsContext,
   extractTelegramLinks,
   instrumentTelegramText,
-  prepareAnalyticsDeliveries,
-  prepareAnalyticsTracking,
   trackedTelegramButtonUrl,
   type AnalyticsOutcome,
 } from '../_shared/broadcastAnalytics.ts';

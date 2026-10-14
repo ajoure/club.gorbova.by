@@ -31,7 +31,8 @@
    не имеют доступа к таблицам или двум RPC, execute только service_role.
 4. Развернуть ровно `telegram-mass-broadcast`, `email-mass-broadcast`,
    `process-scheduled-broadcasts`. Вместе с email включить local helper
-   `manualEmailQueue.ts`, с обоими senders — обновлённый `_shared/broadcastAnalytics.ts`.
+   `manualEmailQueue.ts`, с обоими senders — локальный `boundedAnalytics.ts`. Общий `_shared` и
+   release-маркеры ботов не меняются.
 5. Не запускать senders, dry_run, worker или dispatcher. Проверить source
    fingerprint, managed deployment confirmations; безопасно проверить OPTIONS
    и 401 без авторизации. Обычный cron увидит пустую новую очередь.

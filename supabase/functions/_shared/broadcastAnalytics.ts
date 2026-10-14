@@ -73,26 +73,6 @@ function chunk<T>(items: T[], size = 500): T[][] {
   return chunks;
 }
 
-/** PostgREST encodes IN values in the GET URL. Bound both count and encoded
- * length, including long Telegram recipient keys and tracking UUIDs. */
-export function chunkAnalyticsRead<T>(items: T[], key: (item: T) => string): T[][] {
-  const batches: T[][] = [];
-  let batch: T[] = [];
-  let length = 0;
-  for (const item of items) {
-    const encodedLength = encodeURIComponent(key(item)).length + 3;
-    if (batch.length && (batch.length >= 50 || length + encodedLength > 3000)) {
-      batches.push(batch);
-      batch = [];
-      length = 0;
-    }
-    batch.push(item);
-    length += encodedLength;
-  }
-  if (batch.length) batches.push(batch);
-  return batches;
-}
-
 export async function ensureBroadcastAnalyticsContext(
   supabase: ServiceClient,
   input: BroadcastAnalyticsContextInput,
@@ -148,7 +128,7 @@ export async function prepareAnalyticsDeliveries(
   }
 
   const persisted: Array<{ id: string; recipient_key: string }> = [];
-  for (const recipientBatch of chunkAnalyticsRead(recipients, (recipient) => recipient.recipientKey)) {
+  for (const recipientBatch of chunk(recipients)) {
     const { data, error } = await supabase
       .from("broadcast_deliveries")
       .select("id,recipient_key")
@@ -248,7 +228,7 @@ export async function prepareAnalyticsTracking(
 
   const deliveryIds = deliveries.map((delivery) => delivery.id);
   const existing: Array<{ token: string; delivery_id: string; link_id: string | null; purpose: string }> = [];
-  for (const ids of chunkAnalyticsRead(deliveryIds, (id) => id)) {
+  for (const ids of chunk(deliveryIds)) {
     const { data, error } = await supabase
       .from("broadcast_tracking_tokens")
       .select("token,delivery_id,link_id,purpose")
@@ -275,7 +255,7 @@ export async function prepareAnalyticsTracking(
   }
 
   const rows: Array<{ token: string; delivery_id: string; link_id: string | null; purpose: string }> = [];
-  for (const ids of chunkAnalyticsRead(deliveryIds, (id) => id)) {
+  for (const ids of chunk(deliveryIds)) {
     const { data, error } = await supabase
       .from("broadcast_tracking_tokens")
       .select("token,delivery_id,link_id,purpose")

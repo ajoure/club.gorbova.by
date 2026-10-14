@@ -1,7 +1,10 @@
+import emailAdapter from "../../supabase/functions/email-mass-broadcast/boundedAnalytics.ts?raw";
+import telegramAdapter from "../../supabase/functions/telegram-mass-broadcast/boundedAnalytics.ts?raw";
 import { describe, expect, it } from "vitest";
-import { chunkAnalyticsRead, prepareAnalyticsDeliveries } from "../../supabase/functions/_shared/broadcastAnalytics";
+import { chunkAnalyticsRead, prepareAnalyticsDeliveries } from "../../supabase/functions/telegram-mass-broadcast/boundedAnalytics";
 
 describe("broadcast analytics bounded GETs", () => {
+  it("packages the same bounded adapter with each managed sender", () => { expect(emailAdapter).toBe(telegramAdapter); });
   it.each([205, 1001])("prepares all %i recipients without an oversized PostgREST URL", async (count) => {
     const recipients = Array.from({ length: count }, (_, index) => ({
       recipientKey: `profile:${String(index).padStart(36, "0")}:bot:${"b".repeat(36)}`,
