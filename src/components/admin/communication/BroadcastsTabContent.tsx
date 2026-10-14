@@ -1,7 +1,7 @@
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { SiteFormEventSettings } from "./SiteFormEventSettings";
 import { readSiteFormEventCondition, type SiteFormEventCondition } from "@/lib/siteFormEventCondition";
-import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton } from "../../../../supabase/functions/_shared/broadcastButtons";
+import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton } from "../../../../supabase/functions/telegram-mass-broadcast/broadcastButtons";
 import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from "../../../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast";
 import { lazy, Suspense, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import {

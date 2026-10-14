@@ -169,7 +169,7 @@ export function extractHtmlLinks(html: string): AnalyticsLink[] {
   return urls;
 }
 
-export function extractTelegramLinks(message: string, buttonUrl?: string | null, additionalButtons: { text: string; url: string }[] = []): AnalyticsLink[] {
+export function extractTelegramLinks(message: string, buttonUrl?: string | null): AnalyticsLink[] {
   const urls: AnalyticsLink[] = [];
   const seen = new Set<string>();
   const add = (originalUrl: string, label?: string | null) => {
@@ -179,7 +179,6 @@ export function extractTelegramLinks(message: string, buttonUrl?: string | null,
     urls.push({ id: "", originalUrl: cleaned, label: label ?? null });
   };
   if (buttonUrl) add(buttonUrl, "Кнопка");
-  for (const button of additionalButtons) add(button.url, button.text);
 
   const markdownPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   let markdownMatch: RegExpExecArray | null;

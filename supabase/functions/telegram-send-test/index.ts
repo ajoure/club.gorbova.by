@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
-import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from "../_shared/broadcastButtons.ts";
+import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from "./broadcastButtons.ts";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 

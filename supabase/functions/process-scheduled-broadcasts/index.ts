@@ -18,7 +18,7 @@
 import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from './questionnaireBroadcast.ts';
 
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
-import { additionalTelegramButtonFromMetadata } from '../_shared/broadcastButtons.ts';
+import { additionalTelegramButtonFromMetadata } from './broadcastButtons.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

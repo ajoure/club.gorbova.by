@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hasQuestionnaireLinks, questionnaireThanksSlug, renderQuestionnaireBroadcast } from '../../supabase/functions/process-scheduled-broadcasts/questionnaireBroadcast';
-import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton, telegramUrlKeyboard } from '../../supabase/functions/_shared/broadcastButtons';
+import { additionalTelegramButtonFromMetadata, parseAdditionalTelegramButton, telegramUrlKeyboard } from '../../supabase/functions/telegram-mass-broadcast/broadcastButtons';
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls } from '../../supabase/functions/telegram-mass-broadcast/questionnaireLinks';
 import { extractTelegramLinks, instrumentTelegramText, trackedTelegramButtonUrl } from '../../supabase/functions/_shared/broadcastAnalytics';
 import { readSiteFormEventCondition } from './siteFormEventCondition';
@@ -24,7 +24,7 @@ describe('уведомление анкеты использует управл�
       [{text:'Ваш бонус',url:bonus.channel_url}],
       [{text:'Получить бонус от Катерины',url:bonus.personal_chat_url}],
     ]});
-    expect(extractTelegramLinks(text,rendered.buttons[0].url,[rendered.buttons[1]]).map(l=>l.originalUrl)).toEqual([bonus.channel_url,bonus.personal_chat_url]);
+    expect(rendered.buttons.flatMap(b=>extractTelegramLinks('',b.url)).map(l=>l.originalUrl)).toEqual([bonus.channel_url,bonus.personal_chat_url]);
     expect(()=>telegramUrlKeyboard(buttons)).toThrow(); // unresolved tokens never reach Telegram
     expect(()=>parseAdditionalTelegramButton({text:'Бонус',url:'javascript:alert(1)'})).toThrow();
     expect(()=>renderQuestionnaireBroadcast(text,source,'form',thanks,origin,[{text:'Бонус',url:'{{questionnaire.unknown}}'}])).toThrow('questionnaire_message_unresolved');

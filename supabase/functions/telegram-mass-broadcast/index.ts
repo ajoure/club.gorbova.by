@@ -1,6 +1,6 @@
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from '../_shared/broadcastButtons.ts';
+import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from './broadcastButtons.ts';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
@@ -842,10 +842,13 @@ Deno.serve(async (req) => {
         })),
       ],
     );
+    const primaryLinks = extractTelegramLinks(messageAfterCf, includeButton && !isWebinarInvite ? appUrl : null);
+    const additionalLinks = includeButton && !isWebinarInvite && additionalButton
+      ? extractTelegramLinks('', additionalButton.url).map(link => ({ ...link, label: additionalButton.text })) : [];
     const analyticsLinks = await ensureAnalyticsLinks(
       supabase,
       analyticsContext,
-      extractTelegramLinks(messageAfterCf, includeButton && !isWebinarInvite ? appUrl : null, includeButton && !isWebinarInvite && additionalButton ? [additionalButton] : []),
+      [...new Map([...primaryLinks, ...additionalLinks].map(link => [link.originalUrl, link])).values()],
     );
     const analyticsTracking = await prepareAnalyticsTracking(
       supabase,
