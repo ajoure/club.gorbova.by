@@ -1,3 +1,5 @@
+import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
+import { BroadcastSmtpError, processManualEmailBatch, type ManualEmailJob } from "./manualEmailQueue.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
@@ -9,8 +11,6 @@ import {
   ensureBroadcastAnalyticsContext,
   extractHtmlLinks,
   instrumentEmailHtml,
-  prepareAnalyticsDeliveries,
-  prepareAnalyticsTracking,
   type AnalyticsOutcome,
 } from "../_shared/broadcastAnalytics.ts";
 
@@ -189,14 +189,17 @@ async function sendEmailViaSMTP(params: {
     throw new Error(`SMTP password not set for ${username}`);
   }
 
-  let conn: Deno.TlsConn;
-  conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
+  let conn: Deno.TlsConn | undefined;
+  let dataSubmitted = false;
+  const timeout = setTimeout(() => { try { conn?.close(); } catch { /* closed */ } }, 20_000);
+  try {
+    conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
 
   async function readResponse(): Promise<string> {
     let out = "";
     const buf = new Uint8Array(4096);
     while (!out.includes("\n")) {
-      const n = await conn.read(buf);
+      const n = await conn!.read(buf);
       if (n === null) break;
       out += decoder.decode(buf.subarray(0, n));
       if (n < buf.length) break;
@@ -205,12 +208,12 @@ async function sendEmailViaSMTP(params: {
   }
 
   async function sendCommand(cmd: string, expectCodes?: number[]): Promise<string> {
-    await conn.write(encoder.encode(cmd + "\r\n"));
+    await conn!.write(encoder.encode(cmd + "\r\n"));
     const response = await readResponse();
     if (expectCodes && expectCodes.length) {
       const code = parseSmtpCode(response);
       if (!expectCodes.includes(code)) {
-        throw new Error(`SMTP error ${code}: ${response.trim()}`);
+        throw new BroadcastSmtpError(code, false);
       }
     }
     return response;
@@ -226,7 +229,7 @@ async function sendEmailViaSMTP(params: {
     await sendCommand(b64Utf8(username), [334]);
     
     const passResp = await sendCommand(b64Utf8(password));
-    if (parseSmtpCode(passResp) !== 235) throw new Error("SMTP auth failed");
+    if (parseSmtpCode(passResp) !== 235) throw new BroadcastSmtpError(parseSmtpCode(passResp), false);
 
     await sendCommand(`MAIL FROM:<${fromEmail}>`, [250]);
     await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
@@ -254,14 +257,21 @@ async function sendEmailViaSMTP(params: {
       ".",
     ].join("\r\n");
 
-    await conn.write(encoder.encode(dataLines + "\r\n"));
+    dataSubmitted = true;
+    await conn!.write(encoder.encode(dataLines + "\r\n"));
     const dataResp = await readResponse();
-    if (parseSmtpCode(dataResp) !== 250) throw new Error("SMTP DATA failed");
+    if (parseSmtpCode(dataResp) !== 250) throw new BroadcastSmtpError(parseSmtpCode(dataResp), parseSmtpCode(dataResp) === 0);
 
     try { await sendCommand("QUIT"); } catch { /* ignore */ }
     return true;
   } finally {
-    try { conn.close(); } catch { /* ignore */ }
+    clearTimeout(timeout);
+    try { conn?.close(); } catch { /* ignore */ }
+  }
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof BroadcastSmtpError) throw error;
+    throw new BroadcastSmtpError(0, dataSubmitted);
   }
 }
 
@@ -350,6 +360,41 @@ Deno.serve(async (req) => {
     }
 
     const reqBody = await req.json();
+    if (reqBody.action === 'process_manual_email_queue') {
+      if (!isSystemActor) {
+        return new Response(JSON.stringify({ error: 'Доступ к очереди запрещён' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const account = await getEmailAccount(supabase);
+      if (!account) throw new Error('email_queue_account_missing');
+      const { data: jobs, error: claimError } = await supabase.rpc('claim_manual_broadcast_emails', { _account_id: account.id });
+      if (claimError) throw new Error('email_queue_claim_failed');
+      const result = await processManualEmailBatch((jobs || []) as ManualEmailJob[], {
+        now: () => Date.now(),
+        send: async (job) => { await sendEmailViaSMTP({ to: job.recipient, subject: job.subject, html: job.html, account }); },
+        accepted: async (job) => {
+          await applyAnalyticsOutcomes(supabase, [{ id: job.delivery_id, status: 'accepted', provider: 'smtp' }]);
+          // SMTP acceptance is durable before optional email-log evidence.
+          const { data: delivery } = await supabase.from('broadcast_deliveries').select('campaign_id,profile_id,user_id').eq('id',job.delivery_id).single();
+          const { data: log } = await supabase.from('email_logs').insert({
+            direction: 'outgoing', from_email: account.from_email || account.email,
+            to_email: job.recipient, subject: job.subject, body_html: job.html, status: 'sent',
+            profile_id: delivery?.profile_id, user_id: delivery?.user_id, provider: 'smtp', template_code: 'mass_broadcast',
+            meta: { broadcast: true, analytics_campaign_id: delivery?.campaign_id, analytics_delivery_id: job.delivery_id },
+          }).select('id').maybeSingle();
+          if (log?.id) await applyAnalyticsOutcomes(supabase, [{ id: job.delivery_id, status: 'accepted', provider: 'smtp', email_log_id: log.id }]);
+        },
+        settle: async (job, status, errorCode, nextAttemptAt) => {
+          const { error } = await supabase.from('broadcast_email_queue').update({ status, error_code: errorCode || null, next_attempt_at: nextAttemptAt || new Date().toISOString(), updated_at: new Date().toISOString() }).eq('delivery_id',job.delivery_id).eq('status','processing');
+          if (error) throw new Error('email_queue_outcome_failed');
+          if (status === 'failed' || status === 'uncertain') await applyAnalyticsOutcomes(supabase, [{ id: job.delivery_id, status: 'failed', provider: 'smtp', error_code: errorCode, metadata: { manual_email_queue: true, outcome_unknown: status === 'uncertain' } }]);
+        },
+        cooldown: async (until) => {
+          const { error } = await supabase.from('broadcast_email_queue_gate').update({ next_batch_at: until }).eq('account_id',account.id);
+          if (error) throw new Error('email_queue_cooldown_failed');
+        },
+      });
+      return new Response(JSON.stringify({ success: true, ...result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     const {
       subject,
       html,
@@ -782,6 +827,24 @@ Deno.serve(async (req) => {
     const deliveryByProfileId = new Map(
       analyticsDeliveries.map((delivery) => [delivery.profileId, delivery]),
     );
+    if (!isSystemActor && !isTestSelf) {
+      const jobs = filteredProfiles.filter((profile) => profile.email).map((profile) => {
+        const delivery = deliveryByProfileId.get(profile.profile_id);
+        if (!delivery) throw new Error('analytics_delivery_missing');
+        return {
+          delivery_id: delivery.id, account_id: emailAccount.id, recipient: profile.email,
+          subject: resolveSystemTokens(resolveContactTokens(subjectAfterCf, profile), broadcastNow),
+          html: instrumentEmailHtml(resolveSystemTokens(resolveContactTokens(htmlAfterCf, profile), broadcastNow), analyticsTracking.get(delivery.id) ?? { clickTokens: new Map() }),
+        };
+      });
+      // Only explicit NEW manual sends enqueue payloads. No old campaigns are
+      // discovered or resumed here. A retry of the same run keeps unique jobs.
+      const { error: enqueueError } = await supabase.rpc('enqueue_manual_broadcast_emails', { _jobs: jobs });
+      if (enqueueError) throw new Error('email_queue_prepare_failed');
+      await supabase.from('audit_logs').insert({ actor_user_id: user?.id, action: 'email_mass_broadcast_queued', meta: { total: jobs.length, subject, analytics_campaign_id: analyticsContext.campaignId, analytics_run_id: analyticsContext.runId } });
+      return new Response(JSON.stringify({ success: true, queued: jobs.length, sent: 0, failed: 0, analytics_campaign_id: analyticsContext.campaignId }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     const analyticsOutcomes: AnalyticsOutcome[] = [];
 
     async function flushAnalyticsOutcomes() {

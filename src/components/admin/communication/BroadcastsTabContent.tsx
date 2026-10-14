@@ -96,6 +96,8 @@ import { TelegramMessagePreview } from "./TelegramMessagePreview";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { BroadcastRecipientsSheet } from "./BroadcastRecipientsSheet";
 import { RuleListEditor } from "./RuleListEditor";
+import { BroadcastFullAudienceDialog, type FullAudienceConfirmation } from "./BroadcastFullAudienceDialog";
+import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
 
 const BroadcastAnalyticsSection = lazy(() =>
   import("./BroadcastAnalyticsSection").then((module) => ({ default: module.BroadcastAnalyticsSection }))
@@ -254,6 +256,8 @@ export function BroadcastsTabContent() {
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
   const [testEmail, setTestEmail] = useState("");
+  const [fullAudienceConfirmation, setFullAudienceConfirmation] = useState<FullAudienceConfirmation | null>(null);
+  const manualSendLockRef = useRef(false);
 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -453,7 +457,7 @@ export function BroadcastsTabContent() {
       const { data } = await supabase
         .from("audit_logs")
         .select("*")
-        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast"])
+        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast", "email_mass_broadcast_queued"])
         .order("created_at", { ascending: false })
         .limit(20);
       return data || [];
@@ -580,25 +584,10 @@ export function BroadcastsTabContent() {
 
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
-    mutationFn: async ({ analyticsCampaignId, campaignName }: { analyticsCampaignId: string; campaignName: string }) => {
-      // Полная база (нет include/exclude/club_ids/bot_ids) → требуем явное подтверждение,
-      // иначе backend-guard блокирует запрос как broadcast_blocked_empty_audience_filters.
-      const isFullBase =
-        (filters.include?.length ?? 0) === 0 &&
-        (filters.exclude?.length ?? 0) === 0 &&
-        (filters.club_ids?.length ?? 0) === 0 &&
-        (filters.bot_ids?.length ?? 0) === 0 &&
-        !filters.education;
-      let allowFullAudience = false;
-      if (isFullBase) {
-        const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.telegramCount ?? 0}`;
-        const typed = window.prompt(
-          `Вы запускаете Telegram-рассылку по ВСЕЙ базе (${audience?.telegramCount ?? 0} получателей).\n\nДля подтверждения введите фразу:\n${phrase}`,
-        );
-        if (typed !== phrase) {
-          throw new Error("Подтверждение не получено — рассылка отменена");
-        }
-        allowFullAudience = true;
+    mutationFn: async ({ analyticsCampaignId, campaignName, fullAudienceConfirmed }: { analyticsCampaignId: string; campaignName: string; fullAudienceConfirmed: boolean }) => {
+      const allowFullAudience = isFullBroadcastAudience(filters, "telegram") && fullAudienceConfirmed;
+      if (isFullBroadcastAudience(filters, "telegram") && !allowFullAudience) {
+        throw new Error("Подтвердите отправку по всей базе");
       }
 
       if (mediaFile?.file) {
@@ -686,13 +675,11 @@ export function BroadcastsTabContent() {
 
   // Send Email broadcast
   const sendEmailMutation = useMutation({
-    mutationFn: async ({ analyticsCampaignId, campaignName }: { analyticsCampaignId: string; campaignName: string }) => {
-      // Полная база (нет ни include/exclude/club_ids) → требуем явное подтверждение.
-      const isFullBase =
-        (filters.include?.length ?? 0) === 0 &&
-        (filters.exclude?.length ?? 0) === 0 &&
-        (filters.club_ids?.length ?? 0) === 0 &&
-        !filters.education;
+    mutationFn: async ({ analyticsCampaignId, campaignName, fullAudienceConfirmed }: { analyticsCampaignId: string; campaignName: string; fullAudienceConfirmed: boolean }) => {
+      const isFullBase = isFullBroadcastAudience(filters, "email");
+      if (isFullBase && !fullAudienceConfirmed) {
+        throw new Error("Подтвердите отправку по всей базе");
+      }
       const body: Record<string, unknown> = {
         subject: emailSubject.trim(),
         html: emailBody.trim(),
@@ -704,13 +691,6 @@ export function BroadcastsTabContent() {
         analytics_send_mode: "manual",
       };
       if (isFullBase) {
-        const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.emailCount ?? 0}`;
-        const typed = window.prompt(
-          `Вы запускаете рассылку по ВСЕЙ базе (${audience?.emailCount ?? 0} получателей).\n\nДля подтверждения введите фразу:\n${phrase}`,
-        );
-        if (typed !== phrase) {
-          throw new Error("Подтверждение не получено — рассылка отменена");
-        }
         body.allow_full_audience = true;
         body.confirm_full_audience_text = "SEND TO ALL";
       }
@@ -719,7 +699,11 @@ export function BroadcastsTabContent() {
       return data;
     },
     onSuccess: (data) => {
-      toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
+      if (data.queued) {
+        toast.success(`Email-рассылка поставлена в очередь: ${data.queued} получателей`, { description: "Письма отправляются порциями. Статусы доступны в аналитике." });
+      } else {
+        toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
+      }
       // В режиме редактирования НЕ очищаем — шаблон остаётся загруженным.
       if (!editTemplateId) {
         setEmailSubject("");
@@ -1098,6 +1082,28 @@ export function BroadcastsTabContent() {
     },
   });
 
+  const startManualSend = async (fullAudienceConfirmed: boolean) => {
+    if (manualSendLockRef.current) return;
+    manualSendLockRef.current = true;
+    setFullAudienceConfirmation(null);
+    const analyticsCampaignId = crypto.randomUUID();
+    const campaignName = scheduledName.trim()
+      || emailSubject.trim()
+      || message.trim().replace(/\s+/g, " ").slice(0, 80)
+      || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`;
+    const variables = { analyticsCampaignId, campaignName, fullAudienceConfirmed };
+    try {
+      // Confirm both channels before starting either one. A single synchronous
+      // lock prevents repeated clicks from creating a second campaign.
+      const sends = [];
+      if (sendToTelegram) sends.push(sendTelegramMutation.mutateAsync(variables));
+      if (sendToEmail) sends.push(sendEmailMutation.mutateAsync(variables));
+      await Promise.allSettled(sends);
+    } finally {
+      manualSendLockRef.current = false;
+    }
+  };
+
   const handleSend = () => {
     if (!sendToTelegram && !sendToEmail) {
       toast.error("Выберите хотя бы один канал: Telegram или Email");
@@ -1148,15 +1154,15 @@ export function BroadcastsTabContent() {
     }
 
     if (sendMode === "now") {
-      const analyticsCampaignId = crypto.randomUUID();
-      const campaignName = scheduledName.trim()
-        || emailSubject.trim()
-        || message.trim().replace(/\s+/g, " ").slice(0, 80)
-        || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`;
-      // Both channels use the same campaign id so the report remains one
-      // administrator action rather than two unrelated rows.
-      if (sendToTelegram) sendTelegramMutation.mutate({ analyticsCampaignId, campaignName });
-      if (sendToEmail) sendEmailMutation.mutate({ analyticsCampaignId, campaignName });
+      if (manualSendLockRef.current) return;
+      const channels: FullAudienceConfirmation["channels"] = [];
+      if (sendToTelegram) channels.push({ channel: "telegram", count: audience?.telegramCount ?? 0, fullAudience: isFullBroadcastAudience(filters, "telegram") });
+      if (sendToEmail) channels.push({ channel: "email", count: audience?.emailCount ?? 0, fullAudience: isFullBroadcastAudience(filters, "email") });
+      if (channels.some((channel) => channel.fullAudience)) {
+        setFullAudienceConfirmation({ channels });
+      } else {
+        void startManualSend(false);
+      }
       return;
     }
 
@@ -1184,6 +1190,11 @@ export function BroadcastsTabContent() {
 
   return (
     <div className="w-full max-w-[1680px] mx-auto px-4 md:px-6 xl:px-8 py-6 space-y-6 overflow-auto h-full">
+      <BroadcastFullAudienceDialog
+        confirmation={fullAudienceConfirmation}
+        onCancel={() => setFullAudienceConfirmation(null)}
+        onConfirm={() => void startManualSend(true)}
+      />
       {/* Main Tabs: Templates vs Quick Send */}
       <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
@@ -2066,11 +2077,12 @@ export function BroadcastsTabContent() {
                     const sent = Number(meta?.sent || 0);
                     const failed = Number(meta?.failed || 0);
                     const isTelegram = item.action === "telegram_mass_broadcast";
+                    const isQueuedEmail = item.action === "email_mass_broadcast_queued";
 
                     return (
                       <button
                         key={item.id}
-                        onClick={() => setSelectedBroadcast({ ...item, _meta: meta })}
+                        onClick={() => isQueuedEmail ? setMainTab("analytics") : setSelectedBroadcast({ ...item, _meta: meta })}
                         className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors w-full text-left cursor-pointer"
                       >
                         <div
@@ -2099,8 +2111,8 @@ export function BroadcastsTabContent() {
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="gap-1">
-                            <CheckCircle className="h-3 w-3 text-green-500" />
-                            {sent}
+                            {isQueuedEmail ? <Clock className="h-3 w-3" /> : <CheckCircle className="h-3 w-3 text-green-500" />}
+                            {isQueuedEmail ? `Поставлено: ${Number(meta?.total || 0)}` : sent}
                           </Badge>
                           {failed > 0 && (
                             <Badge variant="outline" className="gap-1">
