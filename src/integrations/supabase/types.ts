@@ -20440,22 +20440,38 @@ export type Database = {
         Row: {
           block_id: string
           confirmed_at: string
+          contact_journey_id: string | null
+          contact_saved_at: string | null
+          contact_submission_key: string | null
           page_id: string
           user_id: string
         }
         Insert: {
           block_id: string
           confirmed_at?: string
+          contact_journey_id?: string | null
+          contact_saved_at?: string | null
+          contact_submission_key?: string | null
           page_id: string
           user_id: string
         }
         Update: {
           block_id?: string
           confirmed_at?: string
+          contact_journey_id?: string | null
+          contact_saved_at?: string | null
+          contact_submission_key?: string | null
           page_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "site_questionnaire_confirmations_contact_journey_id_fkey"
+            columns: ["contact_journey_id"]
+            isOneToOne: false
+            referencedRelation: "site_questionnaire_journeys"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "site_questionnaire_confirmations_page_id_fkey"
             columns: ["page_id"]
@@ -28222,6 +28238,19 @@ export type Database = {
           _package_template_item_id: string
           _role_assignments: Json
           _session_id: string
+        }
+        Returns: Json
+      }
+      save_site_questionnaire_contact: {
+        Args: {
+          p_block_id: string
+          p_consent_version: string
+          p_fields: Json
+          p_journey_id?: string
+          p_journey_key_hash?: string
+          p_page_id: string
+          p_submission_key: string
+          p_user_id: string
         }
         Returns: Json
       }
