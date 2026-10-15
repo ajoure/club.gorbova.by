@@ -3,6 +3,7 @@ import { resolveServerFormSettings } from "./form_settings.ts";
 import { validateQuestionnaireAnswers } from "./questionnaire-fields.ts";
 import { parseQuestionnaireSource } from "./questionnaire-source.ts";
 import { validateConfiguredPhoneAnswers } from "./phone-validation.ts";
+import { isQuestionnaireContactField } from "./questionnaire-contacts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,7 +70,7 @@ interface FormField {
 }
 
 interface RequestBody {
-  action?: "bonus_channel_invite" | "questionnaire_telegram_status";
+  action?: "bonus_channel_invite" | "questionnaire_telegram_status" | "questionnaire_contact";
   page_id: string;
   /** Stable ID of the form block rendered on the public page. */
   block_id?: string;
@@ -148,9 +149,13 @@ Deno.serve(async (req) => {
     if (!formSettings) {
       return json({ error: "Form configuration not found or ambiguous" }, 400);
     }
+    const contactOnly = body.action === "questionnaire_contact";
+    if (contactOnly && !formSettings.contactFirst) return json({ error: "questionnaire_contact_mode_disabled" }, 400);
+    const configuredFields = contactOnly && Array.isArray(formSettings.fields)
+      ? formSettings.fields.filter(isQuestionnaireContactField) : formSettings.fields;
     // Validate every path before a profile, questionnaire or CRM write.
     try {
-      validateConfiguredPhoneAnswers(formSettings.fields, fields);
+      validateConfiguredPhoneAnswers(configuredFields, fields);
     } catch {
       return json({ error: "phone_invalid" }, 400);
     }
@@ -169,7 +174,7 @@ Deno.serve(async (req) => {
         return json({ error: "questionnaire_identity_invalid" }, 401);
       }
       try {
-        validateQuestionnaireAnswers(formSettings.fields, fields, identity.user.email);
+        validateQuestionnaireAnswers(configuredFields, fields, identity.user.email);
       } catch {
         return json({ error: "questionnaire_answers_invalid" }, 400);
       }
@@ -182,10 +187,10 @@ Deno.serve(async (req) => {
       }
       // SQL rechecks the current published block, canonical profile, account ban,
       // routing and answers under one transaction. No partial success or access grant.
-      const { data: result, error: transactionError } = await admin.rpc("submit_site_questionnaire", {
+      const { data: result, error: transactionError } = await admin.rpc(contactOnly ? "save_site_questionnaire_contact" : "submit_site_questionnaire", {
         p_page_id: page_id, p_block_id: body.block_id, p_user_id: identity.user.id,
         p_submission_key: body.submission_key, p_fields: fields,
-        p_source_code: parseQuestionnaireSource(body.source_code), p_consent_version: body.privacy_consent.version,
+        ...(!contactOnly ? { p_source_code: parseQuestionnaireSource(body.source_code) } : {}), p_consent_version: body.privacy_consent.version,
         p_journey_id: body.journey_id || null, p_journey_key_hash: journeyKeyHash,
       });
       if (transactionError) {

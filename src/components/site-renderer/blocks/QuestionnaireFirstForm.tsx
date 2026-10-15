@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useInlineEmailOtp } from "@/hooks/useInlineEmailOtp";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,6 +16,7 @@ import { SafeHtml } from "@/components/ui/SafeHtml";
 import { trackQuestionnaireJourney, prepareQuestionnaireJourneyForEmail, type QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 import { questionnaireThankYouUrl } from "@/lib/questionnaireThankYouUrl";
 import { isValidPhoneNumber, PHONE_VALIDATION_MESSAGE } from "../../../../supabase/functions/site-form-submit/phone-validation";
+import { isQuestionnaireContactField } from "../../../../supabase/functions/site-form-submit/questionnaire-contacts";
 
 interface Field { label: string; type: string; required: boolean; mapping?: string }
 interface Props {
@@ -27,7 +29,9 @@ interface Props {
 /** Explicitly enabled on a published form; the existing login-first forms stay unchanged. */
 export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: Props) {
   const fields = (content.fields as Field[]) || [];
-  const { user } = useAuth();
+  const contactFirst = content.contact_first === true;
+  const { user, loading: authLoading } = useAuth();
+  const verifiedSession = !!user?.email_confirmed_at;
   const otp = useInlineEmailOtp();
   const schema = JSON.stringify(fields.map(f => [f.label, f.type, f.mapping, f.required]));
   const key = questionnaireDraftKey(pageId || "preview", blockId || "preview");
@@ -44,7 +48,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   }, [isPreview, pageId, visitId]);
   const [submissionKey] = useState(() => initial?.submissionKey || crypto.randomUUID());
   const [source] = useState(() => initial?.source || parseQuestionnaireSource(new URLSearchParams(window.location.search).get("src")));
-  const [step, setStep] = useState<"answers" | "otp" | "telegram" | "success">("answers");
+  const [step, setStep] = useState<"contacts" | "answers" | "otp" | "telegram" | "success">(contactFirst ? "contacts" : "answers");
   const [telegramLinked, setTelegramLinked] = useState(false);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -53,6 +57,32 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const working = useRef(false);
   const submitted = useRef(false);
+  const contactFields = fields.map((field, i) => ({ field, i })).filter(({ field }) => isQuestionnaireContactField(field));
+  const profile = useQuery({
+    queryKey: ["questionnaire-own-contact", user?.id], enabled: contactFirst && verifiedSession && !isPreview,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("full_name,first_name,last_name,phone,instagram_url").eq("user_id", user!.id).maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  useEffect(() => {
+    if (!contactFirst || !verifiedSession || !user?.email || step !== "contacts") return;
+    const draftEmailIndex = fields.findIndex(field => field.type === "email" || field.mapping === "email");
+    const draftEmail = initial?.answers[String(draftEmailIndex)]?.trim().toLowerCase();
+    if (draftEmail && draftEmail !== user.email.toLowerCase()) return; // Never mix another account's draft with this profile.
+    const own = profile.data;
+    const values: Record<string, string> = { email: user.email, full_name: own?.full_name || [own?.first_name, own?.last_name].filter(Boolean).join(" "),
+      first_name: own?.first_name || "", last_name: own?.last_name || "", phone: own?.phone || "", instagram: own?.instagram_url || "", instagram_url: own?.instagram_url || "" };
+    setAnswers(previous => {
+      const next = { ...previous };
+      fields.forEach((field, i) => {
+        const mapping = field.mapping || (field.type === "email" ? "email" : field.type === "phone" ? "phone" : "");
+        if (!next[String(i)] && values[mapping]) next[String(i)] = values[mapping];
+      });
+      return Object.keys(next).some(index => next[index] !== previous[index]) ? next : previous;
+    });
+  }, [contactFirst, verifiedSession, user?.id, user?.email, profile.data, step, schema, initial]);
 
   useEffect(() => {
     if (isPreview || submitted.current) return;
@@ -66,12 +96,12 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   const emailIndex = fields.findIndex(f => f.mapping === "email" || f.type === "email");
   const email = (answers[String(emailIndex)] || "").trim().toLowerCase();
 
-  function validate() {
+  function validate(indexes = fields.map((_, i) => i)) {
     if (!privacyConsent && !isPreview) {
       setError("Подтвердите согласие на обработку персональных данных.");
       return false;
     }
-    for (let i = 0; i < fields.length; i++) {
+    for (const i of indexes) {
       if (fields[i].required && !(answers[String(i)] || "").trim()) {
         setError(`Заполните поле «${fields[i].label}».`);
         return false;
@@ -88,6 +118,22 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     }
     return true;
   }
+
+  async function saveContact() {
+    if (!pageId || !blockId) throw new Error("missing_form_config");
+    const journey = await journeyRequest.current;
+    const { data, error } = await supabase.functions.invoke("site-form-submit", { body: {
+      action: "questionnaire_contact", page_id: pageId, block_id: blockId, submission_key: submissionKey,
+      source_code: source, ...(journey || {}), privacy_consent: { accepted: privacyConsent, version: CONSENT_POLICY_VERSION },
+      fields: contactFields.map(({ field, i }) => ({ label: field.label, type: field.type, mapping: field.mapping || "none", value: (answers[String(i)] || "").trim() })),
+    } });
+    if (error || data?.success !== true) throw new Error("contact_save_failed");
+  }
+
+  const onTelegramLinked = useCallback((linked: boolean) => {
+    setTelegramLinked(linked);
+    if (contactFirst && linked) setStep("answers");
+  }, [contactFirst]);
 
   async function submit() {
     if (submitted.current) return;
@@ -111,9 +157,9 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   }
 
   async function sendAnswers() {
-    if (working.current || !validate()) return;
+    if (working.current || authLoading || !validate(step === "contacts" ? contactFields.map(({ i }) => i) : undefined)) return;
     setError("");
-    if (isPreview) { setStep("success"); return; }
+    if (isPreview) { setStep(contactFirst && step === "contacts" ? "answers" : "success"); return; }
     working.current = true; setBusy(true);
     try {
       // Do not attach a questionnaire for a different email to an already-open account.
@@ -124,7 +170,9 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
       if (pageId) {
         journeyRequest.current = prepareQuestionnaireJourneyForEmail(pageId, visitId, window.location.search, email, journeyRequest.current);
       }
-      if (user) {
+      if (contactFirst && step === "answers") { await submit(); return; }
+      if (user && (!contactFirst || verifiedSession)) {
+        if (contactFirst) await saveContact();
         setStep("telegram");
       } else if (await otp.requestQuestionnaireCode(email, `site-questionnaire:${pageId}:${blockId}`, await journeyRequest.current)) {
         setStep("otp");
@@ -137,14 +185,17 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     if (working.current) return;
     working.current = true; setBusy(true); setError("");
     try {
-      if (await otp.verifyCode(code)) setStep("telegram");
+      if (await otp.verifyCode(code)) {
+        if (contactFirst) await saveContact();
+        setStep("telegram");
+      }
     } catch {
-      setStep("answers");
-      setError("Почта подтверждена, но анкету не удалось сохранить. Нажмите «Отправить анкету» ещё раз — ответы сохранены.");
+      setStep(contactFirst ? "contacts" : "answers");
+      setError(contactFirst ? "Почта подтверждена, но контакты не удалось сохранить. Нажмите «Продолжить» ещё раз — введённые данные сохранены." : "Почта подтверждена, но анкету не удалось сохранить. Нажмите «Отправить анкету» ещё раз — ответы сохранены.");
     } finally { working.current = false; setBusy(false); }
   }
 
-  const pending = busy || otp.isSending || otp.isVerifying;
+  const pending = busy || otp.isSending || otp.isVerifying || !!authLoading;
   return (
     <section className="py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
@@ -157,29 +208,33 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
         ) : step === "telegram" ? (
           <div className="space-y-4">
             <h2 className="text-xl font-semibold">Подключите Telegram</h2>
-            <p>Почта подтверждена. Подключите support-бота, чтобы мы могли общаться с вами лично. Ответы сохранены в черновике.</p>
-            {pageId && <QuestionnaireTelegramStep pageId={pageId} onLinkedChange={setTelegramLinked} />}
-            <Button type="button" className="w-full" disabled={pending || !telegramLinked} onClick={() => {
+            <p>{contactFirst ? "Контакты сохранены. Подключите support-бота и продолжайте заполнение анкеты. Ник Telegram не нужен." : "Почта подтверждена. Подключите support-бота, чтобы мы могли общаться с вами лично. Ответы сохранены в черновике."}</p>
+            {pageId && <QuestionnaireTelegramStep pageId={pageId} onLinkedChange={onTelegramLinked} />}
+            {!contactFirst && <Button type="button" className="w-full" disabled={pending || !telegramLinked} onClick={() => {
               if (working.current || !telegramLinked) return;
               working.current = true; setBusy(true); setError("");
               void submit().catch(() => setError("Не удалось сохранить анкету. Проверьте подключение бота и попробуйте ещё раз — ответы сохранены."))
                 .finally(() => { working.current = false; setBusy(false); });
-            }}>Сохранить анкету и получить бонусы</Button>
+            }}>Сохранить анкету и получить бонусы</Button>}
           </div>
         ) : step === "otp" ? (
           <form className="space-y-4" onSubmit={e => { e.preventDefault(); void verifyAndSubmit(); }}>
             <h2 className="text-xl font-semibold">Подтвердите почту</h2>
             <p>Отправили шестизначный код на {otp.email}. Введите его здесь — переходить по ссылкам не нужно.</p>
-            <p className="text-sm text-muted-foreground">Ваши ответы сохранены. После подтверждения проверим подключение support-бота.</p>
+            <p className="text-sm text-muted-foreground">{contactFirst ? "После подтверждения сохраним контакты и проверим подключение support-бота. Пароль создавать не нужно." : "Ваши ответы сохранены. После подтверждения проверим подключение support-бота."}</p>
             <Label htmlFor={`questionnaire-code-${blockId}`}>Код из письма</Label>
             <Input id={`questionnaire-code-${blockId}`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))} disabled={pending} />
             <Button type="submit" className="w-full" disabled={pending || code.length !== 6}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Подтвердить почту</Button>
             <Button type="button" variant="outline" className="w-full" disabled={pending || otp.resendIn > 0} onClick={() => { void otp.resend(); }}>{otp.resendIn > 0 ? `Повторить через ${otp.resendIn} с` : "Отправить код ещё раз"}</Button>
-            <Button type="button" variant="ghost" disabled={pending} onClick={() => { otp.changeEmail(); setCode(""); setStep("answers"); }}>Изменить email или ответы</Button>
+            <Button type="button" variant="ghost" disabled={pending} onClick={() => { otp.changeEmail(); setCode(""); setStep(contactFirst ? "contacts" : "answers"); }}>Изменить email или ответы</Button>
           </form>
         ) : (
           <form className="space-y-5" onSubmit={e => { e.preventDefault(); void sendAnswers(); }}>
-            {fields.map((field, i) => {
+            {contactFirst && <div className="space-y-2"><h2 className="text-xl font-semibold">{step === "contacts" ? "Ваши контакты" : "Анкета предзаписи"}</h2>
+              <p>{step === "contacts" ? user ? "Проверьте ваши контактные данные и продолжайте." : "Укажите контакты. Затем подтвердите почту кодом здесь же — без пароля." : "Контакты сохранены. Ответьте на вопросы и получите бонусы."}</p>
+              {step === "contacts" && profile.isError && <p role="alert">Не удалось подставить данные карточки. Заполните их вручную или <button type="button" className="underline" onClick={() => { void profile.refetch(); }}>повторите загрузку</button>.</p>}
+            </div>}
+            {fields.map((field, i) => ({ field, i })).filter(({ field }) => !contactFirst || (step === "contacts" ? isQuestionnaireContactField(field) : !isQuestionnaireContactField(field))).map(({ field, i }) => {
               const id = `questionnaire-${blockId}-${i}`;
               return <div className="space-y-2" key={id}>
                 <Label htmlFor={id} className="leading-relaxed">{field.label}{field.required ? "*" : ""}</Label>
@@ -189,11 +244,11 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
               </div>;
             })}
             {draftSaved && <p className="text-sm text-muted-foreground" role="status">Черновик сохранён на этом устройстве. Можно вернуться к заполнению в течение 7 дней.</p>}
-            <div className="flex items-start gap-2 text-sm">
+            {(!contactFirst || step === "contacts") && <div className="flex items-start gap-2 text-sm">
               <input id={`questionnaire-consent-${blockId}`} type="checkbox" checked={privacyConsent} disabled={pending} onChange={e => setPrivacyConsent(e.target.checked)} className="mt-1" />
               <label htmlFor={`questionnaire-consent-${blockId}`}>Я согласен с <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">политикой конфиденциальности</a> и даю <a href="/consent" target="_blank" rel="noopener noreferrer" className="underline">согласие на обработку персональных данных</a>.</label>
-            </div>
-            <Button type="submit" className="w-full" disabled={pending}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<SafeHtml html={typeof content.buttonText === "string" ? content.buttonText : "Отправить анкету"} /></Button>
+            </div>}
+            <Button type="submit" className="w-full" disabled={pending || (contactFirst && step === "contacts" && !!user && profile.isLoading)}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{contactFirst && step === "contacts" ? "Продолжить" : <SafeHtml html={typeof content.buttonText === "string" ? content.buttonText : "Отправить анкету"} />}</Button>
           </form>
         )}
         {(error || otp.error) && <p role="alert" className="text-sm text-destructive">{error || otp.error}</p>}

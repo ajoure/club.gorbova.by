@@ -440,3 +440,103 @@ test('activation cutoff rejects historic/relinked forms and is checked again at 
     assert.equal((await counts(db)).access,0);
   }finally{await db.close();}
 });
+
+const contactFirstMigration = await readFile(new URL('../../supabase/migrations/20261015134159_cb21_contact_first.sql', import.meta.url), 'utf8');
+async function contactFixture() {
+  const f = await fixture();
+  await f.db.exec(`ALTER TABLE profiles ADD COLUMN email text, ADD COLUMN first_name text, ADD COLUMN last_name text, ADD COLUMN instagram_url text;
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT nullif(current_setting('fixture.uid',true),'')::uuid$$;
+    CREATE FUNCTION has_admin_resource_access(uuid,text,text,text) RETURNS boolean LANGUAGE sql AS $$SELECT current_setting('fixture.allow',true)='yes'$$;
+    CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$SELECT 'service_role'::text$$;`);
+  await notifications(f.db); await f.db.exec(remindersMigration); await f.db.exec(journeysMigration);
+  await f.db.query("UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,contact_first}','true')");
+  const instagram = {label:'Instagram',type:'text',mapping:'instagram_url',required:true};
+  await f.db.query("UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,fields}',(blocks#>'{0,content,fields}')||$1::jsonb)",[JSON.stringify([instagram])]);
+  await f.db.exec(contactFirstMigration);
+  const values=[...answers.slice(0,3),{...instagram,value:'buyer.test'}];
+  const save=(payload=values,user=id(1),journey=null,hash=null)=>f.db.query(
+    'SELECT save_site_questionnaire_contact($1,$2,$3,$4,$5,$6,$7,$8) result',
+    [id(3),id(8),user,id(10),JSON.stringify(payload),'v2026-04-10',journey,hash]).then(r=>r.rows[0].result);
+  return {...f,save,values,fullAnswers:[...answers,{...instagram,value:'buyer.test'}]};
+}
+test('verified contacts survive abandonment before Telegram and survey, retries are idempotent and completion stays canonical',async()=>{
+ const {db,save,submit,fullAnswers}=await contactFixture();try{
+  await db.exec('UPDATE profiles SET full_name=null,phone=null,telegram_user_id=null');
+  assert.deepEqual(await save(),{success:true,contact_saved:true,replayed:false});
+  const first=(await db.query('SELECT confirmed_at,contact_saved_at,contact_submission_key FROM site_questionnaire_confirmations')).rows[0];
+  assert.ok(first.contact_saved_at);assert.equal(first.contact_submission_key,id(10));
+  assert.deepEqual((await db.query('SELECT full_name,email,phone,instagram_url,telegram_user_id FROM profiles')).rows[0],
+    {full_name:'Test Buyer',email:'buyer@example.invalid',phone:'+375291112233',instagram_url:'buyer.test',telegram_user_id:null});
+  assert.deepEqual(await counts(db),{submissions:0,orders:0,events:0,consents:1,audits:1,access:0});
+  assert.equal((await save()).replayed,true);
+  assert.deepEqual((await db.query('SELECT confirmed_at,contact_saved_at,contact_submission_key FROM site_questionnaire_confirmations')).rows[0],first);
+  assert.deepEqual(await counts(db),{submissions:0,orders:0,events:0,consents:1,audits:1,access:0});
+  await assert.rejects(submit(id(10),fullAnswers),/questionnaire_telegram_link_required/);
+  await db.exec('UPDATE profiles SET telegram_user_id=123');
+  const result=await submit(id(10),fullAnswers);assert.equal(result.success,true);
+  assert.equal((await submit(id(10),fullAnswers)).replayed,true);
+  assert.deepEqual(await counts(db),{submissions:1,orders:1,events:1,consents:2,audits:2,access:0});
+ }finally{await db.close()}
+});
+test('early contacts are attributed without inflating questionnaires and existing profile fields are preserved',async()=>{
+ const {db,save}=await contactFixture();try{
+  const tags={src:'platforma',utm_source:'veb',utm_medium:'141026',utm_campaign:'cb21_preregistration',utm_content:'anketa_veb'};
+  await db.query('SELECT track_site_questionnaire_visit($1,$2,$3,$4,$5,$6)',[id(70),'a'.repeat(64),id(71),id(3),JSON.stringify(tags),'b'.repeat(64)]);
+  await save(undefined,id(1),id(70),'a'.repeat(64));
+  assert.deepEqual((await db.query('SELECT full_name,phone,telegram_user_id FROM profiles')).rows[0],{full_name:'Existing name',phone:'Existing phone',telegram_user_id:123});
+  await db.query("SELECT set_config('fixture.uid',$1,false)",[id(99)]);await db.exec("SELECT set_config('fixture.allow','yes',false)");
+  const row=(await db.query("SELECT * FROM site_questionnaire_funnel_stats($1,now()-interval '1 day',now()+interval '1 day')",[id(3)])).rows[0];
+  assert.deepEqual(row.attribution,tags);assert.deepEqual([row.visits,row.questionnaires,row.contacts,row.new_accounts,row.existing_accounts],[1,0,1,0,1]);
+  await db.exec("SELECT set_config('fixture.allow','no',false)");
+  await assert.rejects(db.query("SELECT * FROM site_questionnaire_funnel_stats($1,now()-interval '1 day',now()+interval '1 day')",[id(3)]),/questionnaire_stats_forbidden/);
+ }finally{await db.close()}
+});
+test('contact save enforces verified identity, saved contact schema and phone before any writes',async()=>{
+ const {db,save,values}=await contactFixture();try{
+  await assert.rejects(save([{...values[0],value:'someone@example.invalid'},...values.slice(1)]),/questionnaire_email_mismatch/);
+  await assert.rejects(save([...values.slice(0,2),{...values[2],value:'1'},values[3]]),/phone_invalid/);
+  await assert.rejects(save([...values,{label:'Injected',type:'text',mapping:'telegram_user_id',value:'999'}]),/questionnaire_fields_invalid/);
+  await assert.rejects(save(undefined,id(99)),/questionnaire_identity_invalid/);
+  for(const change of [
+    'UPDATE auth.users SET email_confirmed_at=null',
+    "UPDATE auth.users SET banned_until=now()+interval '1 day'",
+    "UPDATE profiles SET status='blocked'",
+    "UPDATE profiles SET email='foreign@example.invalid'",
+    'UPDATE profiles SET is_archived=true',
+    "UPDATE site_pages SET status='draft'",
+    "UPDATE site_pages SET blocks=jsonb_set(blocks,'{0,content,contact_first}','false')",
+  ]){
+    await db.exec('BEGIN');try{await db.exec(change);await assert.rejects(save(),/questionnaire_(identity_invalid|profile_unavailable|page_unavailable|contact_mode_disabled)/);}finally{await db.exec('ROLLBACK')}
+  }
+  assert.deepEqual(await counts(db),{submissions:0,orders:0,events:0,consents:0,audits:0,access:0});
+ }finally{await db.close()}
+});
+test('contact RPC stays service-only, migrations retain stats ACL and stop on source drift',async()=>{
+ const {db,save}=await contactFixture();try{
+  const proc=async()=>(await db.query("SELECT prosrc,proowner,prosecdef,proconfig,proacl FROM pg_proc WHERE oid='public.site_questionnaire_funnel_stats(uuid,timestamptz,timestamptz)'::regprocedure")).rows[0];
+  const before=await proc();await db.exec(contactFirstMigration);assert.deepEqual(await proc(),before);
+  for(const role of ['anon','authenticated','service_role'])assert.equal((await db.query("SELECT has_function_privilege($1,'save_site_questionnaire_contact(uuid,uuid,uuid,uuid,jsonb,text,uuid,text)','EXECUTE') allowed",[role])).rows[0].allowed,role==='service_role');
+  await db.exec('SET ROLE service_role');assert.equal((await save()).success,true);await db.exec('RESET ROLE');
+  const definition=(await db.query("SELECT pg_get_functiondef('public.site_questionnaire_funnel_stats(uuid,timestamptz,timestamptz)'::regprocedure) d")).rows[0].d;
+  await db.exec(definition.replace('questionnaire_stats_range_invalid','fixture_drift'));
+  await assert.rejects(db.exec(contactFirstMigration),/questionnaire_contact_stats_drift/);
+ }finally{await db.close()}
+});
+
+test('managed enablement changes only the existing CB21 form, preserves all other settings and is retryable',async()=>{
+ const {db}=await fixture();try{
+  const enable=await readFile(new URL('../site-questionnaires/enable-cb21-contact-first.sql',import.meta.url),'utf8');
+  const page='c8c5c19a-a10d-4f6b-8049-449f37230ed0',block='7f144dcc-1a71-4225-8399-efd4d91502cd';
+  const oldFields=[fields[1],fields[2],{label:'Telegram',type:'text',mapping:'telegram_username',required:true},
+   {label:'Instagram',type:'text',mapping:'instagram_url',required:true},fields[0],
+   ...Array.from({length:10},(_,i)=>({label:`Вопрос ${i+1}`,type:'textarea',mapping:'none',required:true}))];
+  const content={auth_mode:true,questionnaire_first:true,fields:oldFields,redirectUrl:'/thanks',product_id:id(4),deal_creation_enabled:true,pipeline_id:id(6)};
+  const blocks=[{id:'hero',type:'hero',content:{title:'Keep me'}},{id:block,type:'form',content},{id:'footer',type:'text',content:{text:'Keep me too'}}];
+  await db.query("INSERT INTO site_pages VALUES($1,$2,'published',$3)",[page,id(30),JSON.stringify(blocks)]);
+  await db.exec(enable);const saved=(await db.query('SELECT blocks FROM site_pages WHERE id=$1',[page])).rows[0].blocks;
+  assert.deepEqual(saved,[blocks[0],{...blocks[1],content:{...content,fields:oldFields.filter((_,i)=>i!==2),contact_first:true}},blocks[2]]);
+  await db.exec(enable);assert.deepEqual((await db.query('SELECT blocks FROM site_pages WHERE id=$1',[page])).rows[0].blocks,saved);
+  await db.query('UPDATE site_pages SET blocks=$2 WHERE id=$1',[page,JSON.stringify([{...blocks[1],content:{...content,fields:oldFields.slice(1)}}])]);
+  await assert.rejects(db.exec(enable),/cb21_contact_field_layout_mismatch/);await db.exec('ROLLBACK');
+ }finally{await db.close()}
+});

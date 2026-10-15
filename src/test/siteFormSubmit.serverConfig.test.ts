@@ -43,6 +43,7 @@ describe("site-form-submit server form configuration", () => {
     expect(result).toEqual({
       authMode: false,
       questionnaireFirst: false,
+      contactFirst: false,
       fields: undefined,
       productId: "product-a",
       tariffId: "tariff-a",
@@ -66,6 +67,7 @@ describe("site-form-submit server form configuration", () => {
     ])).toEqual({
       authMode: true,
       questionnaireFirst: false,
+      contactFirst: false,
       fields: undefined,
       productId: undefined,
       tariffId: undefined,
@@ -86,6 +88,7 @@ describe("site-form-submit server form configuration", () => {
     ], "form-a")).toEqual({
       authMode: false,
       questionnaireFirst: false,
+      contactFirst: false,
       fields: undefined,
       productId: undefined,
       tariffId: undefined,
@@ -94,4 +97,11 @@ describe("site-form-submit server form configuration", () => {
       pipelineStageId: undefined,
     });
   });
+});
+
+it("enables contact-first only inside the explicitly enabled password-free questionnaire", () => {
+  for (const content of [{ contact_first: true }, { auth_mode: true, contact_first: true }, { questionnaire_first: true, contact_first: true }]) {
+    expect(resolveServerFormSettings([form("one", content)], "one")?.contactFirst).toBe(false);
+  }
+  expect(resolveServerFormSettings([form("one", { auth_mode: true, questionnaire_first: true, contact_first: true })], "one")?.contactFirst).toBe(true);
 });

@@ -285,16 +285,23 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
           />
         </div>
         <p className="text-[10px] text-muted-foreground">
-          {questionnaireFirst ? "Сначала посетитель заполнит анкету, затем подтвердит почту кодом в этом же окне." : "При включении форма запросит email и пароль. Новым пользователям создастся аккаунт, существующие войдут в систему."}
+          {questionnaireFirst ? content.contact_first === true ? "Сначала контакты и подтверждение почты, затем Telegram и вопросы. Вошедшие клиенты подтверждают свои данные без повторного кода." : "Сначала посетитель заполнит анкету, затем подтвердит почту кодом в этом же окне." : "При включении форма запросит email и пароль. Новым пользователям создастся аккаунт, существующие войдут в систему."}
         </p>
 
         {authMode && (
           <div className="space-y-3 pt-2 border-t">
             <div className="flex items-center justify-between">
-              <Label className="text-xs">Сначала анкета, затем код из письма</Label>
+              <Label className="text-xs">Анкета с кодом из письма, без пароля</Label>
               <Switch checked={questionnaireFirst} onCheckedChange={v => onChange({ ...content, questionnaire_first: v })} />
             </div>
             <p className="text-[10px] text-muted-foreground">Черновик сохраняется на устройстве на 7 дней. В полях анкеты должен быть Email с привязкой к email контакта.</p>
+            {questionnaireFirst && <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Сохранять контакты до вопросов анкеты</Label>
+                <Switch checked={content.contact_first === true} onCheckedChange={v => onChange({ ...content, contact_first: v })} />
+              </div>
+              <p className="text-[10px] text-muted-foreground">Контакт сохранится даже без ответов. Telegram подключается через support-бота; удалите ручное поле Telegram из списка полей.</p>
+            </div>}
             {questionnaireFirst && <QuestionnaireSourceLinks pageId={pageId} />}
             {!questionnaireFirst && <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
