@@ -1,5 +1,6 @@
 -- Contact-first is opt-in on the existing form. No history backfill or learning grants.
 -- Apply through Lovable Cloud from the reviewed merged GitHub artifact only.
+BEGIN;
 DO $guard$
 BEGIN
  IF md5((SELECT prosrc FROM pg_proc WHERE oid='public.submit_site_questionnaire(uuid,uuid,uuid,uuid,jsonb,text,text,uuid,text)'::regprocedure)) <> '8c5d623cb3c84fd7741ad3e893f6e593'
@@ -139,3 +140,4 @@ BEGIN
     FROM per_journey j GROUP BY j.attribution HAVING sum(j.visit_count)+sum(j.form_count)+count(*) FILTER(WHERE j.contact_saved)+count(*) FILTER(WHERE j.outcome_at>=p_from AND j.outcome_at<p_to)>0 ORDER BY sum(j.visit_count) DESC;
 END;
 $$;
+COMMIT;
