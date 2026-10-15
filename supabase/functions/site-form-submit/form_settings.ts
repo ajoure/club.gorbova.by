@@ -8,6 +8,7 @@
 export interface ServerFormSettings {
   authMode: boolean;
   questionnaireFirst: boolean;
+  contactFirst: boolean;
   fields: unknown;
   productId?: string;
   tariffId?: string;
@@ -37,6 +38,7 @@ function toSettings(content: Record<string, unknown>): ServerFormSettings {
   return {
     authMode: content.auth_mode === true,
     questionnaireFirst: content.auth_mode === true && content.questionnaire_first === true,
+    contactFirst: content.auth_mode === true && content.questionnaire_first === true && content.contact_first === true,
     fields: content.fields,
     productId: productBindingEnabled ? asNonEmptyString(content.product_id) : undefined,
     tariffId: productBindingEnabled ? asNonEmptyString(content.tariff_id) : undefined,

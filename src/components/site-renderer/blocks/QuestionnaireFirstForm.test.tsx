@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(), verify: vi.fn(), invoke: vi.fn(), changeEmail: vi.fn(),
-  user: null as null | { email: string }, linked: true,
+  user: null as null | { id?: string; email: string; email_confirmed_at?: string }, linked: true,
+  profile: null as null | { full_name: string; first_name: string; last_name: string; phone: string; instagram_url: string },
 }));
+vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: mocks.profile, isLoading: false, isError: false }) }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: mocks.user }) }));
 vi.mock("./QuestionnaireTelegramStep", () => ({ QuestionnaireTelegramStep: ({ onLinkedChange }: { onLinkedChange: (linked: boolean) => void }) => {
   useEffect(() => { onLinkedChange(mocks.linked); }, [onLinkedChange]);
@@ -36,7 +38,7 @@ function fillAnswers() {
 
 describe("questionnaire-first journey", () => {
   beforeEach(() => {
-    localStorage.clear(); vi.clearAllMocks(); mocks.user = null; mocks.linked = true;
+    localStorage.clear(); vi.clearAllMocks(); mocks.user = null; mocks.linked = true; mocks.profile = null;
     mocks.request.mockResolvedValue(true);
     mocks.verify.mockResolvedValue({ userId: "verified-user" });
     mocks.invoke.mockResolvedValue({ data: { success: true }, error: null });
@@ -125,4 +127,82 @@ describe("questionnaire-first journey", () => {
     expect(mocks.invoke).toHaveBeenCalledOnce();
   });
 
+});
+
+const contactContent = { ...content, contact_first: true, fields: [
+  ...content.fields.slice(0, 2),
+  { label: "Телефон", type: "phone", mapping: "phone", required: true },
+  { label: "Instagram", type: "text", mapping: "instagram_url", required: true },
+  content.fields[2],
+] };
+function contacts() {
+  fireEvent.change(screen.getByLabelText("Имя*"), { target: { value: "Тест" } });
+  fireEvent.change(screen.getByLabelText("Email*"), { target: { value: "test@example.com" } });
+  fireEvent.change(screen.getByLabelText("Телефон*"), { target: { value: "+375291234567" } });
+  fireEvent.change(screen.getByLabelText("Instagram*"), { target: { value: "test.client" } });
+  fireEvent.click(screen.getByRole("checkbox"));
+}
+describe("contact-first opt-in journey", () => {
+  beforeEach(() => {
+    localStorage.clear(); vi.clearAllMocks(); mocks.user = null; mocks.profile = null; mocks.linked = false;
+    mocks.request.mockResolvedValue(true); mocks.verify.mockResolvedValue({ userId: "verified-user" });
+    mocks.invoke.mockResolvedValue({ data: { success: true }, error: null });
+  });
+  afterEach(cleanup);
+  it("verifies anonymous email before saving contacts, retains them on abandonment and hides questions until bot linking", async () => {
+    const view = render(<QuestionnaireFirstForm content={contactContent} pageId="page" blockId="block" />);
+    expect(screen.queryByLabelText("Комментарий*")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ник.*Telegram/i)).not.toBeInTheDocument();
+    contacts(); fireEvent.click(screen.getByRole("button", { name: "Продолжить" }));
+    await screen.findByLabelText("Код из письма"); expect(mocks.invoke).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Код из письма"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Подтвердить почту" }));
+    await screen.findByRole("button", { name: "Подключить support-бота" });
+    expect(mocks.invoke).toHaveBeenCalledOnce();
+    expect(mocks.invoke.mock.calls[0][1].body).toMatchObject({ action: "questionnaire_contact", privacy_consent: { accepted: true } });
+    expect(mocks.invoke.mock.calls[0][1].body.fields).toHaveLength(4);
+    expect(screen.queryByLabelText("Комментарий*")).not.toBeInTheDocument();
+    view.unmount(); // A successful contact save is independent of finishing the questionnaire.
+    expect(mocks.invoke).toHaveBeenCalledOnce();
+    expect(localStorage.getItem("site-questionnaire:v1:page:block")).toContain("test.client");
+  });
+  it("prefills only the signed-in profile and skips repeated OTP and an already linked bot", async () => {
+    mocks.user = { id: "owner", email: "test@example.com", email_confirmed_at: "2026-01-01" }; mocks.linked = true;
+    mocks.profile = { full_name: "Своя карточка", first_name: "Своя", last_name: "Карточка", phone: "+375291234567", instagram_url: "own.profile" };
+    render(<QuestionnaireFirstForm content={contactContent} pageId="page" blockId="block" />);
+    expect(await screen.findByLabelText("Имя*")).toHaveValue("Своя карточка");
+    expect(screen.getByLabelText("Email*")).toHaveValue("test@example.com");
+    expect(screen.getByLabelText("Instagram*")).toHaveValue("own.profile");
+    fireEvent.click(screen.getByRole("checkbox")); fireEvent.click(screen.getByRole("button", { name: "Продолжить" }));
+    await screen.findByLabelText("Комментарий*");
+    expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.verify).not.toHaveBeenCalled();
+    const key = mocks.invoke.mock.calls[0][1].body.submission_key;
+    fireEvent.change(screen.getByLabelText("Комментарий*"), { target: { value: "Полный ответ" } });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить анкету" }));
+    await screen.findByText("Анкета сохранена");
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    expect(mocks.invoke.mock.calls[1][1].body).toMatchObject({ submission_key: key });
+    expect(mocks.invoke.mock.calls[1][1].body.action).toBeUndefined();
+    expect(mocks.invoke.mock.calls[1][1].body.fields[4].value).toBe("Полный ответ");
+  });
+  it("failed OTP or failed contact save never exposes survey questions", async () => {
+    mocks.verify.mockResolvedValue(null);
+    render(<QuestionnaireFirstForm content={contactContent} pageId="page" blockId="block" />);
+    contacts(); fireEvent.click(screen.getByRole("button", { name: "Продолжить" }));
+    await screen.findByLabelText("Код из письма");
+    fireEvent.change(screen.getByLabelText("Код из письма"), { target: { value: "123456" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Подтвердить почту" })); });
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    mocks.verify.mockResolvedValue({ userId: "verified-user" }); mocks.invoke.mockResolvedValueOnce({ error: new Error("network") });
+    fireEvent.click(screen.getByRole("button", { name: "Подтвердить почту" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("контакты не удалось сохранить");
+    expect(screen.getByLabelText("Email*")).toHaveValue("test@example.com");
+    expect(screen.queryByLabelText("Комментарий*")).not.toBeInTheDocument();
+  });
+  it("does not treat an unconfirmed browser session as verified email", async () => {
+    mocks.user = { id: "unconfirmed", email: "test@example.com" };
+    render(<QuestionnaireFirstForm content={contactContent} pageId="page" blockId="block" />);
+    contacts(); fireEvent.click(screen.getByRole("button", { name: "Продолжить" }));
+    await screen.findByLabelText("Код из письма"); expect(mocks.invoke).not.toHaveBeenCalled();
+  });
 });

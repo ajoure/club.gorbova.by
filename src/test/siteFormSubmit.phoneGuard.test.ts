@@ -1,3 +1,4 @@
+import { isQuestionnaireContactField } from "../../supabase/functions/site-form-submit/questionnaire-contacts";
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -35,6 +36,7 @@ describe("real site-form-submit phone guard", () => {
         if (module === "./form_settings.ts") return { resolveServerFormSettings };
         if (module === "./questionnaire-fields.ts") return { validateQuestionnaireAnswers };
         if (module === "./questionnaire-source.ts") return { parseQuestionnaireSource };
+        if (module === "./questionnaire-contacts.ts") return { isQuestionnaireContactField };
         if (module === "./phone-validation.ts") return { validateConfiguredPhoneAnswers };
         throw new Error(`Unexpected import: ${module}`);
       },

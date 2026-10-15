@@ -60,3 +60,14 @@ describe("questionnaire draft and attribution", () => {
     expect(questionnaireSourceMetadata("customer@example.com")).toBeNull();
   });
 });
+
+it("remaps only one removed manual Telegram field without losing answers, original source or retry key", () => {
+  const s = storage();
+  const old = [["Имя", "text", "full_name", true], ["Telegram", "text", "telegram_username", true], ["Instagram", "text", "instagram_url", true], ["Вопрос", "textarea", "none", true]];
+  const next = old.filter((_, i) => i !== 1);
+  saveQuestionnaireDraft(s, "key", { ...draft, schema: JSON.stringify(old), answers: { "0": "Имя", "1": "Удаляемый ник", "2": "instagram", "3": "Ответ" } });
+  const restored = readQuestionnaireDraft(s, "key", JSON.stringify(next), 3, 1001);
+  expect(restored).toMatchObject({ submissionKey: draft.submissionKey, source: draft.source, answers: { "0": "Имя", "1": "instagram", "2": "Ответ" } });
+  expect(JSON.stringify(restored)).not.toContain("Удаляемый ник");
+  expect(readQuestionnaireDraft(s, "key", JSON.stringify([["Другое имя", ...next[0].slice(1)], ...next.slice(1)]), 3, 1001)).toBeNull();
+});

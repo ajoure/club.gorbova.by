@@ -34,14 +34,25 @@ export function readQuestionnaireDraft(
     const raw = storage.getItem(key);
     if (!raw || raw.length > MAX_DRAFT_BYTES) return null;
     const draft = JSON.parse(raw);
-    if (draft.version !== 1 || draft.schema !== schema || !UUID.test(draft.submissionKey)
+    let indexes = Array.from({ length: fieldCount }, (_, i) => i);
+    if (draft.schema !== schema) {
+      // Only the approved removal of a manual Telegram field is compatible.
+      // Every remaining label/type/mapping/required flag must match exactly.
+      const oldFields: unknown[][] = JSON.parse(draft.schema);
+      const nextFields: unknown[][] = JSON.parse(schema);
+      if (!Array.isArray(oldFields) || !Array.isArray(nextFields) || oldFields.length !== nextFields.length + 1 || nextFields.length !== fieldCount) return null;
+      const removed = oldFields.map((field, i) => Array.isArray(field) && field[1] === "text" && ["telegram", "telegram_username"].includes(String(field[2])) ? i : -1).filter(i => i >= 0);
+      if (removed.length !== 1 || JSON.stringify(oldFields.filter((_, i) => i !== removed[0])) !== schema) return null;
+      indexes = indexes.map(i => i >= removed[0] ? i + 1 : i);
+    }
+    if (draft.version !== 1 || !UUID.test(draft.submissionKey)
       || !Number.isFinite(draft.savedAt) || draft.savedAt > now
       || now - draft.savedAt > QUESTIONNAIRE_DRAFT_TTL_MS
       || !draft.answers || typeof draft.answers !== "object" || Array.isArray(draft.answers)) return null;
 
     const answers: Record<string, string> = {};
     for (let i = 0; i < fieldCount; i++) {
-      const value = draft.answers[String(i)];
+      const value = draft.answers[String(indexes[i])];
       if (typeof value === "string" && value.length <= 10_000) answers[String(i)] = value;
     }
     return {
