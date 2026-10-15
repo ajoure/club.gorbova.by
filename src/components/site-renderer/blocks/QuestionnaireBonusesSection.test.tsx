@@ -14,9 +14,10 @@ describe("thank-you page shared Telegram links", () => {
     render(<QuestionnaireBonusesSection content={content} />);
     expect(screen.getAllByRole("link")).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Вступить в бесплатный канал" })).toHaveAttribute("href", content.channel_url);
-    expect(screen.getByRole("link", { name: "Написать Катерине в Telegram" })).toHaveAttribute("href", content.personal_chat_url);
+    expect(screen.getByRole("link", { name: "Получить бонус от Катерины" })).toHaveAttribute("href", content.personal_chat_url);
     expect(screen.getByText(content.channel_title)).toBeInTheDocument();
     expect(screen.queryByText(/урок|тренинг|персональн/i)).toBeNull();
+    expect(screen.queryByText(/подготовлено|нажмите «Отправить»/i)).toBeNull();
   });
   it("allows a forwarded thank-you page to show the shared links without requiring an account", () => {
     mocks.user = null;

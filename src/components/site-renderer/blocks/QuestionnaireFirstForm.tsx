@@ -197,7 +197,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
 
   const pending = busy || otp.isSending || otp.isVerifying || !!authLoading;
   return (
-    <section className="py-8 px-4">
+    <section className="questionnaire-form py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
         {typeof content.title === "string" && content.title && <SafeHtml html={content.title} as="h2" className="text-2xl font-bold" />}
         {typeof content.subtitle === "string" && content.subtitle && <SafeHtml html={content.subtitle} as="p" />}

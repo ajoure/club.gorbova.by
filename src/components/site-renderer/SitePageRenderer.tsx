@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { sitePageTheme } from "@/lib/sitePageTheme";
+import "./site-page-theme.css";
 import { sanitizeHtml } from "@/lib/sanitization";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import type { SiteBlock } from "@/services/sitePages/types";
@@ -192,10 +194,7 @@ interface SitePageRendererProps {
 }
 
 export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, isPreview }: SitePageRendererProps) {
-  const style: React.CSSProperties = {};
-  if (themeSettings?.font_family) {
-    style.fontFamily = themeSettings.font_family as string;
-  }
+  const theme = sitePageTheme(themeSettings);
 
   const renderBlock = (block: SiteBlock) => {
     const settings = block.settings as any;
@@ -257,7 +256,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
 
   return (
     <SiteVisibilityProvider blocks={blocks}>
-      <div style={style}>
+      <div {...theme}>
         {blocks.map((block) => (
           <BlockWrapper key={block.id} blockId={block.id} settings={block.settings}>
             {renderBlock(block)}

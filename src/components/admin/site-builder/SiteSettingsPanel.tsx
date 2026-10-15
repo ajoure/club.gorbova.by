@@ -186,6 +186,16 @@ export function SiteSettingsPanel({
         <CardHeader><CardTitle className="text-base">Тема</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
+            <Label>Оформление страницы</Label>
+            <Select value={themeSettings.preset === "gorbova" ? "gorbova" : "default"} onValueChange={preset => onThemeChange({ ...themeSettings, preset })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Стандартное</SelectItem>
+                <SelectItem value="gorbova">Горбова — стиль сайта курса</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
             <Label>Основной цвет</Label>
             <Input
               value={(themeSettings.primary_color as string) || ""}
