@@ -5,7 +5,7 @@ import {
   __privateSet
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/mp4box/dist/rolldown-runtime-w6R9maHv.mjs
+// ../persist/node_modules/mp4box/dist/rolldown-runtime-w6R9maHv.mjs
 var __defProp = Object.defineProperty;
 var __exportAll = (all, no_symbols) => {
   let target = {};
@@ -21,7 +21,7 @@ var __exportAll = (all, no_symbols) => {
   return target;
 };
 
-// node_modules/mp4box/dist/styp-9TIZZDLN.mjs
+// ../persist/node_modules/mp4box/dist/styp-9TIZZDLN.mjs
 var MAX_SIZE = Math.pow(2, 32);
 var MAX_UINT32 = Math.pow(2, 32) - 1;
 var TFHD_FLAG_DEFAULT_BASE_IS_MOOF = 131072;
@@ -6760,7 +6760,7 @@ var stypBox = (_a140 = class extends Box {
   }
 }, _a140.fourcc = "styp", _a140);
 
-// node_modules/mp4box/dist/mp4box.all.mjs
+// ../persist/node_modules/mp4box/dist/mp4box.all.mjs
 var descriptor_exports = __exportAll({
   Descriptor: () => Descriptor,
   ES_Descriptor: () => ES_Descriptor,

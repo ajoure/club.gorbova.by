@@ -3,9 +3,9 @@ import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/requires-port/index.js
+// ../persist/node_modules/requires-port/index.js
 var require_requires_port = __commonJS({
-  "node_modules/requires-port/index.js"(exports, module) {
+  "../persist/node_modules/requires-port/index.js"(exports, module) {
     "use strict";
     module.exports = function required(port, protocol) {
       protocol = protocol.split(":")[0];
@@ -30,9 +30,9 @@ var require_requires_port = __commonJS({
   }
 });
 
-// node_modules/querystringify/index.js
+// ../persist/node_modules/querystringify/index.js
 var require_querystringify = __commonJS({
-  "node_modules/querystringify/index.js"(exports) {
+  "../persist/node_modules/querystringify/index.js"(exports) {
     "use strict";
     var has = Object.prototype.hasOwnProperty;
     var undef;
@@ -82,9 +82,9 @@ var require_querystringify = __commonJS({
   }
 });
 
-// node_modules/url-parse/index.js
+// ../persist/node_modules/url-parse/index.js
 var require_url_parse = __commonJS({
-  "node_modules/url-parse/index.js"(exports, module) {
+  "../persist/node_modules/url-parse/index.js"(exports, module) {
     "use strict";
     var required = require_requires_port();
     var qs = require_querystringify();
@@ -390,7 +390,7 @@ var require_url_parse = __commonJS({
   }
 });
 
-// node_modules/tus-js-client/lib.esm/error.js
+// ../persist/node_modules/tus-js-client/lib.esm/error.js
 function _typeof(o) {
   "@babel/helpers - typeof";
   return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -544,7 +544,7 @@ var DetailedError = (function(_Error) {
 })(_wrapNativeSuper(Error));
 var error_default = DetailedError;
 
-// node_modules/tus-js-client/lib.esm/logger.js
+// ../persist/node_modules/tus-js-client/lib.esm/logger.js
 var isEnabled = false;
 function enableDebugLog() {
   isEnabled = true;
@@ -554,7 +554,7 @@ function log(msg) {
   console.log(msg);
 }
 
-// node_modules/tus-js-client/lib.esm/noopUrlStorage.js
+// ../persist/node_modules/tus-js-client/lib.esm/noopUrlStorage.js
 function _typeof2(o) {
   "@babel/helpers - typeof";
   return _typeof2 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -624,7 +624,7 @@ var NoopUrlStorage = (function() {
   }]);
 })();
 
-// node_modules/js-base64/base64.mjs
+// ../persist/node_modules/js-base64/base64.mjs
 var version = "3.7.8";
 var VERSION = version;
 var _hasBuffer = typeof Buffer === "function";
@@ -786,10 +786,10 @@ var gBase64 = {
   extendBuiltins
 };
 
-// node_modules/tus-js-client/lib.esm/upload.js
+// ../persist/node_modules/tus-js-client/lib.esm/upload.js
 var import_url_parse = __toESM(require_url_parse());
 
-// node_modules/tus-js-client/lib.esm/uuid.js
+// ../persist/node_modules/tus-js-client/lib.esm/uuid.js
 function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
     var r = Math.random() * 16 | 0;
@@ -798,7 +798,7 @@ function uuid() {
   });
 }
 
-// node_modules/tus-js-client/lib.esm/upload.js
+// ../persist/node_modules/tus-js-client/lib.esm/upload.js
 function _regeneratorRuntime() {
   "use strict";
   _regeneratorRuntime = function _regeneratorRuntime3() {
@@ -2033,13 +2033,13 @@ function splitSizeIntoParts(totalSize, partCount) {
 BaseUpload.defaultOptions = defaultOptions;
 var upload_default = BaseUpload;
 
-// node_modules/tus-js-client/lib.esm/browser/isReactNative.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/isReactNative.js
 var isReactNative = function isReactNative2() {
   return typeof navigator !== "undefined" && typeof navigator.product === "string" && navigator.product.toLowerCase() === "reactnative";
 };
 var isReactNative_default = isReactNative;
 
-// node_modules/tus-js-client/lib.esm/browser/uriToBlob.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/uriToBlob.js
 function uriToBlob(uri) {
   return new Promise(function(resolve, reject) {
     var xhr = new XMLHttpRequest();
@@ -2056,13 +2056,13 @@ function uriToBlob(uri) {
   });
 }
 
-// node_modules/tus-js-client/lib.esm/browser/sources/isCordova.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/sources/isCordova.js
 var isCordova = function isCordova2() {
   return typeof window !== "undefined" && (typeof window.PhoneGap !== "undefined" || typeof window.Cordova !== "undefined" || typeof window.cordova !== "undefined");
 };
 var isCordova_default = isCordova;
 
-// node_modules/tus-js-client/lib.esm/browser/sources/readAsByteArray.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/sources/readAsByteArray.js
 function readAsByteArray(chunk) {
   return new Promise(function(resolve, reject) {
     var reader = new FileReader();
@@ -2079,7 +2079,7 @@ function readAsByteArray(chunk) {
   });
 }
 
-// node_modules/tus-js-client/lib.esm/browser/sources/FileSource.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/sources/FileSource.js
 function _typeof4(o) {
   "@babel/helpers - typeof";
   return _typeof4 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -2148,7 +2148,7 @@ var FileSource = (function() {
   }]);
 })();
 
-// node_modules/tus-js-client/lib.esm/browser/sources/StreamSource.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/sources/StreamSource.js
 function _typeof5(o) {
   "@babel/helpers - typeof";
   return _typeof5 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -2277,7 +2277,7 @@ var StreamSource = (function() {
   }]);
 })();
 
-// node_modules/tus-js-client/lib.esm/browser/fileReader.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/fileReader.js
 function _typeof6(o) {
   "@babel/helpers - typeof";
   return _typeof6 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -2648,7 +2648,7 @@ var FileReader2 = (function() {
   }]);
 })();
 
-// node_modules/tus-js-client/lib.esm/browser/fileSignature.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/fileSignature.js
 function fingerprint(file, options) {
   if (isReactNative_default()) {
     return Promise.resolve(reactNativeFingerprint(file, options));
@@ -2672,7 +2672,7 @@ function hashCode(str) {
   return hash;
 }
 
-// node_modules/tus-js-client/lib.esm/browser/httpStack.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/httpStack.js
 function _typeof7(o) {
   "@babel/helpers - typeof";
   return _typeof7 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -2830,7 +2830,7 @@ var Response = (function() {
   }]);
 })();
 
-// node_modules/tus-js-client/lib.esm/browser/urlStorage.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/urlStorage.js
 function _typeof8(o) {
   "@babel/helpers - typeof";
   return _typeof8 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {
@@ -2939,7 +2939,7 @@ var WebStorageUrlStorage = (function() {
   }]);
 })();
 
-// node_modules/tus-js-client/lib.esm/browser/index.js
+// ../persist/node_modules/tus-js-client/lib.esm/browser/index.js
 function _typeof9(o) {
   "@babel/helpers - typeof";
   return _typeof9 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o2) {

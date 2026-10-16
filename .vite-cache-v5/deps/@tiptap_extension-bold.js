@@ -3,11 +3,11 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-6253ETEE.js";
-import "./chunk-DXKRVOGU.js";
+} from "./chunk-6ZIB3ELV.js";
+import "./chunk-GRNRBE2N.js";
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
+// ../persist/node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
 var h = (tag, attributes) => {
   if (tag === "slot") {
     return 0;
@@ -24,7 +24,7 @@ var h = (tag, attributes) => {
   return [tag, rest, children];
 };
 
-// node_modules/@tiptap/extension-bold/dist/index.js
+// ../persist/node_modules/@tiptap/extension-bold/dist/index.js
 var starInputRegex = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))$/;
 var starPasteRegex = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))/g;
 var underscoreInputRegex = /(?:^|\s)(__(?!\s+__)((?:[^_]+))__(?!\s+__))$/;

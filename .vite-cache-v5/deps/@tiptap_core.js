@@ -123,8 +123,8 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-6253ETEE.js";
-import "./chunk-DXKRVOGU.js";
+} from "./chunk-6ZIB3ELV.js";
+import "./chunk-GRNRBE2N.js";
 import "./chunk-OL46QLBJ.js";
 export {
   CommandManager,
