@@ -256,7 +256,7 @@ export function PhoneInput({
   };
 
   return (
-    <div className={cn("flex gap-0", className)}>
+    <div className={cn("flex min-w-0 gap-0", className)}>
       {/* Country selector */}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -304,7 +304,7 @@ export function PhoneInput({
       </Popover>
 
       {/* Phone number input */}
-      <div className="relative flex-1">
+      <div className="relative min-w-0 flex-1">
         <Input
           ref={inputRef}
           id={id}
