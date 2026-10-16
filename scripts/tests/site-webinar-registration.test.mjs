@@ -34,7 +34,34 @@ test('free webinar saves one registration with separate names, preserves purchas
   assert.equal((await db.query('SELECT count(*)::int n FROM commercial_access')).rows[0].n,0);
   const metadata=(await db.query('SELECT metadata FROM site_form_submissions')).rows[0].metadata;
   assert.equal(metadata.webinar_registration,true);assert.equal(metadata.product_id,id(4));
+  assert.equal(metadata.utm_campaign,'webinar_registration');
+  const event=(await db.query("SELECT payload FROM domain_events WHERE event_type='site_questionnaire_submitted'")).rows[0].payload;
+  assert.equal(event.webinar_registration,true);assert.equal(event.utm_campaign,'webinar_registration');
+  const audit=(await db.query("SELECT meta FROM audit_logs WHERE action='site_questionnaire_submitted'")).rows[0].meta;
+  assert.equal(audit.webinar_registration,true);
  }finally{await db.close()}
+});
+test('an ordinary historical form submission is not mistaken for a completed webinar registration',async()=>{
+ const {db,register}=await webinar();try{
+  const ordinary=await db.query('SELECT submit_site_questionnaire($1,$2,$3,$4,$5,$6,$7) result',[id(3),id(8),id(1),id(20),JSON.stringify(answers),'main_channel','v2026-04-10']);
+  assert.equal(ordinary.rows[0].result.replayed,false);
+  const result=await register(id(21));assert.equal(result.registered,true);assert.equal(result.replayed,false);
+  assert.equal((await db.query("SELECT count(*)::int n FROM site_form_submissions WHERE metadata->>'webinar_registration'='true'")).rows[0].n,1);
+  assert.equal((await register(id(22))).replayed,true);
+ }finally{await db.close()}
+});
+test('webinar preserves explicit journey UTM and uses its own fallback campaign when campaign is absent',async()=>{
+ for(const tags of [{src:'email',utm_source:'newsletter',utm_campaign:'web_2410',utm_content:'invite'},{src:'email'}]){
+  const {db}=await webinar();try{
+   const key='a'.repeat(64);
+   await db.query('SELECT track_site_questionnaire_visit($1,$2,$3,$4,$5,$6)',[id(70),key,id(71),id(3),JSON.stringify(tags),'b'.repeat(64)]);
+   await db.query('SELECT submit_site_webinar_registration($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id(3),id(8),id(1),id(10),JSON.stringify(answers),'email','v2026-04-10',id(70),key]);
+   const meta=(await db.query('SELECT metadata FROM site_form_submissions')).rows[0].metadata;
+   assert.equal(meta.utm_campaign,tags.utm_campaign||'webinar_registration');
+   if(tags.utm_source)assert.equal(meta.utm_source,tags.utm_source);
+   assert.equal(meta.journey_id,id(70));
+  }finally{await db.close()}
+ }
 });
 test('webinar cannot bypass verified email, bot or required phone; failing attempts leave no partial contact',async()=>{
  const {db,register}=await webinar();try{

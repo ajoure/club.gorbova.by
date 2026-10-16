@@ -300,7 +300,7 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
                 <Label className="text-xs">Регистрация на вебинар без вопросов</Label>
                 <Switch checked={content.webinar_registration === true} onCheckedChange={v => onChange({ ...content, webinar_registration: v, ...(v ? { contact_first: true } : {}) })} />
               </div>
-              {content.webinar_registration === true && <p className="text-xs">Только Имя, Фамилия, Email и Телефон. После кода и support-бота — страница «Спасибо». Покупки и учебные доступы не создаются.</p>}
+              {content.webinar_registration === true && <p className="text-xs">Только Имя, Фамилия, Email и Телефон. Укажите активный продукт, отключите создание сделки и оставьте эти четыре поля с соответствующими привязками. После кода и support-бота — страница «Спасибо». Покупки и учебные доступы не создаются.</p>}
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Сохранять контакты до вопросов анкеты</Label>
                 <Switch checked={content.contact_first === true} onCheckedChange={v => onChange({ ...content, contact_first: v })} />

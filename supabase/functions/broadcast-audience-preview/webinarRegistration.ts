@@ -27,7 +27,7 @@ export async function filterUsersByWebinarRegistration(supabase:any,candidateUse
 }
 
 /** Scheduled dispatcher uses the same restricted population before anti-empty/run counters. */
-export async function resolveWebinarBroadcastCounts(supabase:any,filters:Record<string,unknown>){
+export async function resolveWebinarBroadcastCounts(supabase:any,filters:Record<string,unknown>,emailOnlyWhenNoTelegram=false,channels:string[]=["email","telegram"]){
  const users:string[]=[];
  for(let offset=0;;offset+=200){
   const {data,error}=await supabase.rpc("resolve_broadcast_audience_user_ids_system",{_filters:{...filters,__system_bypass:true,channel:"any"}}).order("user_id").range(offset,offset+199);
@@ -42,7 +42,7 @@ export async function resolveWebinarBroadcastCounts(supabase:any,filters:Record<
  for(let offset=0;offset<ids.length;offset+=200){
   const {data,error}=await supabase.from("profiles").select("user_id,email,telegram_user_id").in("user_id",ids.slice(offset,offset+200));
   if(error||!Array.isArray(data))throw new Error("webinar_registration_profiles_failed");
-  for(const profile of data){const tg=!!profile.telegram_user_id, email=!!profile.email&&(!(filters.email_only_no_telegram||filters.email_only_when_no_telegram)||!tg);if(tg)telegram_count++;if(email)email_count++;if(tg||email)total_count++;}
+  for(const profile of data){const tg=!!profile.telegram_user_id, email=!!profile.email&&(!emailOnlyWhenNoTelegram||!tg);if(tg)telegram_count++;if(email)email_count++;if((tg&&channels.includes("telegram"))||(email&&channels.includes("email")))total_count++;}
  }
  return {telegram_count,email_count,total_count};
 }
@@ -51,8 +51,8 @@ import {evaluateBroadcastGuards,type BroadcastGuardInput,type BroadcastGuardResu
 /** Extend the existing guard only for the additional concrete, server-enforced restriction. */
 export function evaluateWebinarBroadcastGuards(input:BroadcastGuardInput):BroadcastGuardResult{
  const result=evaluateBroadcastGuards(input);
- if(!result.blocked || !parseWebinarRegistrationCondition(input.filters?.webinar_registration)
-  || !["broadcast_blocked_empty_audience_filters","broadcast_blocked_full_audience_without_confirm"].includes(result.reason))return result;
+ if(!result.blocked || input.allowFullAudience || !parseWebinarRegistrationCondition(input.filters?.webinar_registration)
+  || result.reason!=="broadcast_blocked_empty_audience_filters")return result;
  const length=(input.messageText||"").trim().length;
  if(!input.isDryRun&&!input.isTestSelf&&length<5)return{blocked:true,reason:"broadcast_blocked_short_message",message:`Сообщение слишком короткое для реальной рассылки: ${length} символов, требуется не менее 5.`,meta:{message_length:length,would_be_full_audience:false}};
  return{blocked:false};

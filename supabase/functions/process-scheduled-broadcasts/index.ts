@@ -376,6 +376,33 @@ Deno.serve(async (req) => {
       ? 'dry_run'
       : (tpl.send_mode === 'recurring' ? 'recurring' : 'scheduled');
 
+    // Resolve before acquiring the slot, so a failed restricted lookup cannot strand a claim.
+    let aud: Record<string, unknown>;
+    try {
+      if (tpl.audience_filters?.webinar_registration !== undefined) {
+        aud = await resolveWebinarBroadcastCounts(supabase, tpl.audience_filters, tpl.email_only_when_no_telegram, channels);
+      } else {
+        const { data, error } = await supabase.rpc('resolve_broadcast_audience', {
+          _filters: { ...(tpl.audience_filters || {}), __system_bypass: true },
+        });
+        if (error) throw error;
+        aud = (data ?? {}) as Record<string, unknown>;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      perTemplateLog.push({ template_id: tpl.id, error: `audience_failed: ${message}` });
+      totalFailed += 1;
+      if (!isDryRun && tpl.audience_filters?.webinar_registration !== undefined) {
+        // Operator must correct/re-schedule; never claim or send a broken audience.
+        await supabase.from('broadcast_templates').update({ status: 'draft', send_mode: 'manual', next_run_at: null })
+          .eq('id', tpl.id).eq('next_run_at', tpl.next_run_at);
+      }
+      continue;
+    }
+    const tgCount = Number(aud.telegram_count || 0);
+    const emailCount = Number(aud.email_count || 0);
+    const totalCount = Number(aud.total_count || 0);
+
     // ===== Atomic lock: prevent the next cron tick from re-picking this template =====
     // Bug fix (29.04.2026): без этого замка между тиками cron шаблон оставался
     // status='scheduled' с next_run_at <= now() до самого вызова advanceTemplate(),
@@ -401,29 +428,6 @@ Deno.serve(async (req) => {
         continue;
       }
     }
-
-    // Resolve audience once via the canonical RPC (single source of truth)
-    // Dispatcher runs under service_role (no auth.uid()), so we mark the call
-    // as system-bypass so the RPC skips the entitlements.manage check.
-    const audFiltersForRpc = {
-      ...(tpl.audience_filters || {}),
-      __system_bypass: true,
-    };
-    const { data: audienceRpc, error: audErr } = await supabase
-      .rpc('resolve_broadcast_audience', { _filters: audFiltersForRpc });
-
-    if (audErr) {
-      console.error(`[broadcast-dispatcher] audience rpc failed for ${tpl.id}:`, audErr);
-      perTemplateLog.push({ template_id: tpl.id, error: audErr.message });
-      continue;
-    }
-
-    const aud = tpl.audience_filters?.webinar_registration !== undefined
-      ? await resolveWebinarBroadcastCounts(supabase, tpl.audience_filters)
-      : (audienceRpc ?? {}) as Record<string, unknown>;
-    const tgCount = Number(aud.telegram_count || 0);
-    const emailCount = Number(aud.email_count || 0);
-    const totalCount = Number(aud.total_count || 0);
 
     // ===== Anti-empty-audience guard =====
     // SAFETY: never mark template as 'sent' on empty audience.

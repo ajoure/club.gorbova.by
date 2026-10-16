@@ -30,8 +30,8 @@ HTML передан владельцем через технический от�
 `build-release.mjs [output-file]` создаёт проверяемый `release.sql`. По решению владельца страница «Спасибо» переиспользует существующий блок бонусов анкеты и обе ссылки из CMS; меняется только заголовок новой страницы. Источник защищён хешем, оригинальная анкета не меняется.
 
 1. GitHub PR, тесты, checks, merge.
-2. Lovable Cloud: проверка точного SHA; только `20261016074828_webinar_registration_reuse.sql`, развёртывание `site-form-submit`, `broadcast-audience-preview`, `email-mass-broadcast`, `telegram-mass-broadcast`, `process-scheduled-broadcasts`.
-3. Скрипт CMS по умолчанию заканчивается `ROLLBACK`: две страницы + выключенный черновик уведомления email/Telegram. Ожидается 3 строки, 0 отправок. Сначала резервная копия и dry-run, затем один утверждённый DO, затем независимый read-back.
+2. Lovable Cloud: проверка точного SHA; только `migration-managed.sql` (точное тело `20261016074828_webinar_registration_reuse.sql` без transaction-control), развёртывание `site-form-submit`, `broadcast-audience-preview`, `email-mass-broadcast`, `telegram-mass-broadcast`, `process-scheduled-broadcasts`.
+3. Скрипт CMS `release.sql` по умолчанию заканчивается `ROLLBACK`. Для managed-инструментов генератор также готовит `release-managed-dry-run.sql` (guards и ожидаемые 3 строки без записей) и `release-managed-apply.sql` (один атомарный DO, без transaction-control). Две страницы + выключенный ручной черновик уведомления email/Telegram, 0 отправок. Сначала резервная копия и dry-run, затем неизменённый apply, затем независимый read-back. Повтор проверяет полное содержимое страниц, тариф, ссылки, тему, SEO и единственный выключенный шаблон; частичный результат останавливает выпуск.
 4. Сверить защищённые хеши ЦБ21, регистрации/покупки/очередь, CMS, продукт и тариф. Не включать глобальные уведомления эфиров, не запускать существующие очереди.
 5. Publish только после PASS. Снимки опубликованных ПК/телефона, контроль CTA и формы. Реальные OTP/контакт/сообщение для теста — с отдельного разрешения.
 

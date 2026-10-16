@@ -13,7 +13,7 @@ test('reviewed CMS release changes three targets, stays idempotent and stops on 
   execFileSync(process.execPath,['scripts/webinars/web-2410/build-release.mjs',output]);
   let sql=await readFile(output,'utf8');
   await db.exec(`CREATE TABLE site_pages(id uuid PRIMARY KEY,workspace_id uuid,status text,slug text,title text,product_id uuid,blocks jsonb,updated_at timestamptz,theme_settings jsonb DEFAULT '{}',seo_settings jsonb DEFAULT '{}');
-  CREATE TABLE tariffs(id uuid DEFAULT gen_random_uuid(),product_id uuid,public_id text,is_active boolean);
+  CREATE TABLE tariffs(id uuid DEFAULT gen_random_uuid(),product_id uuid,public_id text,is_active boolean,updated_at timestamptz DEFAULT '2026-10-15 16:09:41.566906+00');
   CREATE TABLE products_v2(id uuid,is_active boolean);
   CREATE TABLE live_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),slug text UNIQUE,title text,description text,product_id uuid,access_rule jsonb,status text,platform_status text,is_published boolean,scheduled_at timestamptz,replay_enabled boolean,invite_mode text,direct_access_allowed boolean,event_type text,source_kind text,event_timezone text,room_state text,metadata jsonb);
   CREATE TABLE live_event_access_rules(live_event_id uuid,rule_kind text,product_id uuid,tariff_id uuid,conditions jsonb,sort_order int);
@@ -24,8 +24,12 @@ test('reviewed CMS release changes three targets, stays idempotent and stops on 
   await db.query("INSERT INTO site_pages(id,blocks) VALUES('f2aceb14-0937-4c8d-814b-f62a2e03c6d6',$1)",[JSON.stringify([{id:'original-bonus',type:'questionnaire_bonuses',content:{channel_url:'https://t.me/+fixture',personal_chat_url:'https://t.me/m/fixture'}}])]);
   const sourceHash=(await db.query("SELECT md5(blocks::text) h FROM site_pages WHERE id='f2aceb14-0937-4c8d-814b-f62a2e03c6d6'")).rows[0].h;
   await db.query("INSERT INTO tariffs(product_id,public_id,is_active) VALUES($1,'T-000196',true);",[product]);await db.query('INSERT INTO products_v2 VALUES($1,true)',[product]);
+  const tariffHash=(await db.query('SELECT md5(to_jsonb(t)::text) h FROM tariffs t')).rows[0].h;
   // Fixture substitutes only known public CMS guard hashes; production artifacts stay strict.
-  sql=sql.replaceAll('76c074055c73f08392dd1c8fd3f92ce2','d751713988987e9331980363e24189ce').replaceAll('fa96f5c77fae37664f7342b4bcc597ec',sourceHash).replace('ROLLBACK;','COMMIT;');
+  sql=sql.replaceAll('76c074055c73f08392dd1c8fd3f92ce2','d751713988987e9331980363e24189ce').replaceAll('fa96f5c77fae37664f7342b4bcc597ec',sourceHash).replaceAll('fcc4e8260805641e6db9b4765cd302cd','99914b932bd37a50b983c5e7c90ae93b').replaceAll('b80b62b0718de9561b1921d44665bd03',tariffHash).replace('ROLLBACK;','COMMIT;');
+  await db.exec(sql.replace('v_dry_run boolean:=false','v_dry_run boolean:=true'));
+  assert.equal((await db.query('SELECT count(*)::int n FROM broadcast_templates')).rows[0].n,0);
+  assert.equal((await db.query('SELECT jsonb_array_length(blocks)::int n FROM site_pages WHERE id=$1',[landing])).rows[0].n,0);
   await db.exec(sql);
   const blocks=(await db.query('SELECT blocks FROM site_pages WHERE id=$1',[landing])).rows[0].blocks;
   assert.equal(blocks.length,2);assert.equal(blocks[1].content.fields.length,4);assert.equal(blocks[1].content.live_event_id,undefined);assert.ok(blocks[1].content.tariff_id);
@@ -34,8 +38,19 @@ test('reviewed CMS release changes three targets, stays idempotent and stops on 
   assert.equal(t.personal_chat_url,'https://t.me/m/fixture');
   assert.equal(t.title,'Спасибо, вы зарегистрированы на вебинар!');
   assert.equal((await db.query('SELECT count(*)::int n FROM live_events')).rows[0].n,0);
-  assert.deepEqual((await db.query('SELECT status,approval_status,channels FROM broadcast_templates')).rows,[{status:'draft',approval_status:'pending',channels:['email','telegram']}]);
+  assert.deepEqual((await db.query('SELECT status,approval_status,send_mode,trigger_kind,channels FROM broadcast_templates')).rows,[{status:'draft',approval_status:'pending',send_mode:'manual',trigger_kind:null,channels:['email','telegram']}]);
   await db.exec(sql);assert.equal((await db.query('SELECT count(*)::int n FROM live_events')).rows[0].n,0);
+  await db.exec("UPDATE broadcast_templates SET status='scheduled'");await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift/);await db.exec('ROLLBACK');await db.exec("UPDATE broadcast_templates SET status='draft'");
+  await db.query("UPDATE site_pages SET blocks=jsonb_set(blocks,'{1,content,redirectUrl}','\"/wrong\"') WHERE id=$1",[landing]);await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift/);await db.exec('ROLLBACK');await db.query('UPDATE site_pages SET blocks=$1 WHERE id=$2',[JSON.stringify(blocks),landing]);
   await db.query("UPDATE site_pages SET blocks='[]' WHERE id=$1",[landing]);await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift|webinar_existing_usage_drift/);await db.exec('ROLLBACK');
  }finally{await db.close();await rm(dir,{recursive:true,force:true})}
+});
+test('managed SQL artifacts are exact generated bodies without transaction control',async()=>{
+ const base=new URL('../webinars/web-2410/',import.meta.url);
+ const release=await readFile(new URL('release.sql',base),'utf8');
+ const managed=release.replace('BEGIN;\n','').replace('ROLLBACK;\n','');
+ assert.equal(await readFile(new URL('release-managed-apply.sql',base),'utf8'),managed);
+ assert.equal(await readFile(new URL('release-managed-dry-run.sql',base),'utf8'),managed.replace('v_dry_run boolean:=false','v_dry_run boolean:=true'));
+ const migration=await readFile(new URL('../../supabase/migrations/20261016074828_webinar_registration_reuse.sql',import.meta.url),'utf8');
+ assert.equal(await readFile(new URL('migration-managed.sql',base),'utf8'),migration.replace(/^BEGIN;\n/m,'').replace(/^COMMIT;\n/m,''));
 });

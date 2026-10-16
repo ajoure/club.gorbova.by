@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from "vitest";
-import {filterUsersByWebinarRegistration,parseWebinarRegistrationCondition} from "../../supabase/functions/broadcast-audience-preview/webinarRegistration";
+import {filterUsersByWebinarRegistration,parseWebinarRegistrationCondition,resolveWebinarBroadcastCounts} from "../../supabase/functions/broadcast-audience-preview/webinarRegistration";
 import {isFullBroadcastAudience} from "./broadcastConfirmation";
 import {evaluateWebinarBroadcastGuards as evaluateBroadcastGuards} from "../../supabase/functions/broadcast-audience-preview/webinarRegistration";
 const condition={page_id:"00000000-0000-4000-8000-000000000001",block_id:"00000000-0000-4000-8000-000000000002"};
@@ -21,7 +21,18 @@ describe("webinar registration broadcast audience",()=>{
   expect(isFullBroadcastAudience({webinar_registration:condition},"email")).toBe(false);
   const result=evaluateBroadcastGuards({filters:{webinar_registration:condition},messageText:"Webinar",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null});
   expect(result.blocked).toBe(false);
+  expect(evaluateBroadcastGuards({filters:{webinar_registration:condition},messageText:"Webinar",isDryRun:false,isTestSelf:false,allowFullAudience:true,confirmFullAudienceText:null})).toMatchObject({blocked:true,reason:"broadcast_blocked_full_audience_without_confirm"});
   expect(evaluateBroadcastGuards({filters:{webinar_registration:condition},messageText:"x",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null})).toMatchObject({blocked:true,reason:"broadcast_blocked_short_message"});
   expect(evaluateBroadcastGuards({filters:{webinar_registration:{}},messageText:"Webinar",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null}).blocked).toBe(true);
+ });
+ it("scheduled counts honor the template email-only-without-Telegram setting",async()=>{
+  const profiles=[{user_id:"telegram",email:"tg@example.test",telegram_user_id:123},{user_id:"email",email:"mail@example.test",telegram_user_id:null}];
+  const client={rpc:()=>({order:()=>({range:async()=>({data:profiles.map(p=>({user_id:p.user_id})),error:null})})}),from:(table:string)=>{
+   if(table==="profiles")return{select:()=>({in:async()=>({data:profiles,error:null})})};
+   return fixture([[...profiles.map(p=>({metadata:{user_id:p.user_id}}))]]).client.from();
+  }};
+  expect(await resolveWebinarBroadcastCounts(client,{webinar_registration:condition},true)).toEqual({telegram_count:1,email_count:1,total_count:2});
+  expect(await resolveWebinarBroadcastCounts(client,{webinar_registration:condition},false)).toEqual({telegram_count:1,email_count:2,total_count:2});
+  expect(await resolveWebinarBroadcastCounts(client,{webinar_registration:condition},true,["email"])).toEqual({telegram_count:1,email_count:1,total_count:1});
  });
 });
