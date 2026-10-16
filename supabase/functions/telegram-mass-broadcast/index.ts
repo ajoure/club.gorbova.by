@@ -1,5 +1,5 @@
-import { evaluateWebinarBroadcastGuards as evaluateBroadcastGuards } from "../broadcast-audience-preview/webinarRegistration.ts";
-import { filterUsersByWebinarRegistration } from "../broadcast-audience-preview/webinarRegistration.ts";
+import { evaluateWebinarBroadcastGuards as evaluateBroadcastGuards } from "./webinarRegistration.ts";
+import { filterUsersByWebinarRegistration } from "./webinarRegistration.ts";
 import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';

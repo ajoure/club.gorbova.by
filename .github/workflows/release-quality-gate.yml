@@ -111,6 +111,10 @@ jobs:
           deno test --no-lock supabase/functions/_shared/instagram-monitor_test.ts supabase/functions/_shared/instagram-apify_test.ts supabase/functions/instagram-monitor/release-health_test.ts supabase/functions/instagram-monitor-worker/provider_test.ts
       - name: Site questionnaire Edge types
         run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/site-form-submit/index.ts supabase/functions/broadcast-audience-preview/index.ts supabase/functions/email-mass-broadcast/index.ts supabase/functions/telegram-mass-broadcast/index.ts supabase/functions/process-scheduled-broadcasts/index.ts supabase/functions/verify-inline-otp/index.ts supabase/functions/site-questionnaire-visit/index.ts
+      - name: Isolated webinar broadcast packages
+        run: |
+          node scripts/webinars/sync-registration-helper.mjs --check
+          node scripts/webinars/check-isolated-functions.mjs
       - name: Paid CB20 addon fulfillment Edge types
         run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/grant-access-for-order/index.ts
       - name: Sales recipient types and isolated checkout tests

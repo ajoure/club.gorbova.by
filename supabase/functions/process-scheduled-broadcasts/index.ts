@@ -1,4 +1,4 @@
-import { resolveWebinarBroadcastCounts } from "../broadcast-audience-preview/webinarRegistration.ts";
+import { resolveWebinarBroadcastCounts } from "./webinarRegistration.ts";
 /**
  * process-scheduled-broadcasts
  *
