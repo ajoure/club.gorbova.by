@@ -1,4 +1,4 @@
-import { filterUsersByWebinarRegistration } from "../_shared/broadcastWebinarRegistration.ts";
+import { filterUsersByWebinarRegistration } from "../broadcast-audience-preview/webinarRegistration.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
 import { filterUsersByEducationCondition } from "../_shared/broadcastEducation.ts";
 

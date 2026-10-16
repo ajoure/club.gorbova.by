@@ -1,7 +1,7 @@
 import {describe,it,expect,vi} from "vitest";
-import {filterUsersByWebinarRegistration,parseWebinarRegistrationCondition} from "../../supabase/functions/_shared/broadcastWebinarRegistration";
+import {filterUsersByWebinarRegistration,parseWebinarRegistrationCondition} from "../../supabase/functions/broadcast-audience-preview/webinarRegistration";
 import {isFullBroadcastAudience} from "./broadcastConfirmation";
-import {evaluateBroadcastGuards} from "../../supabase/functions/_shared/broadcast-guards";
+import {evaluateWebinarBroadcastGuards as evaluateBroadcastGuards} from "../../supabase/functions/broadcast-audience-preview/webinarRegistration";
 const condition={page_id:"00000000-0000-4000-8000-000000000001",block_id:"00000000-0000-4000-8000-000000000002"};
 function fixture(batches:unknown[][],error:unknown=null){const eq=vi.fn();const range=vi.fn().mockImplementation(async(offset:number)=>({data:batches[offset/200]||[],error}));const chain={select:()=>chain,eq:(...args:unknown[])=>{eq(...args);return chain},order:()=>chain,range};return {client:{from:()=>chain},eq,range};}
 describe("webinar registration broadcast audience",()=>{
@@ -21,5 +21,7 @@ describe("webinar registration broadcast audience",()=>{
   expect(isFullBroadcastAudience({webinar_registration:condition},"email")).toBe(false);
   const result=evaluateBroadcastGuards({filters:{webinar_registration:condition},messageText:"Webinar",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null});
   expect(result.blocked).toBe(false);
+  expect(evaluateBroadcastGuards({filters:{webinar_registration:condition},messageText:"x",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null})).toMatchObject({blocked:true,reason:"broadcast_blocked_short_message"});
+  expect(evaluateBroadcastGuards({filters:{webinar_registration:{}},messageText:"Webinar",isDryRun:false,isTestSelf:false,allowFullAudience:false,confirmFullAudienceText:null}).blocked).toBe(true);
  });
 });
