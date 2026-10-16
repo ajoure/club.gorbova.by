@@ -40,6 +40,7 @@ test('reviewed CMS release changes three targets, stays idempotent and stops on 
   assert.equal((await db.query('SELECT count(*)::int n FROM live_events')).rows[0].n,0);
   assert.deepEqual((await db.query('SELECT status,approval_status,send_mode,trigger_kind,channels FROM broadcast_templates')).rows,[{status:'draft',approval_status:'pending',send_mode:'manual',trigger_kind:null,channels:['email','telegram']}]);
   await db.exec(sql);assert.equal((await db.query('SELECT count(*)::int n FROM live_events')).rows[0].n,0);
+  await db.query("UPDATE site_pages SET seo_settings='{\"title\":\"drift\"}' WHERE id=$1",[thanks]);await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift/);await db.exec('ROLLBACK');await db.query("UPDATE site_pages SET seo_settings='{}' WHERE id=$1",[thanks]);
   await db.exec("UPDATE broadcast_templates SET status='scheduled'");await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift/);await db.exec('ROLLBACK');await db.exec("UPDATE broadcast_templates SET status='draft'");
   await db.query("UPDATE site_pages SET blocks=jsonb_set(blocks,'{1,content,redirectUrl}','\"/wrong\"') WHERE id=$1",[landing]);await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift/);await db.exec('ROLLBACK');await db.query('UPDATE site_pages SET blocks=$1 WHERE id=$2',[JSON.stringify(blocks),landing]);
   await db.query("UPDATE site_pages SET blocks='[]' WHERE id=$1",[landing]);await assert.rejects(db.exec(sql),/webinar_cms_baseline_drift|webinar_existing_usage_drift/);await db.exec('ROLLBACK');

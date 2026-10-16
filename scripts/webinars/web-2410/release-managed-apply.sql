@@ -40,7 +40,7 @@ BEGIN
  v_thanks_blocks:=jsonb_build_array(v_bonus);
  SELECT count(*) INTO v_template_count FROM broadcast_templates WHERE metadata->>'webinar_release'='web_2410_v1';
  IF v_landing.blocks=v_blocks AND v_thanks.blocks=v_thanks_blocks AND v_thanks.theme_settings=v_source_thanks.theme_settings
- AND v_landing.seo_settings=v_seo AND v_landing.theme_settings='{}'::jsonb AND v_template_count=1
+ AND v_landing.seo_settings=v_seo AND v_thanks.seo_settings='{}'::jsonb AND v_landing.theme_settings='{}'::jsonb AND v_template_count=1
  AND EXISTS(SELECT 1 FROM broadcast_templates t WHERE t.metadata->>'webinar_release'='web_2410_v1' AND to_jsonb(t)@>v_template_expected) THEN
   RAISE NOTICE 'webinar_release_replayed rows=0';RETURN;END IF;
  IF v_landing.status IS DISTINCT FROM 'published' OR v_thanks.status IS DISTINCT FROM 'published' OR v_landing.slug IS DISTINCT FROM 'web-2410' OR v_thanks.slug IS DISTINCT FROM 'thx-web-2410'
