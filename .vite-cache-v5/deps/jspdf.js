@@ -2,7 +2,7 @@ import {
   __publicField
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/typeof.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/typeof.js
 function _typeof(o2) {
   "@babel/helpers - typeof";
   return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o3) {
@@ -12,7 +12,7 @@ function _typeof(o2) {
   }, _typeof(o2);
 }
 
-// node_modules/fflate/esm/browser.js
+// ../persist/node_modules/fflate/esm/browser.js
 var ch2 = {};
 var wk = (function(c2, id, msg, transfer, cb) {
   var w2 = new Worker(ch2[id] || (ch2[id] = URL.createObjectURL(new Blob([
@@ -1820,12 +1820,12 @@ var Unzip = (function() {
   return Unzip2;
 })();
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js
 function _arrayWithHoles(r) {
   if (Array.isArray(r)) return r;
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/iterableToArrayLimit.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/iterableToArrayLimit.js
 function _iterableToArrayLimit(r, l2) {
   var t2 = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"];
   if (null != t2) {
@@ -1848,14 +1848,14 @@ function _iterableToArrayLimit(r, l2) {
   }
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayLikeToArray.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayLikeToArray.js
 function _arrayLikeToArray(r, a2) {
   (null == a2 || a2 > r.length) && (a2 = r.length);
   for (var e = 0, n = Array(a2); e < a2; e++) n[e] = r[e];
   return n;
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/unsupportedIterableToArray.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/unsupportedIterableToArray.js
 function _unsupportedIterableToArray(r, a2) {
   if (r) {
     if ("string" == typeof r) return _arrayLikeToArray(r, a2);
@@ -1864,17 +1864,17 @@ function _unsupportedIterableToArray(r, a2) {
   }
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/nonIterableRest.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/nonIterableRest.js
 function _nonIterableRest() {
   throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/slicedToArray.js
+// ../persist/node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/slicedToArray.js
 function _slicedToArray(r, e) {
   return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest();
 }
 
-// node_modules/iobuffer/lib-esm/text.js
+// ../persist/node_modules/iobuffer/lib-esm/text.js
 function decode(bytes, encoding = "utf8") {
   const decoder = new TextDecoder(encoding);
   return decoder.decode(bytes);
@@ -1884,7 +1884,7 @@ function encode(str) {
   return encoder.encode(str);
 }
 
-// node_modules/iobuffer/lib-esm/IOBuffer.js
+// ../persist/node_modules/iobuffer/lib-esm/IOBuffer.js
 var defaultByteLength = 1024 * 8;
 var hostBigEndian = (() => {
   const array = new Uint8Array(4);
@@ -2495,7 +2495,7 @@ var IOBuffer = class _IOBuffer {
   }
 };
 
-// node_modules/fast-png/node_modules/pako/dist/pako.esm.mjs
+// ../persist/node_modules/fast-png/node_modules/pako/dist/pako.esm.mjs
 var Z_FIXED$1 = 4;
 var Z_BINARY = 0;
 var Z_TEXT = 1;
@@ -6670,7 +6670,7 @@ var { Inflate: Inflate2, inflate, inflateRaw, ungzip } = inflate_1$1;
 var Inflate_1 = Inflate2;
 var inflate_1 = inflate;
 
-// node_modules/fast-png/lib-esm/helpers/crc.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/crc.js
 var crcTable2 = [];
 for (let n = 0; n < 256; n++) {
   let c2 = n;
@@ -6702,7 +6702,7 @@ function checkCrc(buffer, crcLength, chunkName) {
   }
 }
 
-// node_modules/fast-png/lib-esm/helpers/unfilter.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/unfilter.js
 function unfilterNone(currentLine, newLine, bytesPerLine) {
   for (let i2 = 0; i2 < bytesPerLine; i2++) {
     newLine[i2] = currentLine[i2];
@@ -6778,7 +6778,7 @@ function paethPredictor(a2, b3, c2) {
     return c2;
 }
 
-// node_modules/fast-png/lib-esm/helpers/applyUnfilter.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/applyUnfilter.js
 function applyUnfilter(filterType, currentLine, newLine, prevLine, passLineBytes, bytesPerPixel) {
   switch (filterType) {
     case 0:
@@ -6801,7 +6801,7 @@ function applyUnfilter(filterType, currentLine, newLine, prevLine, passLineBytes
   }
 }
 
-// node_modules/fast-png/lib-esm/helpers/decodeInterlaceAdam7.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/decodeInterlaceAdam7.js
 var uint16 = new Uint16Array([255]);
 var uint8 = new Uint8Array(uint16.buffer);
 var osIsLittleEndian = uint8[0] === 255;
@@ -6868,7 +6868,7 @@ function swap16(val) {
   return (val & 255) << 8 | val >> 8 & 255;
 }
 
-// node_modules/fast-png/lib-esm/helpers/decodeInterlaceNull.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/decodeInterlaceNull.js
 var uint162 = new Uint16Array([255]);
 var uint82 = new Uint8Array(uint162.buffer);
 var osIsLittleEndian2 = uint82[0] === 255;
@@ -6923,7 +6923,7 @@ function swap162(val) {
   return (val & 255) << 8 | val >> 8 & 255;
 }
 
-// node_modules/fast-png/lib-esm/helpers/signature.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/signature.js
 var pngSignature = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
 function checkSignature(buffer) {
   if (!hasPngSignature(buffer.readBytes(pngSignature.length))) {
@@ -6942,7 +6942,7 @@ function hasPngSignature(array) {
   return true;
 }
 
-// node_modules/fast-png/lib-esm/helpers/text.js
+// ../persist/node_modules/fast-png/lib-esm/helpers/text.js
 var textChunkName = "tEXt";
 var NULL = 0;
 var latin1Decoder = new TextDecoder("latin1");
@@ -6977,7 +6977,7 @@ function readLatin1(buffer, length) {
   return latin1Decoder.decode(buffer.readBytes(length));
 }
 
-// node_modules/fast-png/lib-esm/internalTypes.js
+// ../persist/node_modules/fast-png/lib-esm/internalTypes.js
 var ColorType = {
   UNKNOWN: -1,
   GREYSCALE: 0,
@@ -7009,7 +7009,7 @@ var BlendOpType = {
   OVER: 1
 };
 
-// node_modules/fast-png/lib-esm/PngDecoder.js
+// ../persist/node_modules/fast-png/lib-esm/PngDecoder.js
 var PngDecoder = class extends IOBuffer {
   constructor(data, options = {}) {
     super(data);
@@ -7482,20 +7482,20 @@ function checkBitDepth(value) {
   return value;
 }
 
-// node_modules/fast-png/lib-esm/types.js
+// ../persist/node_modules/fast-png/lib-esm/types.js
 var ResolutionUnitSpecifier;
 (function(ResolutionUnitSpecifier2) {
   ResolutionUnitSpecifier2[ResolutionUnitSpecifier2["UNKNOWN"] = 0] = "UNKNOWN";
   ResolutionUnitSpecifier2[ResolutionUnitSpecifier2["METRE"] = 1] = "METRE";
 })(ResolutionUnitSpecifier || (ResolutionUnitSpecifier = {}));
 
-// node_modules/fast-png/lib-esm/index.js
+// ../persist/node_modules/fast-png/lib-esm/index.js
 function decodePng(data, options) {
   const decoder = new PngDecoder(data, options);
   return decoder.decode();
 }
 
-// node_modules/jspdf/dist/jspdf.es.min.js
+// ../persist/node_modules/jspdf/dist/jspdf.es.min.js
 var i = /* @__PURE__ */ (function() {
   return "undefined" != typeof window ? window : "undefined" != typeof global ? global : "undefined" != typeof self ? self : this;
 })();
@@ -13297,7 +13297,7 @@ function le() {
   }, t2.allowFsRead = void 0, t2.loadImageFile = t2.loadFile;
 })(E.API), (function(e) {
   function r() {
-    return (i.html2canvas ? Promise.resolve(i.html2canvas) : import("./html2canvas.esm-DA2PCJML.js")).catch(function(t2) {
+    return (i.html2canvas ? Promise.resolve(i.html2canvas) : import("./html2canvas.esm-YYXQSF47.js")).catch(function(t2) {
       return Promise.reject(new Error("Could not load html2canvas: " + t2));
     }).then(function(t2) {
       return t2.default ? t2.default : t2;
@@ -14006,7 +14006,7 @@ function le() {
   var h2 = l2.getContext("2d");
   h2.fillStyle = "#fff", h2.fillRect(0, 0, l2.width, l2.height);
   var f2 = { ignoreMouse: true, ignoreAnimation: true, ignoreDimensions: true }, d2 = this;
-  return (i.canvg ? Promise.resolve(i.canvg) : import("./index.es-FW4WJFXU.js")).catch(function(t3) {
+  return (i.canvg ? Promise.resolve(i.canvg) : import("./index.es-FHL6JYXB.js")).catch(function(t3) {
     return Promise.reject(new Error("Could not load canvg: " + t3));
   }).then(function(t3) {
     return t3.default ? t3.default : t3;
