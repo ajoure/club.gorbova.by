@@ -1,3 +1,4 @@
+import { parseWebinarRegistrationCondition } from "./broadcastWebinarRegistration.ts";
 // PATCH-GUARD: Защита ручных рассылок от катастрофического full-scan / коротких сообщений.
 // Применяется ТОЛЬКО к user-path. System-actor (scheduled dispatcher) проходит без проверок.
 //
@@ -42,6 +43,7 @@ function hasAudienceRestriction(filters: any): boolean {
   // New schema
   if (Array.isArray(filters.include) && filters.include.length > 0) return true;
   if (Array.isArray(filters.exclude) && filters.exclude.length > 0) return true;
+  if (parseWebinarRegistrationCondition(filters.webinar_registration)) return true;
   if (Array.isArray(filters.club_ids) && filters.club_ids.length > 0) return true;
 
   // Legacy schema

@@ -1,3 +1,4 @@
+import { filterUsersByWebinarRegistration } from "../_shared/broadcastWebinarRegistration.ts";
 import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
 import { BroadcastSmtpError, processManualEmailBatch, type ManualEmailJob } from "./manualEmailQueue.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -703,6 +704,11 @@ Deno.serve(async (req) => {
         filters.education,
       );
       filteredProfiles = filteredProfiles.filter((profile) => Boolean(profile.user_id && eligible.has(profile.user_id)));
+      foundCount = filteredProfiles.length;
+    }
+    if (filters?.webinar_registration !== undefined) {
+      const eligible = await filterUsersByWebinarRegistration(supabase, filteredProfiles.map(profile => profile.user_id).filter((id): id is string => Boolean(id)), filters.webinar_registration);
+      filteredProfiles = filteredProfiles.filter(profile => Boolean(profile.user_id && eligible.has(profile.user_id)));
       foundCount = filteredProfiles.length;
     }
     if (isSystemActor && Array.isArray(filters?.direct_user_ids)) {

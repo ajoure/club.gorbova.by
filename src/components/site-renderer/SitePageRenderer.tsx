@@ -222,7 +222,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "social": return <SocialSection content={block.content} />;
       case "logos": return <LogosSection content={block.content} />;
       case "spacer": return <SpacerSection content={block.content} />;
-      case "form": return <FormSection content={block.content} pageId={pageId} blockId={block.id} isPreview={isPreview} />;
+      case "form": return block.content.webinar_registration === true && block.content.presentation === "dialog" && !isPreview ? null : <FormSection content={block.content} pageId={pageId} blockId={block.id} isPreview={isPreview} />;
       case "questionnaire_bonuses": return <QuestionnaireBonusesSection content={block.content} isPreview={isPreview} />;
       case "accordion": return <section className="py-6 px-6"><div className="max-w-3xl mx-auto"><AccordionBlock content={block.content as any} onChange={() => {}} isEditing={false} /></div></section>;
       case "tabs": return <section className="py-6 px-6"><div className="max-w-3xl mx-auto"><TabsBlock content={block.content as any} onChange={() => {}} isEditing={false} /></div></section>;

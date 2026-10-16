@@ -97,6 +97,7 @@ import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { BroadcastRecipientsSheet } from "./BroadcastRecipientsSheet";
 import { RuleListEditor } from "./RuleListEditor";
 import { BroadcastFullAudienceDialog, type FullAudienceConfirmation } from "./BroadcastFullAudienceDialog";
+import { WebinarRegistrationAudienceFilter } from "./WebinarRegistrationAudienceFilter";
 import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
 
 const BroadcastAnalyticsSection = lazy(() =>
@@ -118,6 +119,7 @@ interface BroadcastFilters {
   club_membership: "current" | "ever" | "any";
   bot_ids: string[];      // [] = primary bot
   channels?: ("telegram" | "email")[];
+  webinar_registration?: { page_id: string; block_id: string };
   education?: {
     module_id: string;
     lesson_id: string;
@@ -282,6 +284,7 @@ export function BroadcastsTabContent() {
     club_ids: filters.club_ids,
     club_membership: filters.club_membership,
     education: filters.education,
+    webinar_registration: filters.webinar_registration,
     include_archived: includeArchived,
   }), [filters, includeArchived]);
 
@@ -923,7 +926,7 @@ export function BroadcastsTabContent() {
       }
       const af = (tpl.audience_filters as Record<string, unknown>) || {};
       setIncludeArchived(Boolean(af.include_archived));
-      if (af.include || af.exclude || af.club_ids) {
+      if (af.include || af.exclude || af.club_ids || af.webinar_registration) {
         setFilters({
           include: ((af.include as AudienceRule[]) || []),
           exclude: ((af.exclude as AudienceRule[]) || []),
@@ -931,6 +934,7 @@ export function BroadcastsTabContent() {
           club_membership: ((af.club_membership as "current" | "ever" | "any") || "current"),
           bot_ids: ((af.bot_ids as string[]) || []),
           education: af.education as BroadcastFilters["education"],
+          webinar_registration: af.webinar_registration as BroadcastFilters["webinar_registration"],
         });
       }
       const mode = String(tpl.send_mode || "manual");
@@ -2142,6 +2146,8 @@ export function BroadcastsTabContent() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <WebinarRegistrationAudienceFilter value={filters.webinar_registration} onChange={value => setFilters(current => ({ ...current, webinar_registration: value }))} />
+              <Separator />
               {/* Include rules */}
               <RuleListEditor
                 title="Включить"

@@ -23,7 +23,7 @@ const answers = [
   { ...fields[2],value:'+375 29 111 22 33' }, { ...fields[3],mapping:'none',value:'My complete answer' },
 ];
 let exportedFixtureVerified = false;
-async function fixture({ applyOfferPriceFix = true } = {}) {
+export async function fixture({ applyOfferPriceFix = true } = {}) {
   const db = new PGlite();
   const schemaSQL = `CREATE SCHEMA auth; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz,raw_app_meta_data jsonb DEFAULT '{}');
@@ -181,7 +181,7 @@ test('sales identity RPC is service-only and does not expose auth rows to its ca
     await db.exec('RESET ROLE');
   }finally{await db.close()}
 });
-async function notifications(db) {
+export async function notifications(db) {
   await db.exec(`CREATE TABLE broadcast_templates(id uuid PRIMARY KEY,channel text,channels text[],trigger_kind text,status text,approval_status text,metadata jsonb,
       CONSTRAINT broadcast_templates_trigger_kind_check CHECK(trigger_kind IN ('manual','lesson_event','scheduled_condition')));
     CREATE TABLE broadcast_automation_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),template_id uuid,user_id uuid,event_key text,status text DEFAULT 'pending',

@@ -30,6 +30,7 @@ import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
 import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock, SitePage } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
+import { SiteRegistrationDialog } from "@/components/site-renderer/SiteRegistrationDialog";
 import { getCanonicalHostname } from "@/utils/accessAlias";
 import { applySitePageSeo } from "@/lib/sitePageSeo";
 
@@ -532,6 +533,8 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
         pricingData={pricingData}
         pageId={page.id}
       />
+
+      <SiteRegistrationDialog blocks={blocks} pageId={page.id} />
 
       {resolved && (() => {
         const selection = checkoutSelection ?? {

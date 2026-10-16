@@ -297,12 +297,17 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
             <p className="text-[10px] text-muted-foreground">Черновик сохраняется на устройстве на 7 дней. В полях анкеты должен быть Email с привязкой к email контакта.</p>
             {questionnaireFirst && <div className="space-y-2">
               <div className="flex items-center justify-between">
+                <Label className="text-xs">Регистрация на вебинар без вопросов</Label>
+                <Switch checked={content.webinar_registration === true} onCheckedChange={v => onChange({ ...content, webinar_registration: v, ...(v ? { contact_first: true } : {}) })} />
+              </div>
+              {content.webinar_registration === true && <p className="text-xs">Только Имя, Фамилия, Email и Телефон. После кода и support-бота — страница «Спасибо». Покупки и учебные доступы не создаются.</p>}
+              <div className="flex items-center justify-between">
                 <Label className="text-xs">Сохранять контакты до вопросов анкеты</Label>
                 <Switch checked={content.contact_first === true} onCheckedChange={v => onChange({ ...content, contact_first: v })} />
               </div>
               <p className="text-[10px] text-muted-foreground">Контакт сохранится даже без ответов. Telegram подключается через support-бота; удалите ручное поле Telegram из списка полей.</p>
             </div>}
-            {questionnaireFirst && <QuestionnaireSourceLinks pageId={pageId} />}
+            {questionnaireFirst && content.webinar_registration !== true && <QuestionnaireSourceLinks pageId={pageId} />}
             {!questionnaireFirst && <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
               <div className="space-y-1">

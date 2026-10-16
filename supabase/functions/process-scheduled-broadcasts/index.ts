@@ -1,3 +1,4 @@
+import { resolveWebinarBroadcastCounts } from "../_shared/broadcastWebinarRegistration.ts";
 /**
  * process-scheduled-broadcasts
  *
@@ -417,7 +418,9 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const aud = (audienceRpc ?? {}) as Record<string, unknown>;
+    const aud = tpl.audience_filters?.webinar_registration !== undefined
+      ? await resolveWebinarBroadcastCounts(supabase, tpl.audience_filters)
+      : (audienceRpc ?? {}) as Record<string, unknown>;
     const tgCount = Number(aud.telegram_count || 0);
     const emailCount = Number(aud.email_count || 0);
     const totalCount = Number(aud.total_count || 0);

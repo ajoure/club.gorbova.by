@@ -70,7 +70,7 @@ interface FormField {
 }
 
 interface RequestBody {
-  action?: "bonus_channel_invite" | "questionnaire_telegram_status" | "questionnaire_contact";
+  action?: "bonus_channel_invite" | "questionnaire_telegram_status" | "questionnaire_contact" | "webinar_registration";
   page_id: string;
   /** Stable ID of the form block rendered on the public page. */
   block_id?: string;
@@ -150,6 +150,9 @@ Deno.serve(async (req) => {
       return json({ error: "Form configuration not found or ambiguous" }, 400);
     }
     const contactOnly = body.action === "questionnaire_contact";
+    const webinarRegistration = body.action === "webinar_registration";
+    if (webinarRegistration && !formSettings.webinarRegistration) return json({ error: "webinar_registration_disabled" }, 400);
+    if (formSettings.webinarRegistration && !contactOnly && !webinarRegistration) return json({ error: "webinar_registration_action_required" }, 400);
     if (contactOnly && !formSettings.contactFirst) return json({ error: "questionnaire_contact_mode_disabled" }, 400);
     const configuredFields = contactOnly && Array.isArray(formSettings.fields)
       ? formSettings.fields.filter(isQuestionnaireContactField) : formSettings.fields;
@@ -187,7 +190,7 @@ Deno.serve(async (req) => {
       }
       // SQL rechecks the current published block, canonical profile, account ban,
       // routing and answers under one transaction. No partial success or access grant.
-      const { data: result, error: transactionError } = await admin.rpc(contactOnly ? "save_site_questionnaire_contact" : "submit_site_questionnaire", {
+      const { data: result, error: transactionError } = await admin.rpc(contactOnly ? "save_site_questionnaire_contact" : webinarRegistration ? "submit_site_webinar_registration" : "submit_site_questionnaire", {
         p_page_id: page_id, p_block_id: body.block_id, p_user_id: identity.user.id,
         p_submission_key: body.submission_key, p_fields: fields,
         ...(!contactOnly ? { p_source_code: parseQuestionnaireSource(body.source_code) } : {}), p_consent_version: body.privacy_consent.version,

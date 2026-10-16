@@ -1766,7 +1766,7 @@ export function HtmlIframePreview({
         const payload = data.payload && typeof data.payload === 'object' ? data.payload : {};
         if (!action) return;
         try {
-          window.dispatchEvent(new CustomEvent('lovable:site-action', { detail: { action, payload } }));
+          window.dispatchEvent(new CustomEvent('lovable:site-action', { detail: { action, payload, sourcePageId: pageId, sourceBlockId: blockId } }));
         } catch {}
         return;
       }

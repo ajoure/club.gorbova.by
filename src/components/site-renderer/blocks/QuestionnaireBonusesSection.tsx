@@ -8,7 +8,7 @@ export function QuestionnaireBonusesSection({ content }: { content: Record<strin
   const personalChatUrl = questionnairePersonalChatUrl(content.personal_chat_url);
   return <section className="questionnaire-bonuses px-4 py-8"><div className="questionnaire-bonuses__inner mx-auto max-w-2xl">
     <div className="questionnaire-bonuses__intro space-y-4">
-    <h2 className="text-2xl font-semibold">Спасибо за заполнение анкеты!</h2>
+    <h2 className="text-2xl font-semibold">{typeof content.title === "string" && content.title.trim() ? content.title : "Спасибо за заполнение анкеты!"}</h2>
     <p>Присоединяйтесь к бесплатному Telegram-каналу и напишите Катерине.</p>
     </div>
     <div className="questionnaire-bonuses__actions space-y-4">
