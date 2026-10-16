@@ -1,10 +1,12 @@
+import { evaluateWebinarBroadcastGuards as evaluateBroadcastGuards } from "../broadcast-audience-preview/webinarRegistration.ts";
+import { filterUsersByWebinarRegistration } from "../broadcast-audience-preview/webinarRegistration.ts";
 import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
 import { preserveQuestionnaireUrls, questionnaireProtectedUrls as questionnaireProtectedUrlsForRequest } from './questionnaireLinks.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { parseAdditionalTelegramButton, telegramUrlKeyboard, type TelegramUrlButton } from './broadcastButtons.ts';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
-import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
+import { auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 import { filterUsersByEducationCondition } from '../_shared/broadcastEducation.ts';
 import {
   applyAnalyticsOutcomes,
@@ -85,6 +87,7 @@ interface BroadcastFilters {
   bot_ids?: string[];
   direct_user_ids?: string[];
   education?: Record<string, unknown>;
+  webinar_registration?: Record<string, unknown>;
   channel?: 'telegram' | 'email' | 'any';
 }
 
@@ -549,8 +552,13 @@ Deno.serve(async (req) => {
       profiles = profiles.filter((profile) => educationUserIds.has(profile.user_id));
     }
 
+    if (filters.webinar_registration !== undefined) {
+      const eligible = await filterUsersByWebinarRegistration(supabase, profiles.map(profile => profile.user_id), filters.webinar_registration);
+      profiles = profiles.filter(profile => eligible.has(profile.user_id));
+    }
+
     // Always include administrators
-    const appendAdministrators = !directUserIds && !filters.education;
+    const appendAdministrators = !directUserIds && !filters.education && filters.webinar_registration === undefined;
     const { data: adminRoles } = appendAdministrators ? await supabase
       .from('user_roles')
       .select('user_id')

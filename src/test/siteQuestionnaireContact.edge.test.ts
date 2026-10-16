@@ -18,11 +18,11 @@ const fields = [
   { label: "Instagram", type: "text", mapping: "instagram_url", required: true },
   { label: "Вопрос", type: "textarea", required: true },
 ];
-function harness(enabled = true, confirmed = true) {
+function harness(enabled = true, confirmed = true, webinar = false) {
   let handler: (request: Request) => Promise<Response> = () => { throw new Error("missing handler"); };
   const rpc = vi.fn().mockResolvedValue({ data: { success: true, contact_saved: true }, error: null });
   const getUser = vi.fn().mockResolvedValue({ data: { user: { id: id(3), email: "owner@example.invalid", email_confirmed_at: confirmed ? "2026-01-01" : null } }, error: null });
-  const page = { status: "published", blocks: [{ id: id(2), type: "form", content: { auth_mode: true, questionnaire_first: true, contact_first: enabled, fields } }] };
+  const page = { status: "published", blocks: [{ id: id(2), type: "form", content: { auth_mode: true, questionnaire_first: true, contact_first: enabled, webinar_registration: webinar, fields } }] };
   const admin = { auth: { getUser }, rpc, from: () => {
     const chain = { select: () => chain, eq: () => chain, single: async () => ({ data: page, error: null }) }; return chain;
   } };
@@ -62,4 +62,22 @@ describe("contact-first Edge boundary", () => {
     expect((await send({ fields: [{ label: "Телефон", type: "text", mapping: "none", value: "1" }] })).status).toBe(400);
     expect(rpc).not.toHaveBeenCalled(); expect(getUser).not.toHaveBeenCalled();
   });
+});
+
+describe("webinar registration Edge routing", () => {
+ it("uses the dedicated idempotent RPC with the JWT owner", async () => {
+  const { send, rpc } = harness(true, true, true);
+  const response = await send({ action: "webinar_registration", fields: fields.map((f,i) => ({ ...f, value: ["owner@example.invalid", "+375291234567", "own.profile", "test"][i] })) });
+  expect(response.status).toBe(200);
+  expect(rpc.mock.calls[0][0]).toBe("submit_site_webinar_registration");
+  expect(rpc.mock.calls[0][1].p_user_id).toBe(id(3));
+ });
+ it("cannot opt in a questionnaire or bypass the webinar action", async () => {
+  const disabled = harness();
+  expect((await disabled.send({ action: "webinar_registration" })).status).toBe(400);
+  expect(disabled.rpc).not.toHaveBeenCalled();
+  const webinar = harness(true, true, true);
+  expect((await webinar.send({ action: undefined })).status).toBe(400);
+  expect(webinar.rpc).not.toHaveBeenCalled();
+ });
 });

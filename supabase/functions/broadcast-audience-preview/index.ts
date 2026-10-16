@@ -1,3 +1,4 @@
+import { filterUsersByWebinarRegistration } from "../broadcast-audience-preview/webinarRegistration.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
 import { filterUsersByEducationCondition } from "../_shared/broadcastEducation.ts";
 
@@ -62,7 +63,7 @@ Deno.serve(async (req) => {
       ...filters, __system_bypass: true,
       __preview_offset: pageOffset, __preview_limit: pageLimit,
     };
-    if (filters.education) {
+    if (filters.education || filters.webinar_registration !== undefined) {
       // Read bounded batches so PostgREST's row cap cannot hide later recipients.
       const userIds: string[] = [];
       for (let offset = 0; ; offset += 200) {
@@ -71,9 +72,10 @@ Deno.serve(async (req) => {
         ).order("user_id").range(offset, offset + 199);
         if (usersError) throw usersError;
         const batch = (candidates || []) as Array<{ user_id: string }>;
-        const eligible = await filterUsersByEducationCondition(
+        let eligible = await filterUsersByEducationCondition(
           admin, batch.map((row) => row.user_id), filters.education,
         );
+        if (filters.webinar_registration !== undefined) eligible = await filterUsersByWebinarRegistration(admin, [...eligible], filters.webinar_registration);
         userIds.push(...eligible);
         if (batch.length < 200) break;
       }

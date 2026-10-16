@@ -25,13 +25,14 @@ function fixture(count = 59, permitted = true) {
   const admin = { rpc, from: () => ({ select: () => ({ in: async (_key: string, ids: string[]) => ({ data: profiles.filter(p => ids.includes(p.user_id)), error: null }) }) }) };
   const client = vi.fn().mockReturnValueOnce({ auth: { getClaims: async () => ({ data: { claims: { sub: "operator" } }, error: null }) } }).mockReturnValue(admin);
   const education = vi.fn(async (_db, ids: string[]) => new Set(ids));
-  new Function("createClient", "filterUsersByEducationCondition", "Deno", executable)(client, education, {
+  const webinar = vi.fn(async (_db, ids: string[]) => new Set(ids.filter(id => id === "user-1")));
+  new Function("createClient", "filterUsersByEducationCondition", "filterUsersByWebinarRegistration", "Deno", executable)(client, education, webinar, {
     env: { get: () => "synthetic-test" }, serve: (handler: typeof handle) => { handle = handler; },
   });
   const request = (body: object, auth = true) => handle(new Request("https://example.invalid", {
     method: "POST", headers: auth ? { Authorization: "Bearer synthetic-test" } : {}, body: JSON.stringify(body),
   }));
-  return { request, rpc, education };
+  return { request, rpc, education, webinar };
 }
 
 describe("broadcast audience preview endpoint", () => {
@@ -55,6 +56,14 @@ describe("broadcast audience preview endpoint", () => {
     expect(result.users).toHaveLength(9);
     expect(result.users[8].id).toBe("00258");
     expect(education).toHaveBeenCalledTimes(2);
+  });
+  it("webinar preview reports only registered recipients rather than the whole contact base", async () => {
+    const { request, webinar } = fixture(59);
+    const response = await request({ filters: { webinar_registration: { page_id: "page", block_id: "block" } } });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.total_count).toBe(1);expect(result.telegram_count).toBe(1);expect(result.users[0].id).toBe("00001");
+    expect(webinar).toHaveBeenCalledOnce();
   });
   it("requires authentication and section permissions before audience queries", async () => {
     const { request, rpc } = fixture(59, false);

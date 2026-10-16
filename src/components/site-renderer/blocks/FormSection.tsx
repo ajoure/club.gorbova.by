@@ -48,6 +48,7 @@ interface FormSectionProps {
   blockId?: string;
   /** True when rendered inside admin editor preview — disables real submit */
   isPreview?: boolean;
+  initialContactValues?: Record<string, string>;
 }
 
 function isSafeRedirectUrl(url: string): boolean {
@@ -90,7 +91,7 @@ const passwordSchema = z.string().min(
   `Пароль должен быть не менее ${USER_PASSWORD_MIN_LENGTH} символов`,
 );
 
-export function FormSection({ content, pageId, blockId, isPreview }: FormSectionProps) {
+export function FormSection({ content, pageId, blockId, isPreview, initialContactValues }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
@@ -100,7 +101,7 @@ export function FormSection({ content, pageId, blockId, isPreview }: FormSection
   const telegramLinkEnabled = (content.telegram_link as boolean) ?? false;
 
   if (authMode && content.questionnaire_first === true) {
-    return <QuestionnaireFirstForm content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} />;
+    return <QuestionnaireFirstForm content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} initialContactValues={initialContactValues} />;
   }
 
   if (!authMode) {

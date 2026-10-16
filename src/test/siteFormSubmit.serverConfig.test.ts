@@ -44,6 +44,7 @@ describe("site-form-submit server form configuration", () => {
       authMode: false,
       questionnaireFirst: false,
       contactFirst: false,
+      webinarRegistration: false,
       fields: undefined,
       productId: "product-a",
       tariffId: "tariff-a",
@@ -68,6 +69,7 @@ describe("site-form-submit server form configuration", () => {
       authMode: true,
       questionnaireFirst: false,
       contactFirst: false,
+      webinarRegistration: false,
       fields: undefined,
       productId: undefined,
       tariffId: undefined,
@@ -89,6 +91,7 @@ describe("site-form-submit server form configuration", () => {
       authMode: false,
       questionnaireFirst: false,
       contactFirst: false,
+      webinarRegistration: false,
       fields: undefined,
       productId: undefined,
       tariffId: undefined,
@@ -104,4 +107,9 @@ it("enables contact-first only inside the explicitly enabled password-free quest
     expect(resolveServerFormSettings([form("one", content)], "one")?.contactFirst).toBe(false);
   }
   expect(resolveServerFormSettings([form("one", { auth_mode: true, questionnaire_first: true, contact_first: true })], "one")?.contactFirst).toBe(true);
+});
+
+it("webinar mode is selected only by the complete saved server configuration", () => {
+  expect(resolveServerFormSettings([form("one", { webinar_registration: true })], "one")?.webinarRegistration).toBe(false);
+  expect(resolveServerFormSettings([form("one", { auth_mode: true, questionnaire_first: true, contact_first: true, webinar_registration: true })], "one")?.webinarRegistration).toBe(true);
 });

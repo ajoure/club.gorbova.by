@@ -24,12 +24,14 @@ interface Props {
   pageId?: string;
   blockId?: string;
   isPreview?: boolean;
+  initialContactValues?: Record<string, string>;
 }
 
 /** Explicitly enabled on a published form; the existing login-first forms stay unchanged. */
-export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: Props) {
+export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview, initialContactValues }: Props) {
   const fields = (content.fields as Field[]) || [];
   const contactFirst = content.contact_first === true;
+  const registrationOnly = content.webinar_registration === true;
   const { user, loading: authLoading } = useAuth();
   const verifiedSession = !!user?.email_confirmed_at;
   const otp = useInlineEmailOtp();
@@ -39,7 +41,14 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     if (isPreview) return null;
     try { return readQuestionnaireDraft(window.localStorage, key, schema, fields.length); } catch { return null; }
   });
-  const [answers, setAnswers] = useState<Record<string, string>>(initial?.answers || {});
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    const seeded = { ...initial?.answers };
+    fields.forEach((field, i) => {
+      const value = initialContactValues?.[field.mapping || ""];
+      if (registrationOnly && typeof value === "string" && value.trim()) seeded[String(i)] = value.trim();
+    });
+    return seeded;
+  });
   const [visitId] = useState(() => crypto.randomUUID());
   const journeyRequest = useRef<Promise<QuestionnaireJourney | null> | null>(null);
   useEffect(() => {
@@ -132,8 +141,8 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
 
   const onTelegramLinked = useCallback((linked: boolean) => {
     setTelegramLinked(linked);
-    if (contactFirst && linked) setStep("answers");
-  }, [contactFirst]);
+    if (contactFirst && linked && !registrationOnly) setStep("answers");
+  }, [contactFirst, registrationOnly]);
 
   async function submit() {
     if (submitted.current) return;
@@ -142,6 +151,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
     const journey = await journeyRequest.current;
     const { data, error: submitError } = await supabase.functions.invoke("site-form-submit", {
       body: {
+        ...(registrationOnly ? { action: "webinar_registration" } : {}),
         page_id: pageId, block_id: blockId, submission_key: submissionKey,
         source_code: source, ...(journey || {}),
         privacy_consent: { accepted: privacyConsent, version: CONSENT_POLICY_VERSION },
@@ -159,7 +169,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
   async function sendAnswers() {
     if (working.current || authLoading || !validate(step === "contacts" ? contactFields.map(({ i }) => i) : undefined)) return;
     setError("");
-    if (isPreview) { setStep(contactFirst && step === "contacts" ? "answers" : "success"); return; }
+    if (isPreview) { setStep(!registrationOnly && contactFirst && step === "contacts" ? "answers" : "success"); return; }
     working.current = true; setBusy(true);
     try {
       // Do not attach a questionnaire for a different email to an already-open account.
@@ -197,25 +207,25 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
 
   const pending = busy || otp.isSending || otp.isVerifying || !!authLoading;
   return (
-    <section className="questionnaire-form py-8 px-4">
+    <section className={`questionnaire-form py-8 px-4${registrationOnly ? " webinar-registration-form" : ""}`}>
       <div className="max-w-2xl mx-auto space-y-6">
         {typeof content.title === "string" && content.title && <SafeHtml html={content.title} as="h2" className="text-2xl font-bold" />}
         {typeof content.subtitle === "string" && content.subtitle && <SafeHtml html={content.subtitle} as="p" />}
         {step === "success" ? (
           <div className="space-y-4">
-            <div role="status"><h2 className="text-xl font-semibold">Анкета сохранена</h2><p>Спасибо за ваши ответы.</p></div>
+            <div role="status"><h2 className="text-xl font-semibold">{registrationOnly ? "Вы зарегистрированы на вебинар" : "Анкета сохранена"}</h2><p>{registrationOnly ? "Ссылка на участие будет отправлена на почту и в support-бот." : "Спасибо за ваши ответы."}</p></div>
           </div>
         ) : step === "telegram" ? (
           <div className="space-y-4">
             <h2 className="text-xl font-semibold">Подключите Telegram</h2>
-            <p>{contactFirst ? "Контакты сохранены. Подключите support-бота и продолжайте заполнение анкеты. Ник Telegram не нужен." : "Почта подтверждена. Подключите support-бота, чтобы мы могли общаться с вами лично. Ответы сохранены в черновике."}</p>
+            <p>{registrationOnly ? "Контакты сохранены. Подключите support-бота, чтобы получить ссылку на вебинар. Ник Telegram не нужен." : contactFirst ? "Контакты сохранены. Подключите support-бота и продолжайте заполнение анкеты. Ник Telegram не нужен." : "Почта подтверждена. Подключите support-бота, чтобы мы могли общаться с вами лично. Ответы сохранены в черновике."}</p>
             {pageId && <QuestionnaireTelegramStep pageId={pageId} onLinkedChange={onTelegramLinked} />}
-            {!contactFirst && <Button type="button" className="w-full" disabled={pending || !telegramLinked} onClick={() => {
+            {(!contactFirst || registrationOnly) && <Button type="button" className="w-full" disabled={pending || !telegramLinked} onClick={() => {
               if (working.current || !telegramLinked) return;
               working.current = true; setBusy(true); setError("");
-              void submit().catch(() => setError("Не удалось сохранить анкету. Проверьте подключение бота и попробуйте ещё раз — ответы сохранены."))
+              void submit().catch(() => setError(registrationOnly ? "Не удалось завершить регистрацию. Проверьте подключение бота и попробуйте ещё раз." : "Не удалось сохранить анкету. Проверьте подключение бота и попробуйте ещё раз — ответы сохранены."))
                 .finally(() => { working.current = false; setBusy(false); });
-            }}>Сохранить анкету и получить бонусы</Button>}
+            }}>{registrationOnly ? "Завершить регистрацию" : "Сохранить анкету и получить бонусы"}</Button>}
           </div>
         ) : step === "otp" ? (
           <form className="space-y-4" onSubmit={e => { e.preventDefault(); void verifyAndSubmit(); }}>
@@ -240,7 +250,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview }: 
                 <Label htmlFor={id} className="leading-relaxed">{field.label}{field.required ? "*" : ""}</Label>
                 {field.type === "phone" && <p className="text-sm text-muted-foreground">С кодом страны, например +375291234567.</p>}
                 {field.type === "textarea" ? <Textarea id={id} value={answers[String(i)] || ""} rows={4} maxLength={10_000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />
-                  : <Input id={id} type={field.type === "phone" ? "tel" : field.type === "email" ? "email" : "text"} value={answers[String(i)] || ""} maxLength={1000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />}
+                  : <Input id={id} autoComplete={!registrationOnly ? undefined : field.mapping === "first_name" ? "given-name" : field.mapping === "last_name" ? "family-name" : field.type === "email" ? "email" : field.type === "phone" ? "tel" : undefined} type={field.type === "phone" ? "tel" : field.type === "email" ? "email" : "text"} value={answers[String(i)] || ""} maxLength={1000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />}
               </div>;
             })}
             {draftSaved && <p className="text-sm text-muted-foreground" role="status">Черновик сохранён на этом устройстве. Можно вернуться к заполнению в течение 7 дней.</p>}

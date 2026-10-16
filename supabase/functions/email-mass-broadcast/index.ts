@@ -1,9 +1,11 @@
+import { evaluateWebinarBroadcastGuards as evaluateBroadcastGuards } from "../broadcast-audience-preview/webinarRegistration.ts";
+import { filterUsersByWebinarRegistration } from "../broadcast-audience-preview/webinarRegistration.ts";
 import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
 import { BroadcastSmtpError, processManualEmailBatch, type ManualEmailJob } from "./manualEmailQueue.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
-import { evaluateBroadcastGuards, auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
+import { auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
 import { filterUsersByEducationCondition } from "../_shared/broadcastEducation.ts";
 import {
   applyAnalyticsOutcomes,
@@ -703,6 +705,11 @@ Deno.serve(async (req) => {
         filters.education,
       );
       filteredProfiles = filteredProfiles.filter((profile) => Boolean(profile.user_id && eligible.has(profile.user_id)));
+      foundCount = filteredProfiles.length;
+    }
+    if (filters?.webinar_registration !== undefined) {
+      const eligible = await filterUsersByWebinarRegistration(supabase, filteredProfiles.map(profile => profile.user_id).filter((id): id is string => Boolean(id)), filters.webinar_registration);
+      filteredProfiles = filteredProfiles.filter(profile => Boolean(profile.user_id && eligible.has(profile.user_id)));
       foundCount = filteredProfiles.length;
     }
     if (isSystemActor && Array.isArray(filters?.direct_user_ids)) {

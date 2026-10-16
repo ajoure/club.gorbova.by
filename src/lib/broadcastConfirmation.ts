@@ -8,6 +8,7 @@ type ConfirmationFilters = {
   club_ids?: string[];
   bot_ids?: string[];
   education?: unknown;
+  webinar_registration?: unknown;
 };
 
 /** Bot selection narrows Telegram only; it cannot restrict an email audience. */
@@ -16,6 +17,7 @@ export function isFullBroadcastAudience(filters: ConfirmationFilters, channel: B
     && !filters.exclude?.length
     && !filters.club_ids?.length
     && !filters.education
+    && !filters.webinar_registration
     && (channel === "email" || !filters.bot_ids?.length);
 }
 

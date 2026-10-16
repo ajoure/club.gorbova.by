@@ -45,6 +45,29 @@ describe("questionnaire-first journey", () => {
   });
   afterEach(cleanup);
 
+  it("webinar registration reuses OTP and bot but never displays a questionnaire step", async () => {
+    const registration = { contact_first: true, webinar_registration: true, fields: [
+      { label: "Имя", type: "text", mapping: "first_name", required: true },
+      { label: "Фамилия", type: "text", mapping: "last_name", required: true },
+      { label: "Email", type: "email", mapping: "email", required: true },
+      { label: "Телефон", type: "phone", mapping: "phone", required: true },
+    ] };
+    render(<QuestionnaireFirstForm content={registration} pageId="page" blockId="block" initialContactValues={{ first_name: "Анна", last_name: "Иванова", email: "test@example.com", phone: "+375291234567" }} />);
+    expect(screen.getByLabelText("Имя*")).toHaveValue("Анна");
+    expect(screen.getByLabelText("Фамилия*")).toHaveAttribute("autocomplete", "family-name");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Продолжить" }));
+    fireEvent.change(await screen.findByLabelText("Код из письма"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Подтвердить почту" }));
+    const finish = await screen.findByRole("button", { name: "Завершить регистрацию" });
+    expect(mocks.invoke.mock.calls[0][1].body.action).toBe("questionnaire_contact");
+    expect(screen.queryByText("Анкета предзаписи")).not.toBeInTheDocument();
+    fireEvent.click(finish);
+    await screen.findByText("Вы зарегистрированы на вебинар");
+    const body = mocks.invoke.mock.calls[1][1].body;
+    expect(body.action).toBe("webinar_registration");
+    expect(body.fields).toHaveLength(4);
+  });
   it("shows answers before auth, restores them after reload and never submits on mount", () => {
     const view = show(); fillAnswers(); view.unmount(); show();
     expect(screen.getByLabelText("Комментарий*")).toHaveValue("Тестовый комментарий");
