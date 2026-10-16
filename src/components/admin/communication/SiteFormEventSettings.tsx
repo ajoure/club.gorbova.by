@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { SiteFormEventCondition } from "@/lib/siteFormEventCondition";
 import { isSiteId } from "@/lib/sitePageAutomation";
 
-export function SiteFormEventSettings({ value, onChange, locked }: { value: SiteFormEventCondition; onChange: (value: SiteFormEventCondition) => void; locked?: boolean }) {
+export function SiteFormEventSettings({ value, onChange, locked, webinarOnly }: { value: SiteFormEventCondition; onChange: (value: SiteFormEventCondition) => void; locked?: boolean; webinarOnly?: boolean }) {
   const { data: pages = [], isPending, isError } = useQuery({
     queryKey: ["broadcast-site-form-pages", value.page_id],
     queryFn: async () => {
@@ -23,7 +23,7 @@ export function SiteFormEventSettings({ value, onChange, locked }: { value: Site
     if (!content || typeof content !== "object" || Array.isArray(content) || content.auth_mode !== true) return [];
     return [{ id: block.id, title: typeof content.title === "string" && content.title ? content.title : content.webinar_registration === true ? "Регистрация на вебинар" : "Анкета", enabled: content.questionnaire_first === true, webinar: content.webinar_registration === true }];
   });
-  const webinar = forms.find(form => form.id === value.block_id)?.webinar;
+  const webinar = webinarOnly || forms.find(form => form.id === value.block_id)?.webinar;
   return <div className="space-y-3 rounded-lg border p-3">
     <Label htmlFor="broadcast-site-form-event">Когда отправлять</Label>
     <Select value={value.event} onValueChange={event => onChange({ ...value, event: event as SiteFormEventCondition["event"], delay_minutes: event === "email_confirmed_incomplete" ? 60 : undefined })}>

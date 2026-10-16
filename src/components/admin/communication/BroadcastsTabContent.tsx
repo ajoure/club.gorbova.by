@@ -229,6 +229,7 @@ export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [pageAutomationRequest] = useState(() => readSitePageAutomationRequest(new URLSearchParams(window.location.search)));
   const [pageAutomationReady, setPageAutomationReady] = useState(!pageAutomationRequest?.blockId);
+  const [pageAutomationWebinar, setPageAutomationWebinar] = useState(false);
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics">(pageAutomationRequest?.view || "templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
@@ -271,6 +272,7 @@ export function BroadcastsTabContent() {
       const form = (Array.isArray(page?.blocks) ? page.blocks : []).find(block => block && typeof block === "object" && !Array.isArray(block) && block.id === blockId && block.type === "form");
       const content = form && typeof form === "object" && !Array.isArray(form) && form.content && typeof form.content === "object" && !Array.isArray(form.content) ? form.content : null;
       if (error || !content || content.auth_mode !== true || content.questionnaire_first !== true) throw new Error("Сохранённая форма недоступна. Вернитесь в настройки страницы.");
+      setPageAutomationWebinar(content.webinar_registration === true);
       if (templateId) {
         setEditTemplateId(templateId);
       } else {
@@ -1148,6 +1150,10 @@ export function BroadcastsTabContent() {
       toast.error("Дождитесь загрузки сохранённой формы или вернитесь в настройки страницы");
       return;
     }
+    if (pageAutomationWebinar && sendMode === "event" && siteFormCondition?.event !== "submitted") {
+      toast.error("Для вебинара выберите отправку после завершённой регистрации");
+      return;
+    }
     if (!sendToTelegram && !sendToEmail) {
       toast.error("Выберите хотя бы один канал: Telegram или Email");
       return;
@@ -1536,7 +1542,7 @@ export function BroadcastsTabContent() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="lesson">Урок, домашнее задание или анкета урока</SelectItem><SelectItem value="site_form">Регистрация или анкета на сайте</SelectItem></SelectContent>
                 </Select>
-                {siteFormCondition && <SiteFormEventSettings value={siteFormCondition} onChange={setSiteFormCondition} locked={!!pageAutomationRequest?.blockId} />}
+                {siteFormCondition && <SiteFormEventSettings value={siteFormCondition} onChange={setSiteFormCondition} locked={!!pageAutomationRequest?.blockId} webinarOnly={pageAutomationWebinar} />}
                 <Alert>
                   <Sparkles className="h-4 w-4" />
                   <AlertDescription>
