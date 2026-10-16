@@ -37,7 +37,7 @@ BEGIN
  v_template_expected:=jsonb_build_object('name','Вебинар 24.10 — регистрация и ссылка на участие','template_type','general','channel','telegram','channels',jsonb_build_array('email','telegram'),
  'message_text','Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц». Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.',
  'email_subject','Ваша регистрация на вебинар 24 октября','email_body_html','<p>Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц».</p><p>Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.</p>',
- 'button_text',null,'button_url',null,'send_mode','manual','status','draft','approval_status','pending','trigger_kind',null,'live_event_id',null,
+ 'button_text',null,'button_url',null,'send_mode','manual','status','draft','approval_status','pending','trigger_kind','manual','live_event_id',null,
  'audience_filters',jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','${formBlock}')),
  'metadata',jsonb_build_object('webinar_registration',true,'webinar_release','web_2410_v1'));
  v_bonus:=jsonb_set(v_bonus,'{id}','"b02410a0-2430-4f24-8a24-202610240002"');
@@ -75,7 +75,7 @@ BEGIN
   'Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц». Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.',
   'Ваша регистрация на вебинар 24 октября',
   '<p>Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц».</p><p>Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.</p>',
-  null,null,'manual','draft','pending',null,null,jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','${formBlock}')),
+  null,null,'manual','draft','pending','manual',null,jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','${formBlock}')),
   v_template_expected->'metadata') RETURNING id INTO v_template;
  v_total:=v_total+1;
  IF v_total<>3 OR (SELECT blocks FROM site_pages WHERE id=v_landing.id)<>v_blocks OR (SELECT blocks FROM site_pages WHERE id=v_thanks.id)<>v_thanks_blocks
