@@ -28481,6 +28481,20 @@ export type Database = {
         }
         Returns: Json
       }
+      submit_site_webinar_registration: {
+        Args: {
+          p_block_id: string
+          p_consent_version: string
+          p_fields: Json
+          p_journey_id?: string
+          p_journey_key_hash?: string
+          p_page_id: string
+          p_source_code: string
+          p_submission_key: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       subscription_charge_cron_secret: { Args: never; Returns: string }
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
