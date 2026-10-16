@@ -16,6 +16,8 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { readSiteFormEventCondition } from "@/lib/siteFormEventCondition";
+import { siteFormActivationPatch } from "@/lib/sitePageAutomation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -118,6 +120,7 @@ type StatusFilter = "all" | "active" | "paused" | "sent" | "error" | "archived";
 type ChannelFilter = "all" | "telegram" | "email";
 
 interface Props {
+  pageId?: string;
   /** Колбэк перехода на «Быструю рассылку» с предзаполнением (фаза 2). */
   onEdit?: (templateId: string) => void;
 }
@@ -158,7 +161,7 @@ function scheduledErrorMessage(error: unknown): string {
   return /[А-Яа-яЁё]/.test(raw) ? raw : "Не удалось выполнить действие";
 }
 
-export function ScheduledBroadcastsSection({ onEdit }: Props) {
+export function ScheduledBroadcastsSection({ onEdit, pageId }: Props) {
   const qc = useQueryClient();
 
   // Filters
@@ -186,16 +189,18 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
   const [historyId, setHistoryId] = useState<string | null>(null);
 
   const { data: rows, isLoading } = useQuery({
-    queryKey: ["scheduled-broadcasts-canonical"],
+    queryKey: pageId ? ["scheduled-broadcasts-canonical", pageId] : ["scheduled-broadcasts-canonical"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const query = supabase
         .from("broadcast_templates")
         .select(
           "id, name, status, send_mode, channels, next_run_at, last_run_at, total_runs, created_at, recurrence_rule, metadata, approval_status, approved_at, approved_by"
         )
-        .in("status", ["scheduled", "recurring", "paused", "sent", "archived"])
+        .in("status", ["draft", "scheduled", "recurring", "paused", "sent", "archived"])
+        .or("status.neq.draft,trigger_kind.eq.site_form_event")
         .order("next_run_at", { ascending: true, nullsFirst: false })
         .limit(200);
+      const { data, error } = await (pageId ? query.contains("metadata", { site_form_condition: { page_id: pageId } }) : query);
       if (error) throw error;
       return (data || []) as SchedRow[];
     },
@@ -334,12 +339,23 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     mutationFn: async (ids: string[]) => {
       const { data: current } = await supabase
         .from("broadcast_templates")
-        .select("id, status, send_mode, recurrence_rule, next_run_at, metadata")
+        .select("id, status, send_mode, trigger_kind, recurrence_rule, next_run_at, metadata, updated_at")
         .in("id", ids);
 
       const errors: string[] = [];
       for (const row of current ?? []) {
         const meta = (row.metadata as Record<string, unknown>) ?? {};
+        if (row.trigger_kind === "site_form_event" && readSiteFormEventCondition(meta.site_form_condition)?.event !== "email_confirmed_incomplete") {
+          const condition = readSiteFormEventCondition(meta.site_form_condition);
+          if (!condition || condition.event !== "submitted") {
+            errors.push("Для этого правила откройте редактор и проверьте условия отправки");
+            continue;
+          }
+          const { error } = await supabase.from("broadcast_templates").update(siteFormActivationPatch(meta, new Date().toISOString()) as never)
+            .eq("id", row.id).eq("updated_at", row.updated_at).select("id").single();
+          if (error) errors.push(error.message);
+          continue;
+        }
         const restored =
           (meta.paused_from_status as string) ||
           (row.recurrence_rule ? "recurring" : "scheduled");
@@ -385,7 +401,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       });
     },
     onSuccess: (_d, ids) => {
-      toast.success(`Включено: ${ids.length}`);
+      toast.success(rows?.some(row => ids.includes(row.id) && row.send_mode === "event") ? "Правило подготовлено. Одобрите его для включения." : `Включено: ${ids.length}`);
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setSelected(new Set());
     },
@@ -602,7 +618,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         <DropdownMenuItem onClick={() => onEdit?.(row.id)}>
           <Pencil className="h-4 w-4 mr-2" /> Изменить
         </DropdownMenuItem>
-        {row.status === "paused" ? (
+        {row.status === "paused" || (row.status === "draft" && row.send_mode === "event") ? (
           <DropdownMenuItem onClick={() => resumeMutation.mutate([row.id])}>
             <Play className="h-4 w-4 mr-2" /> Включить
           </DropdownMenuItem>

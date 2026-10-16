@@ -99,6 +99,7 @@ import { RuleListEditor } from "./RuleListEditor";
 import { BroadcastFullAudienceDialog, type FullAudienceConfirmation } from "./BroadcastFullAudienceDialog";
 import { WebinarRegistrationAudienceFilter } from "./WebinarRegistrationAudienceFilter";
 import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
+import { readSitePageAutomationRequest, siteFormConditionForSave } from "@/lib/sitePageAutomation";
 
 const BroadcastAnalyticsSection = lazy(() =>
   import("./BroadcastAnalyticsSection").then((module) => ({ default: module.BroadcastAnalyticsSection }))
@@ -226,7 +227,10 @@ async function readableFunctionInvokeError(value: unknown): Promise<string> {
 
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics">("templates");
+  const [pageAutomationRequest] = useState(() => readSitePageAutomationRequest(new URLSearchParams(window.location.search)));
+  const [pageAutomationReady, setPageAutomationReady] = useState(!pageAutomationRequest?.blockId);
+  const [pageAutomationWebinar, setPageAutomationWebinar] = useState(false);
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics">(pageAutomationRequest?.view || "templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const openTemplateForSendRef = useRef(false);
@@ -236,8 +240,8 @@ export function BroadcastsTabContent() {
   const [sendToEmail, setSendToEmail] = useState(false);
 
   // Send mode
-  const [sendMode, setSendMode] = useState<SendMode>("now");
-  const [siteFormCondition, setSiteFormCondition] = useState<SiteFormEventCondition | null>(null);
+  const [sendMode, setSendMode] = useState<SendMode>(pageAutomationRequest?.blockId ? "event" : "now");
+  const [siteFormCondition, setSiteFormCondition] = useState<SiteFormEventCondition | null>(pageAutomationRequest?.blockId ? { page_id: pageAutomationRequest.pageId, block_id: pageAutomationRequest.blockId, event: "submitted", delay_minutes: 0 } : null);
   const templateMetadataRef = useRef<Record<string, unknown>>({});
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState<string>("10:00");
@@ -258,6 +262,29 @@ export function BroadcastsTabContent() {
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
   const [testEmail, setTestEmail] = useState("");
+  useEffect(() => {
+    if (!pageAutomationRequest?.blockId) return;
+    let cancelled = false;
+    void (async () => {
+      const { pageId, blockId, templateId } = pageAutomationRequest;
+      const { data: page, error } = await supabase.from("site_pages").select("id,title,blocks").eq("id", pageId).single();
+      if (cancelled) return;
+      const form = (Array.isArray(page?.blocks) ? page.blocks : []).find(block => block && typeof block === "object" && !Array.isArray(block) && block.id === blockId && block.type === "form");
+      const content = form && typeof form === "object" && !Array.isArray(form) && form.content && typeof form.content === "object" && !Array.isArray(form.content) ? form.content : null;
+      if (error || !content || content.auth_mode !== true || content.questionnaire_first !== true) throw new Error("Сохранённая форма недоступна. Вернитесь в настройки страницы.");
+      setPageAutomationWebinar(content.webinar_registration === true);
+      if (templateId) {
+        setEditTemplateId(templateId);
+      } else {
+        setSiteFormCondition({ page_id: pageId, block_id: blockId, event: "submitted", delay_minutes: 0 });
+        setSendMode("event"); setSendToTelegram(true); setSendToEmail(true); setIncludeButton(false);
+        setScheduledName(`${page?.title || "Страница"} — подтверждение регистрации`);
+        if (content.webinar_registration === true) setFilters(current => ({ ...current, webinar_registration: { page_id: pageId, block_id: blockId } }));
+        setPageAutomationReady(true);
+      }
+    })().catch(error => { if (!cancelled) toast.error(readableBroadcastError(error)); });
+    return () => { cancelled = true; };
+  }, [pageAutomationRequest]);
   const [fullAudienceConfirmation, setFullAudienceConfirmation] = useState<FullAudienceConfirmation | null>(null);
   const manualSendLockRef = useRef(false);
 
@@ -892,6 +919,14 @@ export function BroadcastsTabContent() {
         return;
       }
       const tpl = data as Record<string, unknown>;
+      if (pageAutomationRequest?.templateId === editTemplateId) {
+        const metadata = tpl.metadata as Record<string, unknown> | null;
+        const condition = readSiteFormEventCondition(metadata?.site_form_condition);
+        if (tpl.trigger_kind !== "site_form_event" || condition?.page_id !== pageAutomationRequest.pageId || condition.block_id !== pageAutomationRequest.blockId) {
+          toast.error("Сообщение не относится к выбранной форме.");
+          return;
+        }
+      }
       const ch = (tpl.channels as string[]) || [];
       setSendToTelegram(ch.includes("telegram"));
       setSendToEmail(ch.includes("email"));
@@ -957,6 +992,7 @@ export function BroadcastsTabContent() {
         setSendMode(openTemplateForSendRef.current ? "now" : String(tpl.status || "") === "draft" ? "template" : "now");
       }
       openTemplateForSendRef.current = false;
+      if (pageAutomationRequest?.templateId === editTemplateId) setPageAutomationReady(true);
       toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
       // Snapshot — после применения всех setState (через micro-task), для guard «грязных» изменений.
       setTimeout(() => {
@@ -1027,13 +1063,14 @@ export function BroadcastsTabContent() {
         send_mode: isTemplate ? "manual" : isEvent ? "event" : isRecurring ? "recurring" : "scheduled",
         // CRITICAL: recurring saved with status='recurring', чтобы pause/resume
         // корректно восстанавливал metadata.paused_from_status.
-        status: isTemplate ? "draft" : isEvent || isRecurring ? "recurring" : "scheduled",
+        status: isTemplate || (isEvent && siteFormCondition) ? "draft" : isEvent || isRecurring ? "recurring" : "scheduled",
         recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
         scheduled_for: isTemplate || isRecurring || isEvent ? null : composeScheduledAt(),
         next_run_at: nextRunAt,
         trigger_kind: isEvent ? siteFormCondition ? "site_form_event" : "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
         education_condition: isEvent && siteFormCondition ? null : filters.education || null,
-        metadata: { ...templateMetadataRef.current, additional_button: sendToTelegram ? composerAdditionalButton() : null, site_form_condition: isEvent ? siteFormCondition : null },
+        metadata: { ...templateMetadataRef.current, additional_button: sendToTelegram ? composerAdditionalButton() : null, site_form_condition: isEvent && siteFormCondition ? siteFormConditionForSave(siteFormCondition, templateMetadataRef.current.site_form_condition, new Date().toISOString()) : null },
+        ...(isEvent && siteFormCondition ? { approval_status: "pending_approval", approved_at: null, approved_by: null } : {}),
       };
 
       if (editTemplateId) {
@@ -1109,6 +1146,14 @@ export function BroadcastsTabContent() {
   };
 
   const handleSend = () => {
+    if (!pageAutomationReady) {
+      toast.error("Дождитесь загрузки сохранённой формы или вернитесь в настройки страницы");
+      return;
+    }
+    if (pageAutomationWebinar && sendMode === "event" && siteFormCondition?.event !== "submitted") {
+      toast.error("Для вебинара выберите отправку после завершённой регистрации");
+      return;
+    }
     if (!sendToTelegram && !sendToEmail) {
       toast.error("Выберите хотя бы один канал: Telegram или Email");
       return;
@@ -1185,6 +1230,7 @@ export function BroadcastsTabContent() {
   };
 
   const isSendDisabled =
+    !pageAutomationReady ||
     (!sendToTelegram && !sendToEmail) ||
     hasAudienceError ||
     audienceLoading ||
@@ -1232,6 +1278,7 @@ export function BroadcastsTabContent() {
         <TabsContent value="scheduled" className="mt-6 space-y-6">
           <BroadcastAuditProofCard />
           <ScheduledBroadcastsSection
+            pageId={pageAutomationRequest?.pageId}
             onEdit={(id) => {
               openTemplateForSendRef.current = false;
               setEditTemplateId(id);
@@ -1481,7 +1528,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-event" value="event" />
                   <Sparkles className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">По событию ученика</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">По событию клиента</span>
                 </Label>
               </RadioGroup>
 
@@ -1493,9 +1540,9 @@ export function BroadcastsTabContent() {
                   if (value === "site_form") setFilters(current => ({ ...current, education: undefined }));
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="lesson">Урок, домашнее задание или анкета урока</SelectItem><SelectItem value="site_form">Анкета на сайте</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="lesson">Урок, домашнее задание или анкета урока</SelectItem><SelectItem value="site_form">Регистрация или анкета на сайте</SelectItem></SelectContent>
                 </Select>
-                {siteFormCondition && <SiteFormEventSettings value={siteFormCondition} onChange={setSiteFormCondition} />}
+                {siteFormCondition && <SiteFormEventSettings value={siteFormCondition} onChange={setSiteFormCondition} locked={!!pageAutomationRequest?.blockId} webinarOnly={pageAutomationWebinar} />}
                 <Alert>
                   <Sparkles className="h-4 w-4" />
                   <AlertDescription>

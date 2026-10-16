@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { questionnairePersonalChatUrl } from "@/lib/questionnairePersonalChat";
 
@@ -27,6 +28,15 @@ export function QuestionnaireBonusesBlockEditor({ content, onChange }: {
     return [{ id: block.id, title: typeof settings.title === "string" && settings.title ? settings.title : "Анкета" }];
   });
   return <div className="space-y-3">
+    <Label htmlFor="bonus-page-design">Оформление страницы «Спасибо»</Label>
+    <Select value={content.design === "webinar" ? "webinar" : "standard"} onValueChange={design => onChange({ ...content, design })}>
+      <SelectTrigger id="bonus-page-design"><SelectValue /></SelectTrigger>
+      <SelectContent><SelectItem value="standard">Стандартное</SelectItem><SelectItem value="webinar">Макет вебинара</SelectItem></SelectContent>
+    </Select>
+    {content.design === "webinar" && <details><summary className="cursor-pointer text-sm">HTML макета</summary>
+      <Textarea aria-label="HTML макета страницы Спасибо" rows={6} value={typeof content.designer_html === "string" ? content.designer_html : ""} onChange={event => onChange({ ...content, designer_html: event.target.value })} />
+      <p className="text-xs text-muted-foreground">Адреса кнопок берутся из полей ниже: {'{{bonus_channel_url}}'} и {'{{personal_chat_url}}'}.</p>
+    </details>}
     <p className="text-sm text-muted-foreground">Страница «Спасибо» использует общую бессрочную ссылку на бесплатный канал. Для рассылок настройте другую ссылку в шаблоне рассылки.</p>
     <Label htmlFor="questionnaire-bonuses-page">Страница исходной анкеты</Label>
     <Select value={pageId || undefined} onValueChange={source_page_id => onChange({ ...content, source_page_id, source_block_id: "" })}>

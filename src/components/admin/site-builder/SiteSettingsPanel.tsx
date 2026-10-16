@@ -13,6 +13,7 @@ import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { SitePageMessagesSettings } from "./SitePageMessagesSettings";
 
 interface SiteSettingsPanelProps {
   pageId: string;
@@ -122,6 +123,7 @@ export function SiteSettingsPanel({
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      <SitePageMessagesSettings pageId={pageId} />
       {/* General */}
       <Card>
         <CardHeader><CardTitle className="text-base">Основные</CardTitle></CardHeader>
