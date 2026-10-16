@@ -28,10 +28,10 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM products_v2 WHERE id=v_landing.product_id AND is_active) THEN RAISE EXCEPTION 'webinar_product_unavailable';END IF;
  v_blocks:=jsonb_set(v_blocks,'{1,content,tariff_id}',to_jsonb(v_tariff::text));
  v_seo:=jsonb_build_object('title',v_landing.title,'description','Бесплатный вебинар Катерины Горбовой 24 октября 2026, 16:00 по Минску. Регистрация без пароля.');
- v_template_expected:=jsonb_build_object('name','Вебинар 24.10 — регистрация и ссылка на участие','template_type','general','channel','telegram','channels',jsonb_build_array('email','telegram'),
+ v_template_expected:=jsonb_build_object('name','Вебинар 24.10 — регистрация и ссылка на участие','template_type','general','channel','email','channels',jsonb_build_array('email','telegram'),
  'message_text','Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц». Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.',
  'email_subject','Ваша регистрация на вебинар 24 октября','email_body_html','<p>Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц».</p><p>Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.</p>',
- 'button_text',null,'button_url',null,'send_mode','manual','status','draft','approval_status','pending','trigger_kind','manual','live_event_id',null,
+ 'button_text',null,'button_url',null,'send_mode','manual','status','draft','approval_status','pending_approval','trigger_kind','manual','live_event_id',null,
  'audience_filters',jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','f04721a0-2430-4f24-8a24-202610240001')),
  'metadata',jsonb_build_object('webinar_registration',true,'webinar_release','web_2410_v1'));
  v_bonus:=jsonb_set(v_bonus,'{id}','"b02410a0-2430-4f24-8a24-202610240002"');
@@ -65,11 +65,11 @@ BEGIN
  -- Draft status means zero enqueue, no actual email or Telegram message here.
  INSERT INTO broadcast_templates(name,template_type,channel,channels,message_text,email_subject,email_body_html,button_text,button_url,
   send_mode,status,approval_status,trigger_kind,live_event_id,audience_filters,metadata)
- VALUES('Вебинар 24.10 — регистрация и ссылка на участие','general','telegram',ARRAY['email','telegram'],
+ VALUES('Вебинар 24.10 — регистрация и ссылка на участие','general','email',ARRAY['email','telegram'],
   'Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц». Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.',
   'Ваша регистрация на вебинар 24 октября',
   '<p>Вы зарегистрированы на бесплатный вебинар Катерины Горбовой «Как бухгалтеру зарабатывать от 5 000 BYN в месяц».</p><p>Ждём вас 24 октября в 16:00 по Минску. Ссылку на участие пришлём отдельно.</p>',
-  null,null,'manual','draft','pending','manual',null,jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','f04721a0-2430-4f24-8a24-202610240001')),
+  null,null,'manual','draft','pending_approval','manual',null,jsonb_build_object('webinar_registration',jsonb_build_object('page_id',v_landing.id,'block_id','f04721a0-2430-4f24-8a24-202610240001')),
   v_template_expected->'metadata') RETURNING id INTO v_template;
  v_total:=v_total+1;
  IF v_total<>3 OR (SELECT blocks FROM site_pages WHERE id=v_landing.id)<>v_blocks OR (SELECT blocks FROM site_pages WHERE id=v_thanks.id)<>v_thanks_blocks
