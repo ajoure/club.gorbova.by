@@ -5,6 +5,7 @@ import { useInlineEmailOtp } from "@/hooks/useInlineEmailOtp";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
@@ -207,7 +208,7 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview, in
 
   const pending = busy || otp.isSending || otp.isVerifying || !!authLoading;
   return (
-    <section className={`questionnaire-form py-8 px-4${registrationOnly ? " webinar-registration-form" : ""}`}>
+    <section data-webinar-registration-version={registrationOnly ? "web2410-v2" : undefined} className={`questionnaire-form py-8 px-4${registrationOnly ? " webinar-registration-form" : ""}`}>
       <div className="max-w-2xl mx-auto space-y-6">
         {typeof content.title === "string" && content.title && <SafeHtml html={content.title} as="h2" className="text-2xl font-bold" />}
         {typeof content.subtitle === "string" && content.subtitle && <SafeHtml html={content.subtitle} as="p" />}
@@ -249,7 +250,8 @@ export function QuestionnaireFirstForm({ content, pageId, blockId, isPreview, in
               return <div className="space-y-2" key={id}>
                 <Label htmlFor={id} className="leading-relaxed">{field.label}{field.required ? "*" : ""}</Label>
                 {field.type === "phone" && <p className="text-sm text-muted-foreground">С кодом страны, например +375291234567.</p>}
-                {field.type === "textarea" ? <Textarea id={id} value={answers[String(i)] || ""} rows={4} maxLength={10_000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />
+                {registrationOnly && field.type === "phone" ? <PhoneInput id={id} value={answers[String(i)] || ""} autoComplete="tel-national" required={field.required} disabled={pending} onChange={value => setAnswers(a => ({ ...a, [i]: value }))} />
+                  : field.type === "textarea" ? <Textarea id={id} value={answers[String(i)] || ""} rows={4} maxLength={10_000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />
                   : <Input id={id} autoComplete={!registrationOnly ? undefined : field.mapping === "first_name" ? "given-name" : field.mapping === "last_name" ? "family-name" : field.type === "email" ? "email" : field.type === "phone" ? "tel" : undefined} type={field.type === "phone" ? "tel" : field.type === "email" ? "email" : "text"} value={answers[String(i)] || ""} maxLength={1000} required={field.required} disabled={pending} onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))} />}
               </div>;
             })}

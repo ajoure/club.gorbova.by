@@ -25,13 +25,13 @@ describe("questionnaire bonus configuration", () => {
     render(<QuestionnaireBonusesBlockEditor content={content} onChange={onChange} />);
     expect(screen.getByRole("option", { name: "Анкета" })).toHaveValue("form-a");
     expect(screen.queryByRole("option", { name: "Обычная форма" })).toBeNull();
-    fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "page-b" } });
+    fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: "page-b" } });
     expect(onChange).toHaveBeenCalledWith({ ...content, source_page_id: "page-b", source_block_id: "" });
   });
   it("warns when a channel invitation is mistakenly used as the personal conversation", () => {
     query.data = [];
     render(<QuestionnaireBonusesBlockEditor content={{ personal_chat_url: "https://t.me/+not-a-business-chat" }} onChange={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Нужна ссылка Telegram Business");
-    expect(screen.getAllByRole("combobox")[1]).toBeDisabled();
+    expect(screen.getAllByRole("combobox")[2]).toBeDisabled();
   });
 });

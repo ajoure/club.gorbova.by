@@ -1,8 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { questionnairePersonalChatUrl } from "@/lib/questionnairePersonalChat";
+import { webinarThanksDesign } from "@/lib/webinarThanksDesign";
+import { HtmlIframePreview } from "@/components/shared/HtmlIframePreview";
 
 /** Shared perpetual channel links are maintained in page settings, separately from broadcasts. */
 export function QuestionnaireBonusesSection({ content }: { content: Record<string, unknown>; isPreview?: boolean }) {
+  const designerHtml = webinarThanksDesign(content);
+  if (designerHtml) return <section aria-label="Регистрация на вебинар завершена"><HtmlIframePreview html={designerHtml} /></section>;
   const channelUrl = typeof content.channel_url === "string" && /^https:\/\/t\.me\/(\+|joinchat\/)[A-Za-z0-9_-]+$/.test(content.channel_url) ? content.channel_url : null;
   const channelTitle = typeof content.channel_title === "string" && content.channel_title.trim() ? content.channel_title : "Бесплатный Telegram-канал";
   const personalChatUrl = questionnairePersonalChatUrl(content.personal_chat_url);

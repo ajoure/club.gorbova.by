@@ -136,6 +136,8 @@ interface PhoneInputProps {
   error?: boolean;
   id?: string;
   required?: boolean;
+  disabled?: boolean;
+  autoComplete?: string;
 }
 
 export function PhoneInput({
@@ -147,6 +149,8 @@ export function PhoneInput({
   error,
   id,
   required,
+  disabled,
+  autoComplete,
 }: PhoneInputProps) {
   const [open, setOpen] = useState(false);
   const [selectedCountry, setSelectedCountry] = useState(defaultCountry);
@@ -160,7 +164,7 @@ export function PhoneInput({
       const sortedCountries = [...countries].sort((a, b) => b.dial.length - a.dial.length);
       for (const country of sortedCountries) {
         if (value.startsWith(country.dial)) {
-          setSelectedCountry(country);
+          setSelectedCountry(current => value.startsWith(current.dial) ? current : country);
           setLocalNumber(value.slice(country.dial.length).replace(/\D/g, ''));
           return;
         }
@@ -168,7 +172,8 @@ export function PhoneInput({
       // If no country found, use default and extract digits
       setLocalNumber(value.replace(/\D/g, ''));
     }
-  }, []);
+    if (!value) setLocalNumber("");
+  }, [value]);
 
   const handleCountrySelect = (country: typeof defaultCountry) => {
     setSelectedCountry(country);
@@ -183,7 +188,7 @@ export function PhoneInput({
   // Smart paste/input handler: detect full phone numbers with country codes
   const processPhoneInput = (input: string): { country: typeof defaultCountry; number: string } | null => {
     // Normalize: remove spaces, dashes, parentheses
-    let normalized = input.replace(/[\s\-\(\)]/g, '');
+    let normalized = input.replace(/[\s()-]/g, '');
     
     // Convert 00 prefix to +
     if (normalized.startsWith('00')) {
@@ -203,7 +208,7 @@ export function PhoneInput({
     }
     
     // Check if input contains the currently selected country dial code
-    const cleanInput = input.replace(/[\s\-\(\)]/g, '');
+    const cleanInput = input.replace(/[\s()-]/g, '');
     if (cleanInput.startsWith(selectedCountry.dial)) {
       const numberPart = cleanInput.slice(selectedCountry.dial.length).replace(/\D/g, '');
       return { country: selectedCountry, number: numberPart };
@@ -259,6 +264,8 @@ export function PhoneInput({
             type="button"
             variant="outline"
             role="combobox"
+            aria-label="Код страны телефона"
+            disabled={disabled}
             aria-expanded={open}
             className={cn(
               "h-12 px-3 rounded-l-xl rounded-r-none border-r-0 bg-background/50 border-border/50 hover:bg-muted/50 min-w-[90px] justify-between",
@@ -313,6 +320,8 @@ export function PhoneInput({
           )}
           placeholder={placeholder}
           required={required}
+          disabled={disabled}
+          autoComplete={autoComplete}
         />
       </div>
     </div>
