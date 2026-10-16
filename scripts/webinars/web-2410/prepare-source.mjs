@@ -11,7 +11,7 @@ for (const [source, output] of [['webinar-source.txt','landing.html'],['thanks-s
  doc.documentElement.removeAttribute('foxified');doc.documentElement.removeAttribute('foxified-bridged');
  for(const script of doc.querySelectorAll('script')) {
   const src=script.getAttribute('src')||'',text=script.textContent||'';
-  if(/sessionStorage|t270_init/.test(text)){script.remove();continue;}
+  if(/sessionStorage|t270_init|addoncropExtensions|CRXEmulator/.test(text)){script.remove();continue;}
   if(src.includes('/tilda-scripts-3.0.min.js')){script.removeAttribute('src');script.textContent=vendor.replace('window.parent.isPagePreview','window.isPagePreview');continue;}
   if(text.includes('annexxAddStyle') && text.includes('localStorage'))script.textContent=text.replace('(function() {','(function() { var localStorage; try { localStorage=window.localStorage; } catch(e) { localStorage={getItem:function(){return null},setItem:function(){},removeItem:function(){}}; }');
   if(/chrome-extension:|mc\.yandex|connect\.facebook|tilda-stat|tilda-forms-1/.test(src)||/fbq\(|ym\(|tildastat|tildaStat|yaCounter/.test(text))script.remove();

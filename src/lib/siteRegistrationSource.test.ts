@@ -21,6 +21,8 @@ describe("Nikita registration form adapter",()=>{
    expect(form.querySelector('[name=first_name]')).toHaveAttribute("autocomplete","given-name");
    expect(form.querySelector('[name=last_name]')).toHaveAttribute("autocomplete","family-name");
    expect(html).not.toContain("chrome-extension://");
+   expect(html).not.toContain("addoncropExtensions");
+   expect(html).not.toContain("CRXEmulator");
    expect(html).not.toContain("forms.tildacdn.com/procces");
   }finally{dom.window.close()}
  });
