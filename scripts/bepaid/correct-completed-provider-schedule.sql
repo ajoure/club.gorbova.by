@@ -91,9 +91,12 @@ WITH input AS MATERIALIZED (
      source_order.status::text IS DISTINCT FROM 'paid' OR source_order.is_deleted IS DISTINCT FROM false OR
      source_order.user_id IS DISTINCT FROM t.user_id OR source_order.product_id IS DISTINCT FROM t.product_id OR
      source_order.tariff_id IS DISTINCT FROM t.tariff_id OR
-     EXISTS(SELECT 1 FROM public.orders_v2 h WHERE h.id IN(parent_order.id,source_order.id) AND
-       (coalesce(h.meta->>'do_not_grant_access','false')<>'false' OR coalesce(h.meta->>'refund_candidate','false')<>'false'
-        OR h.meta->>'grant_status'='suppressed_post_cancel_charge')) OR
+     coalesce(parent_order.meta->>'do_not_grant_access','false')<>'false' OR
+     coalesce(parent_order.meta->>'refund_candidate','false')<>'false' OR
+     parent_order.meta->>'grant_status'='suppressed_post_cancel_charge' OR
+     coalesce(source_order.meta->>'do_not_grant_access','false')<>'false' OR
+     coalesce(source_order.meta->>'refund_candidate','false')<>'false' OR
+     source_order.meta->>'grant_status'='suppressed_post_cancel_charge' OR
      NOT EXISTS(SELECT 1 FROM rights e WHERE e.user_id=t.user_id AND e.product_id=t.product_id
        AND e.status='active' AND e.expires_at>=t.access_end_at) OR
      NOT EXISTS(SELECT 1 FROM ledger l WHERE l.source_order_id=o.id) OR
