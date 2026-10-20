@@ -25,6 +25,7 @@ import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
 import { laterAccessEnd, resolvePaidCourseAddonWindow, shouldAlignPaidAddonWindow } from './paid_course_addon_window.ts';
 import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
+import { shouldNotifyTelegramCustomer } from './notification-policy.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
 
@@ -2348,6 +2349,7 @@ Deno.serve(async (req) => {
               parent_event_key: grantLedgerSourceEventKey || null,
               parent_execution_key: grantLedgerExecutionKey || null,
               _from_primary_path: !!(grantLedgerSourceEventKey && grantLedgerExecutionKey),
+              notify_customer: shouldNotifyTelegramCustomer(caller.type, _body.context, _body.notifyCustomer),
             }),
           });
 

@@ -65,12 +65,17 @@ serve(async (req) => {
     console.log("Using bePaid secret from strict integration_instances");
 
     const body = await req.json().catch(() => ({}));
+    if (body.paidContinuation && !body.queueItemId) {
+      return new Response(JSON.stringify({ error: 'continuation_requires_exact_queue_id' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     if (body.queueItemId) {
       const exact = await reconcileExactQueuePayment(supabase, {
         queueItemId: body.queueItemId, expectedUpdatedAt: body.expectedUpdatedAt,
         providerSubscriptionId: body.providerSubscriptionId,
-        dryRun: body.dryRun === true || body.dry_run === true,
+        dryRun: body.paidContinuation ? body.dryRun !== false && body.dry_run !== false : body.dryRun === true || body.dry_run === true,
         recordPreflightFailure: body.recordPreflightFailure === true,
+        paidContinuation: body.paidContinuation,
         providerAuth: createBepaidAuthHeader(bepaidCreds),
       });
       return new Response(JSON.stringify(exact), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

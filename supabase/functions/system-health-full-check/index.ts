@@ -4,6 +4,10 @@ import {
   evaluateCronRuns,
   isProviderRenewalOverdue,
 } from "../_shared/payment-health-policy.ts";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
+import { getCallerUserId } from "../_shared/caller-user.ts";
+import { authorizeSystemHealth } from "./authorization.ts";
+import { loadRenewalCandidates, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -191,50 +195,35 @@ async function checkFunctionAvailability(
   }
 }
 
+async function checkBepaidRenewals(supabase: any, now: Date) {
+  try {
+    const rows = await loadRenewalCandidates(supabase, now.getTime());
+    const needsProbe = rows.some(row => isProviderRenewalOverdue(row as any, now.getTime()));
+    let authorization: string | null = null;
+    if (needsProbe) {
+      const credentials = await getBepaidCredsStrict(supabase);
+      if (!isBepaidCredsError(credentials)) authorization = createBepaidAuthHeader(credentials);
+    }
+    return await verifyRenewalCandidates(rows, authorization, now.getTime());
+  } catch {
+    // A failed read must not turn a financial invariant green or echo payloads.
+    return { code: "INV-P0-1", name: "Просроченные автопродления bePaid (>24ч)",
+      passed: false, count: 0, severity: "CRITICAL" as const,
+      samples: [{ classification: "unknown", reason: "renewal_verification_failed" }] };
+  }
+}
+
 // Check P0 business invariants
 async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]> {
   const results: InvariantResult[] = [];
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   
-  // INV-P0-1: provider subscriptions overdue beyond the provider grace window.
-  // A quiet day is normal when no subscription was due. The provider snapshot,
-  // not the total number of locally active subscriptions, is the source of truth.
-  try {
-    const { data: overdueCandidates, error: overdueError } = await supabase
-      .from("provider_subscriptions")
-      .select("state,next_charge_at,last_charge_at")
-      .eq("state", "active")
-      .not("next_charge_at", "is", null)
-      .lte("next_charge_at", yesterday.toISOString())
-      .limit(1000);
-    if (overdueError) throw overdueError;
-
-    const overdueRenewals = (overdueCandidates || []).filter((row: any) =>
-      isProviderRenewalOverdue(row, now.getTime())
-    );
-
-    results.push({
-      code: "INV-P0-1",
-      name: "Просроченные автопродления bePaid (>24ч)",
-      passed: overdueRenewals.length === 0,
-      count: overdueRenewals.length,
-      severity: "CRITICAL",
-      samples: overdueRenewals.slice(0, 5).map((row: any) => ({
-        next_charge_at: row.next_charge_at,
-        last_charge_at: row.last_charge_at,
-      })),
-    });
-  } catch (e) {
-    results.push({
-      code: "INV-P0-1",
-      name: "Просроченные автопродления bePaid (>24ч)",
-      passed: false,
-      count: 0,
-      severity: "CRITICAL",
-      samples: [{ error: String(e) }],
-    });
-  }
+  // Stale mirrors identify candidates; fresh provider GET confirms their state.
+  // No subscription, payment, access or provider mutation is permitted here.
+  const renewalCheck = await checkBepaidRenewals(supabase, now);
+  results.push(renewalCheck);
+  if ("review" in renewalCheck && renewalCheck.review.count > 0) results.push(renewalCheck.review);
   
   // INV-P0-2: Renewal orders created
   try {
@@ -467,19 +456,28 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   
   const startTime = Date.now();
   
   try {
-    // Auth check
-    const cronSecret = req.headers.get("x-cron-secret");
-    const expectedSecret = Deno.env.get("CRON_SECRET");
-    const authHeader = req.headers.get("authorization");
-    
-    const isScheduledRun = cronSecret === expectedSecret;
-    const isAuthenticatedCall = !!authHeader;
-    
-    if (!isScheduledRun && !isAuthenticatedCall) {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const authorized = await authorizeSystemHealth(req, supabaseServiceKey,
+      Deno.env.get("CRON_SECRET"), async () => {
+        const userId = await getCallerUserId(req, "system-health-full-check");
+        if (!userId) return false;
+        const roles = await Promise.all(["super_admin", "admin"].map(role =>
+          supabase.rpc("has_role_v2", { _user_id: userId, _role_code: role })
+        ));
+        return roles.some(r => !r.error && r.data === true);
+      });
+    if (!authorized) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -487,11 +485,18 @@ Deno.serve(async (req) => {
     }
     
     const body = await req.json().catch(() => ({}));
-    const source = body.source || "manual";
-    
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    if (body.action === "diagnose_renewals") {
+      return new Response(JSON.stringify({ release: RENEWAL_CHECK_RELEASE,
+        read_only: true, sent: false, invariant: await checkBepaidRenewals(supabase, new Date()) }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (body.action !== undefined) {
+      return new Response(JSON.stringify({ error: "Unknown action" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const source = typeof body.source === "string" ? body.source.slice(0, 64) : "manual";
     
     const projectRef = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
     const expectedProjectRef = "hdjgkjceownmmnrqqtuz"; // PINNED for safety
@@ -695,7 +700,8 @@ Deno.serve(async (req) => {
     }
     
     // Send Telegram if needed
-    const telegramSent = await sendTelegramAlert(supabase, report, previousStatus);
+    // Controlled release checks can persist a new truthful report without sends.
+    const telegramSent = body.notify === false ? false : await sendTelegramAlert(supabase, report, previousStatus);
     
     if (telegramSent && savedReport?.id) {
       await supabase

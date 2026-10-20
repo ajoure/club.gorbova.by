@@ -20,6 +20,18 @@ export interface InvariantDescriptor {
 }
 
 export const INVARIANT_HUMANIZE: Record<string, InvariantDescriptor> = {
+  "INV-P0-1-R": {
+    code: "INV-P0-1-R",
+    problemType: "manual_review",
+    recommendedAction: "check_manually",
+    ownerTitle: "Проверьте платежи и состояние подписок",
+    ownerSummary: "bePaid отклонил платёж или активная подписка расходится с локальным состоянием",
+    whatHappened: "Свежий ответ bePaid подтвердил отказ по платежу либо действующую подписку, которая у нас не продлевается. Это отдельно от пропущенного автосписания.",
+    whyItMatters: "Нужно сверить оплату, доступ и историю отмены. Успешная оплата не должна потеряться, а после отмены не должно быть новых списаний.",
+    suggestedFix: "Откройте автопродления, сверяйте последнюю транзакцию bePaid, оплаченный период и историю подписки. Не повторяйте списание и не отменяйте подписку без разбора.",
+    relatedRoute: "/admin/payments/auto-renewals",
+    relatedRouteLabel: "Автопродления",
+  },
   "INV-P0-1": {
     code: "INV-P0-1",
     problemType: "critical_fix",

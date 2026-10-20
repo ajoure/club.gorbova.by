@@ -149,7 +149,7 @@ export function useTriggerFullCheck() {
     mutationFn: async () => {
       try {
         const { data, error } = await supabase.functions.invoke("system-health-full-check", {
-          body: { source: "manual" },
+          body: { source: "manual", notify: false },
         });
 
         if (error) throw error;
