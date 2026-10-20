@@ -18,7 +18,7 @@ async function fixture(){
     CREATE TABLE profiles(id uuid,user_id uuid);
     CREATE TABLE orders_v2(id uuid,user_id uuid,profile_id uuid,product_id uuid,tariff_id uuid,status text,is_deleted boolean,is_trial boolean,meta jsonb,created_at timestamptz);
     ALTER TABLE orders_v2 ADD COLUMN base_price numeric DEFAULT 0, ADD COLUMN final_price numeric DEFAULT 0,
-      ADD COLUMN paid_amount numeric DEFAULT 0, ADD COLUMN discount numeric DEFAULT 0, ADD COLUMN currency text DEFAULT 'BYN',
+      ADD COLUMN paid_amount numeric DEFAULT 0, ADD COLUMN discount_percent numeric DEFAULT 0, ADD COLUMN currency text DEFAULT 'BYN',
       ADD COLUMN reconcile_source text DEFAULT 'getcourse_historical', ADD COLUMN updated_at timestamptz;
     CREATE TABLE audit_logs(actor_type text,actor_label text,action text,entity_type text,entity_id text,meta jsonb);
     CREATE TABLE payments_v2(order_id uuid,status text,amount numeric,refunded_amount numeric);
@@ -47,7 +47,7 @@ async function fixture(){
     GRANT USAGE ON SCHEMA public,auth TO anon,authenticated;
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon,authenticated;`);
   for(const table of ['training_modules','training_lessons','lesson_blocks','lesson_attachments','entitlements']){
-    await db.exec(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; CREATE POLICY legacy_open ON ${table} FOR SELECT TO anon,authenticated USING(true);`);
+    await db.exec(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; CREATE POLICY legacy_open ON ${table} FOR SELECT TO anon,authenticated USING(${table==='training_lessons'?'public.user_has_training_lesson_access(auth.uid(),id)':'true'});`);
   }
   await db.exec(migration);
   return db;
@@ -115,6 +115,7 @@ test('foreign RPC, anonymous access and private implementation calls are denied;
   assert.deepEqual(await counts(db,admin),yes);
   const n=await asUser(db,nonbuyer,()=>db.query('SELECT count(*)::int n FROM training_lessons WHERE id=$1',[otherLesson]));assert.equal(n.rows[0].n,1);
   const anon=await asUser(db,'',()=>db.query('SELECT count(*)::int n FROM training_lessons WHERE id=$1',[lesson]),'anon');assert.equal(anon.rows[0].n,0);
+  const publicOther=await asUser(db,'',()=>db.query('SELECT count(*)::int n FROM training_lessons WHERE id=$1',[otherLesson]),'anon');assert.equal(publicOther.rows[0].n,1);
  }finally{await db.close();}
 });
 test('migration is repeatable without wrapping itself or mutating commercial facts',async()=>{

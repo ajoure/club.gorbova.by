@@ -173,7 +173,8 @@ BEGIN
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.user_has_training_lesson_access(uuid,uuid) FROM PUBLIC,anon;
-GRANT EXECUTE ON FUNCTION public.user_has_training_lesson_access(uuid,uuid) TO authenticated,service_role;
+-- Existing public lesson policies call this resolver for anon too.
+GRANT EXECUTE ON FUNCTION public.user_has_training_lesson_access(uuid,uuid) TO anon,authenticated,service_role;
 
 DROP POLICY IF EXISTS cb2_purchased_access ON public.training_modules;
 CREATE POLICY cb2_purchased_access ON public.training_modules AS RESTRICTIVE FOR SELECT TO anon,authenticated USING(public.cb2_module_access_guard(id));
@@ -210,7 +211,7 @@ BEGIN
   IF o.meta#>>'{historical_provenance,confirmation_ref}'=p_confirmation_ref
     AND o.base_price=p_confirmed_total AND o.final_price=p_confirmed_total AND o.paid_amount=p_confirmed_total
   THEN RETURN jsonb_build_object('dry_run',NOT p_execute,'changed',0,'already_applied',true); END IF;
-  IF coalesce(o.base_price,0)<>0 OR coalesce(o.final_price,0)<>0 OR coalesce(o.paid_amount,0)<>0 OR coalesce(o.discount,0)<>0
+  IF coalesce(o.base_price,0)<>0 OR coalesce(o.final_price,0)<>0 OR coalesce(o.paid_amount,0)<>0 OR coalesce(o.discount_percent,0)<>0
     OR EXISTS(SELECT 1 FROM public.payments_v2 p WHERE p.order_id=o.id)
     OR EXISTS(SELECT 1 FROM public.subscriptions_v2 s WHERE s.order_id=o.id)
   THEN RAISE EXCEPTION 'cb2_historical_order_baseline_mismatch'; END IF;
