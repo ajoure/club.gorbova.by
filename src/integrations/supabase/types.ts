@@ -25306,6 +25306,18 @@ export type Database = {
         Args: { p_order_id: string; p_reason?: string }
         Returns: Json
       }
+      cb2_entitlement_access_guard: {
+        Args: { _product_id: string; _user_id: string }
+        Returns: boolean
+      }
+      cb2_lesson_access_guard: {
+        Args: { _lesson_id: string }
+        Returns: boolean
+      }
+      cb2_module_access_guard: {
+        Args: { _module_id: string }
+        Returns: boolean
+      }
       check_ban_by_identifiers: {
         Args: {
           _email?: string
@@ -26561,6 +26573,7 @@ export type Database = {
           provider_payment_id: string
         }[]
       }
+      get_cb2_access_window: { Args: { _user_id: string }; Returns: Json }
       get_chat_scenarios: {
         Args: never
         Returns: {
@@ -27825,6 +27838,16 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      repair_cb2_historical_order: {
+        Args: {
+          p_confirmation_ref: string
+          p_confirmed_total: number
+          p_execute?: boolean
+          p_order_id: string
+          p_source: Json
+        }
+        Returns: Json
       }
       repair_cb21_legacy_questionnaires: {
         Args: { p_execute?: boolean }
