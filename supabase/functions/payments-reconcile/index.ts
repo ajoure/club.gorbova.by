@@ -7,6 +7,7 @@ import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { staleProcessingCutoff } from '../_shared/bepaid-queue-policy.ts';
 import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
+import { requireExactGrantCapability } from './grant-capability.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,6 +71,7 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     if (body.queueItemId) {
+      if (body.paidContinuation) await requireExactGrantCapability(supabase);
       const exact = await reconcileExactQueuePayment(supabase, {
         queueItemId: body.queueItemId, expectedUpdatedAt: body.expectedUpdatedAt,
         providerSubscriptionId: body.providerSubscriptionId,
