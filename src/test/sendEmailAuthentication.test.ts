@@ -10,25 +10,25 @@ const usersAdminActions = readFileSync(
 );
 
 describe("send-email authentication boundary", () => {
-  it("keeps the platform JWT check enabled", () => {
-    expect(config).toMatch(/\[functions\.send-email\]\s+verify_jwt\s*=\s*true/);
+  it("uses the application auth gate for opaque managed keys before any account or SMTP work", () => {
+    expect(config).toMatch(/\[functions\.send-email\]\s+verify_jwt\s*=\s*false/);
+    expect(sender).toContain("await authorizeEmailSender(req, supabaseKey");
+    const denied = sender.indexOf("if (!decision.allowed)");
+    expect(denied).toBeGreaterThan(0);
+    expect(sender.indexOf("const body = await req.json()")).toBeGreaterThan(denied);
+    expect(sender.indexOf("const account = await getEmailAccount")).toBeGreaterThan(denied);
   });
 
-  it("permits only the service role or verified communication administrators", () => {
-    expect(sender).toContain('match(/^Bearer\\s+(.+)$/i)');
-    expect(sender).not.toContain('match(/^Bearer\\\\s+(.+)$/i)');
-    expect(sender).toContain("if (bearer !== supabaseKey)");
+  it("retains live verified staff RBAC and supports a no-send transport diagnostic", () => {
     expect(sender).toContain("userClient.auth.getClaims(bearer)");
     expect(sender).toContain('"has_admin_section_access"');
     expect(sender).toContain('_section_code: "communication"');
     expect(sender).toContain('_min_level: "manage"');
     expect(sender).toContain('"has_role_v2", { _user_id: actorId, _role_code: "admin" }');
     expect(sender).toContain('"has_role_v2", { _user_id: actorId, _role_code: "super_admin" }');
-    expect(sender).toContain("[send-email][auth] handler_enter");
-    expect(sender).not.toContain("/auth/v1/user");
-    expect(sender.indexOf("parsedRequest = await req.json()")).toBeGreaterThan(
-      sender.indexOf("if (bearer !== supabaseKey)"),
-    );
+    expect(sender).toContain('checks.every(result => !result.error)');
+    expect(sender).toContain("authorized_as: decision.kind, sent: false");
+    expect(sender.indexOf("body.action === 'diagnose'")).toBeLessThan(sender.indexOf("const account = await getEmailAccount"));
   });
 
   it("uses the service credential for internal administrative senders", () => {

@@ -1,3 +1,5 @@
+import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { EffectiveProductAccessNote } from "@/components/purchases/EffectiveProductAccessNote";
 import { isContactVisibleDeal } from "@/lib/deals/dealFinancialKind";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
@@ -3634,6 +3636,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                             })()}
                           </div>
 
+                          {sub.product_id === CB2_PRODUCT_ID && <div className="mb-3"><EffectiveProductAccessNote userId={resolvedUserId || sub.user_id} productId={sub.product_id} /></div>}
                           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                             <div>
                               <span className="text-muted-foreground">Начало: </span>
@@ -3641,7 +3644,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                             </div>
                             {sub.access_end_at && (
                               <div>
-                                <span className="text-muted-foreground">До: </span>
+                                <span className="text-muted-foreground">{sub.product_id === CB2_PRODUCT_ID ? "Покупка до: " : "До: "}</span>
                                 <span className={isExpired ? "text-destructive" : ""}>{format(new Date(sub.access_end_at), "dd.MM.yy")}</span>
                               </div>
                             )}
@@ -3928,6 +3931,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     return (
                       <Card key={ent.id} className="transition-all border-l-2 border-l-blue-400">
                         <CardContent className="p-4">
+                          <EffectiveProductAccessNote userId={resolvedUserId || ent.user_id} productId={ent.product_id} />
                           <div className="flex items-start justify-between mb-2">
                             <div>
                               <div className="font-medium">{product?.name || ent.product_code || "Продукт"}</div>
@@ -3965,7 +3969,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                               <span className="text-muted-foreground">Создан: </span>
                               <span>{format(new Date(ent.created_at), "dd.MM.yy")}</span>
                             </div>
-                            {ent.expires_at && (
+                            {ent.product_id !== CB2_PRODUCT_ID && ent.expires_at && (
                               <div>
                                 <span className="text-muted-foreground">До: </span>
                                 <span>{format(new Date(ent.expires_at), "dd.MM.yy")}</span>

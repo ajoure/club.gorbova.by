@@ -1,3 +1,4 @@
+import { CB2_PRODUCT_ID, readCb2AccessWindow } from "../_shared/cb2-access-window.ts";
 /**
  * rules-retroapply — Universal engine for retroactively applying access_rules
  * to historical data (existing subscriptions/orders).
@@ -1007,6 +1008,19 @@ async function checkRetroCondition(
   priorPurchaseCache?: Map<string, Map<string, unknown>>,
 ): Promise<boolean> {
   if (!conditions || conditions.condition_type !== "prior_purchase") return true;
+
+  if (targetProductId === CB2_PRODUCT_ID) {
+    // Same evidence as webhook/cron and RLS; failed lookup aborts this preview.
+    const proof = await readCb2AccessWindow(supabase, userId);
+    if (!proof.has_prior_purchase) return false;
+    if (proof.prior_order_id && priorPurchaseCache?.has(userId)) {
+      priorPurchaseCache.get(userId)!.set(targetProductId, {
+        match_type: 'direct', order_id: proof.prior_order_id,
+        historical_purchase_type: 'base_tariff_purchase', historical_tariff_id: proof.prior_tariff_id,
+        historical_module_product_ids: [],
+      });
+    }
+  }
 
   const matchMode = conditions.match_mode || "any";
   const requiredProductIds: string[] = Array.isArray(conditions.required_product_ids)

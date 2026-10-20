@@ -74,6 +74,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE sales_runtime_test'
           node --test scripts/sales-knowledge/runtime-database.test.mjs
           node scripts/tests/sales-customer-concurrency.mjs
+      - name: CB2 buyer-only Club bonus and historical repair boundaries
+        run: node --test scripts/tests/cb2-bonus-access.test.mjs
       - name: CB21 learning release RLS boundaries
         run: |
           node scripts/tests/cb21-learning-release.test.mjs
@@ -106,6 +108,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: CB2 renewal, sender authorization and purchase proof
+        run: |
+          deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
       - name: Instagram monitor Edge types and media guards
         run: |
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts

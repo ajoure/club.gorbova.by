@@ -1,3 +1,5 @@
+import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { EffectiveProductAccessNote } from "./EffectiveProductAccessNote";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard } from "lucide-react";
@@ -37,9 +39,10 @@ interface Subscription {
 interface SubscriptionListItemProps {
   subscription: Subscription;
   onClick: () => void;
+  userId?: string;
 }
 
-export function SubscriptionListItem({ subscription, onClick }: SubscriptionListItemProps) {
+export function SubscriptionListItem({ subscription, onClick, userId }: SubscriptionListItemProps) {
   const isCanceled = !!subscription.canceled_at;
   const isExpired = subscription.access_end_at && new Date(subscription.access_end_at) < new Date();
   // REPAIR-BEPAID-ACCESS-2026-05 v3: подписки expired/superseded не должны выглядеть как «живые».
@@ -107,9 +110,10 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
           </Badge>
         )}
 
+        <EffectiveProductAccessNote userId={userId} productId={subscription.products_v2?.id} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm text-muted-foreground">
           {subscription.access_end_at && (
-            <span>Действует до: {formatShortDate(subscription.access_end_at)}</span>
+            <span>{subscription.products_v2?.id === CB2_PRODUCT_ID ? "Покупка до: " : "Действует до: "}{formatShortDate(subscription.access_end_at)}</span>
           )}
           {SAVED_CARD_PAYMENTS_ENABLED && !isInactive && subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
             <span className="flex items-center gap-1">

@@ -1,3 +1,4 @@
+import { CB2_PRODUCT_ID, readCb2AccessWindow } from './cb2-access-window.ts';
 /**
  * Shared engine for SECONDARY product_access grants.
  *
@@ -539,6 +540,23 @@ export async function syncSecondaryProductAccessForUser(
               if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
               if (matchMode === 'all') conditionMet = true;
             }
+          }
+        }
+
+        // The CB2 guard, UI and write path share the same purchase evidence.
+        // A paid-looking gift/test/referral row cannot create a bonus grant.
+        if (targetProdId === CB2_PRODUCT_ID) {
+          try {
+            const proof = await readCb2AccessWindow(supabase, userId);
+            conditionMet = conditionMet && proof.has_prior_purchase;
+            if (conditionMet && proof.prior_order_id) {
+              priorInfo = { match_type: 'direct', order_id: proof.prior_order_id,
+                historical_purchase_type: 'base_tariff_purchase', historical_tariff_id: proof.prior_tariff_id,
+                historical_module_product_ids: [] };
+            }
+          } catch {
+            action.outcome = 'failed'; action.reason = 'cb2_purchase_lookup_failed';
+            out.push(action); await writeFailedLedger(supabase, ctx, action, action.reason); continue;
           }
         }
 
