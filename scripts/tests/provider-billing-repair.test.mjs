@@ -76,19 +76,20 @@ async function input(db) {
     protected_target_md5:r.hash,before_next_charge_at:end,verified_next_charge_at:next,verified_at:iso(new Date()) };
 }
 async function run(db, v) {
-  await db.query("SELECT set_config('app.bepaid_schedule_repair',$1,false)",[JSON.stringify(v)]);
-  return db.exec(repair);
+  const literal = `'${JSON.stringify(v).replaceAll("'", "''")}'::jsonb`;
+  assert.equal(repair.split("'__REVIEWED_INPUT_JSON__'::jsonb").length, 2);
+  return db.query(repair.replace("'__REVIEWED_INPUT_JSON__'::jsonb", literal));
 }
 
 test('exact completed correction changes one date + audit; existing payment/order/access/queue/receipt and false stay intact; replay0',async()=>{
   const db=await fixture();try{
-    const before=await snapshot(db);await run(db,await input(db));const after=await snapshot(db);
+    const before=await snapshot(db);assert.equal((await run(db,await input(db))).rows.length,1);const after=await snapshot(db);
     for(const key of ['provider','queue','payments','orders','entitlements','ledger'])assert.deepEqual(after[key],before[key],key);
     const {updated_at:unusedBefore,next_charge_at:unusedNext,...protectedBefore}=before.subscriptions[0];
     const {updated_at:unusedAfter,next_charge_at:newNext,...protectedAfter}=after.subscriptions[0];
     assert.deepEqual(protectedAfter,protectedBefore);assert.equal(Date.parse(newNext),Date.parse(next));
     assert.deepEqual(after.subscriptions[1],before.subscriptions[1]);assert.equal(after.audit.length,before.audit.length+1);
-    await run(db,await input(db));assert.deepEqual(await snapshot(db),after);
+    assert.equal((await run(db,await input(db))).rows.length,0);assert.deepEqual(await snapshot(db),after);
   }finally{await db.close();}
 });
 
@@ -112,13 +113,14 @@ test('changed CAS/receipt/link/UID/consent/access/refund/paid proof rejects with
       `DELETE FROM audit_logs WHERE action='bepaid.paid_continuation.billing_synced'`,
     ]){
       await db.exec('BEGIN');await db.exec(mutation);
-      await assert.rejects(run(db,v),/schedule_repair_/);await db.exec('ROLLBACK');
+      assert.equal((await run(db,v)).rows.length,0);await db.exec('ROLLBACK');
       assert.deepEqual(await snapshot(db),baseline,'failed repair rolls back the whole transaction');
     }
     const before=await snapshot(db);
-    await assert.rejects(run(db,{...v,verified_at:new Date(Date.now()-10*60e3).toISOString()}),/stale_provider_proof/);
-    await assert.rejects(run(db,{...v,extra:'no'}),/invalid_input/);
-    await assert.rejects(run(db,{...v,target_updated_at:'2000-01-01T00:00Z'}),/target_conflict/);
+    assert.equal((await run(db,{...v,verified_at:new Date(Date.now()-10*60e3).toISOString()})).rows.length,0);
+    assert.equal((await run(db,{...v,extra:'no'})).rows.length,0);
+    assert.equal((await run(db,{...v,target_updated_at:'2000-01-01T00:00Z'})).rows.length,0);
+    assert.equal((await run(db,{...v,payment_uid:"'); DELETE FROM orders_v2; --"})).rows.length,0,'input is an escaped JSON value, never SQL');
     assert.deepEqual(await snapshot(db),before);
   }finally{await db.close();}
 });
@@ -126,10 +128,10 @@ test('changed CAS/receipt/link/UID/consent/access/refund/paid proof rejects with
 test('old trigger or zero-row concurrent update aborts date and audit together',async()=>{
   const db=await fixture();try{
     const v=await input(db);const before=await snapshot(db);
-    await db.exec(old);await assert.rejects(run(db,v),/readback_failed/);assert.deepEqual(await snapshot(db),before);
+    await db.exec(old);await assert.rejects(run(db,v),/division by zero/);assert.deepEqual(await snapshot(db),before);
     await db.exec(migration);
     await db.exec(`CREATE FUNCTION reject_update() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL;END$$;
       CREATE TRIGGER reject_update BEFORE UPDATE ON subscriptions_v2 FOR EACH ROW EXECUTE FUNCTION reject_update();`);
-    await assert.rejects(run(db,v),/rowcount_changed/);assert.deepEqual(await snapshot(db),before);
+    assert.equal((await run(db,v)).rows.length,0);assert.deepEqual(await snapshot(db),before);
   }finally{await db.close();}
 });

@@ -149,9 +149,12 @@ REPLACE сохраняет owner, SECURITY DEFINER, search_path, ACL и прив
 и свежий GET provider schedule. Только одна ранее согласованная операция A;
 никаких групповых исправлений по snapshot-кандидатам.
 
-В одном managed SQL-вызове: BEGIN ISOLATION LEVEL SERIALIZABLE; bind через
-`set_config('app.bepaid_schedule_repair', <экранированный JSON>, true)`; затем
-неизменённый DO-блок из репозитория; COMMIT. Вход не сохранять в Git/отчёте:
+Контракт run_sql разрешает только DML. Используется один INSERT с CTE,
+содержащим условный UPDATE: без DO/BEGIN/GUC, новых RPC и schema changes. Это
+одна атомарная PostgreSQL-транзакция. Заменить только литерал
+`'__REVIEWED_INPUT_JSON__'::jsonb`: JSON.stringify(input), удвоить все одинарные
+кавычки, заключить результат в SQL-кавычки и оставить ::jsonb. Сам запрос и
+guards не переписывать. Вход не сохранять в Git/отчёте:
 
 - target_id, source_id, provider_row_id, queue_id, payment_uid,
   previous_payment_uid — точные защищённые значения одобренного preflight;
@@ -161,12 +164,20 @@ REPLACE сохраняет owner, SECURITY DEFINER, search_path, ACL и прив
 - before_next_charge_at — одобренная прежняя дата конца доступа;
 - verified_next_charge_at и verified_at — только свежий GET, не ввод клиента.
 
-DO проверяет whitelist 14 ключей, свежесть proof до 5 минут, блокирует точные
+DML проверяет whitelist 14 ключей, свежесть proof до 5 минут, блокирует точные
 строки, подтверждает связи/receipt/оператора/оплаты/старые заказы и доступ,
 сохраняет false и все защищённые поля. Он меняет только next_charge_at;
 существующий updated_at trigger срабатывает штатно. Списки status/auto_renew
-не входят в UPDATE, поэтому supersede cleanup не вызывается. При расхождении
-read-back или rowcount весь DO откатывается вместе с аудитом.
+не входят в UPDATE, поэтому supersede cleanup не вызывается. RETURNING
+содержит фактический результат BEFORE-триггеров. При расхождении даты или
+защищённого хеша обязательный readback_pass в INSERT вызывает ошибку и
+откатывает весь statement, включая UPDATE и trigger audit.
+
+Первый вызов обязан вернуть одну строку provider_schedule_corrected: это
+доказывает UPDATE1/audit1. Guard/CAS mismatch возвращает 0 без записей; это
+STOP и read-only проверка, не успех и не повод повторять. Ноль допустим
+только для заранее запланированного replay после read-back уже исправленной
+даты, прежних защищённых полей и ровно одного подходящего correction audit.
 
 Ожидание: target update 1, audit schedule_corrected 1; остальные таблицы +0.
 Повтор со свежими CAS и тем же подтверждённым schedule: update0/audit0;
