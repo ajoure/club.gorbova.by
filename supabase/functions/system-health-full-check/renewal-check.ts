@@ -14,6 +14,11 @@ const instant = (v: unknown): string | null =>
   typeof v === "string" && /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:?\d{2})$/.test(v) && Number.isFinite(Date.parse(v))
     ? new Date(v).toISOString() : null;
 
+export const needsRenewalProbe = (row: Row, nowMs: number): boolean =>
+  row.billing_review_required === true || row.billing_review_required === 'true' || isProviderRenewalOverdue({
+    state: row.state, next_charge_at: row.next_charge_at, last_charge_at: row.last_charge_at,
+  }, nowMs);
+
 export async function loadRenewalCandidates(db: any, nowMs: number): Promise<Row[]> {
   const rows: Row[] = [];
   for (let from = 0; from < 10_000; from += 1000) {
@@ -124,9 +129,7 @@ export async function probeProviderRenewal(
 export async function verifyRenewalCandidates(
   rows: Row[], authorization: string | null, nowMs: number, fetcher: typeof fetch = fetch,
 ) {
-  const candidates = rows.filter(row => row.billing_review_required === true || row.billing_review_required === 'true' || isProviderRenewalOverdue({
-    state: row.state, next_charge_at: row.next_charge_at, last_charge_at: row.last_charge_at,
-  }, nowMs));
+  const candidates = rows.filter(row => needsRenewalProbe(row, nowMs));
   const results: RenewalEvidence[] = [];
   for (let offset = 0; offset < candidates.length; offset += 4) {
     results.push(...await Promise.all(candidates.slice(offset, offset + 4).map((row, i) =>
