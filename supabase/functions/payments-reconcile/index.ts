@@ -321,8 +321,11 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("Reconciliation error:", error);
+    const conflict = ['recovery_queue_snapshot_changed', 'recovery_continuation_billing_state_changed',
+      'recovery_continuation_billing_conflict', 'recovery_provider_link_changed', 'recovery_queue_completion_conflict']
+      .includes(String(error).replace(/^Error:\s*/, ''));
     return new Response(JSON.stringify({ error: String(error) }), {
-      status: 500,
+      status: conflict ? 409 : 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

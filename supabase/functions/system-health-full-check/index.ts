@@ -2,12 +2,11 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import {
   evaluateCronRuns,
-  isProviderRenewalOverdue,
 } from "../_shared/payment-health-policy.ts";
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
 import { getCallerUserId } from "../_shared/caller-user.ts";
 import { authorizeSystemHealth } from "./authorization.ts";
-import { loadRenewalCandidates, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
+import { loadRenewalCandidates, needsRenewalProbe, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -198,7 +197,7 @@ async function checkFunctionAvailability(
 async function checkBepaidRenewals(supabase: any, now: Date) {
   try {
     const rows = await loadRenewalCandidates(supabase, now.getTime());
-    const needsProbe = rows.some(row => isProviderRenewalOverdue(row as any, now.getTime()));
+    const needsProbe = rows.some(row => needsRenewalProbe(row, now.getTime()));
     let authorization: string | null = null;
     if (needsProbe) {
       const credentials = await getBepaidCredsStrict(supabase);

@@ -89,7 +89,7 @@ Deno.test("only overdue mirrors trigger GET; real overdue and unknown remain cou
   const r = await verifyRenewalCandidates([candidate, { ...candidate, last_charge_at: past }, { ...candidate, next_charge_at: future }], "fixture", NOW, fetcher);
   assertEquals(calls, 1);
   assertEquals(r.passed, false);
-  assertEquals(r.verification, { candidates: 1, healthy: 0, overdue: 1, declined: 0, unknown: 0, source: "provider_get", release: "bepaid-renewal-health-2026-10-20-v1" });
+  assertEquals(r.verification, { candidates: 1, healthy: 0, overdue: 1, declined: 0, unknown: 0, source: "provider_get", release: "bepaid-renewal-health-2026-10-20-v2" });
   const unavailable = await verifyRenewalCandidates([candidate], null, NOW, fetcher);
   assertEquals(unavailable.passed, false);
   assertEquals(unavailable.count, 1);
@@ -130,7 +130,7 @@ Deno.test("snapshot enumeration is paginated, deterministic and bePaid-only", as
   const db = { from(table: string) {
     assertEquals(table, "provider_subscriptions");
     const q: any = {};
-    for (const method of ["select", "eq", "not", "lte", "order"]) q[method] = (...args: unknown[]) => { methods.push([method, ...args]); return q; };
+    for (const method of ["select", "eq", "or", "order"]) q[method] = (...args: unknown[]) => { methods.push([method, ...args]); return q; };
     q.range = async (from: number, to: number) => {
       pages++;
       assertEquals([from, to], pages === 1 ? [0, 999] : [1000, 1999]);
@@ -140,7 +140,26 @@ Deno.test("snapshot enumeration is paginated, deterministic and bePaid-only", as
   } };
   assertEquals((await loadRenewalCandidates(db, NOW)).length, 1001);
   assert(methods.some(m => JSON.stringify(m) === '["eq","provider","bepaid"]'));
+  assert(methods.some(m => m[0] === 'or' && String(m[1]).includes('billing_review_required.eq.true')));
   assertEquals(pages, 2);
+});
+Deno.test('recorded billing review remains visible after the provider snapshot date becomes future', async () => {
+  for (const flag of [true, 'true']) {
+    const row = { ...candidate, next_charge_at: future, billing_review_required: flag, local_auto_renew: false };
+    const before = structuredClone(row);
+    const r = await verifyRenewalCandidates([row], 'fixture', NOW, (async () => respond(payload())) as typeof fetch);
+    assertEquals(r.count, 0); assertEquals(r.verification.candidates, 1); assertEquals(r.review.count, 1);
+    assertEquals(r.review.samples[0].reason, 'provider_active_local_not_renewing'); assertEquals(row, before);
+  }
+});
+Deno.test('a recorded review is resolved only by fresh provider/local evidence, never its flag alone', async () => {
+  const row = { ...candidate, next_charge_at: future, billing_review_required: 'true' };
+  const aligned = await verifyRenewalCandidates([row], 'fixture', NOW, (async () => respond(payload())) as typeof fetch);
+  assertEquals(aligned.review.count, 0);
+  const terminal = await verifyRenewalCandidates([{ ...row, local_auto_renew: false }], 'fixture', NOW, (async () => respond(payload('canceled'))) as typeof fetch);
+  assertEquals(terminal.review.count, 0);
+  const failedProbe = await verifyRenewalCandidates([row], 'fixture', NOW, (async () => respond({}, 500)) as typeof fetch);
+  assertEquals(failedProbe.count, 1); assertEquals(failedProbe.verification.unknown, 1);
 });
 Deno.test("authorization rejects unverified headers, missing secrets and nonstaff", async () => {
   const request = (headers: Record<string, string> = {}) => new Request("https://fixture.local", { headers });

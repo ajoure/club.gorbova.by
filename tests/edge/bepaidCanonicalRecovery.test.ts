@@ -240,7 +240,7 @@ describe('exact paid continuation repair', () => {
     const h = fixture();
     const rolloverAt = '2026-08-01T12:00:00.000Z';
     const target = h.rows.subscriptions_v2[0];
-    Object.assign(target, { created_at: rolloverAt, updated_at: rolloverAt, meta: { initial_order_id: id(5) } });
+    Object.assign(target, { created_at: rolloverAt, updated_at: rolloverAt, auto_renew: true, billing_type: 'mit', meta: { initial_order_id: id(5) } });
     const source = { ...structuredClone(target), id: id(30), order_id: id(31),
       status: 'superseded', auto_renew: false, updated_at: rolloverAt };
     h.rows.subscriptions_v2.push(source);
@@ -327,6 +327,63 @@ describe('exact paid continuation repair', () => {
       .toMatchObject({ actor_type: 'user', actor_user_id: id(80) });
     const before = structuredClone(h.rows); await h.run({ operatorUserId: id(80) });
     expect(h.rows).toEqual(before);
+  });
+  it('preserves an explicit false setting while syncing provider metadata and retaining review', async () => {
+    const h = continuationFixture(); h.target.auto_renew = false;
+    const before = structuredClone(h.rows);
+    expect(await h.run({ dryRun: true })).toMatchObject({ no_writes: true, plan: { continuation_repair: {
+      preserved_auto_renew: false, billing_type: 'provider_managed', billing_review_required: true,
+    } } });
+    expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
+    await h.run();
+    expect(h.target).toMatchObject({ auto_renew: false, billing_type: 'provider_managed', next_charge_at: '2026-09-28T08:00:00.000Z', access_end_at: newEnd });
+    expect(h.rows.provider_subscriptions[0].meta.paid_continuation_repair.billing_review_required).toBe(true);
+    expect(h.writes.filter(w => w.table === 'subscriptions_v2').every(w => !Object.hasOwn(w.values, 'auto_renew'))).toBe(true);
+    expect(h.rows.payment_reconcile_queue[0].status).toBe('completed');
+  });
+  it('finalizes a previously materialized paid access without another payment, order, grant or relink', async () => {
+    const h = continuationFixture(); h.target.auto_renew = false; await h.run();
+    // Production regression: the previous version granted access, then stopped
+    // because false was incorrectly treated as a post-grant conflict.
+    Object.assign(h.rows.payment_reconcile_queue[0], { status: 'error', attempts: 6, last_error: 'recovery_continuation_billing_state_changed' });
+    h.target.billing_type = 'mit'; h.target.next_charge_at = newEnd; delete h.target.meta.bepaid_subscription_id;
+    h.rows.audit_logs = h.rows.audit_logs.filter(row => row.action !== 'bepaid.paid_continuation.billing_synced');
+    const ps = h.rows.provider_subscriptions[0]; ps.next_charge_at = oldEnd;
+    delete ps.meta.paid_continuation_repair.billing_review_required;
+    h.writes.length = 0; h.db.functions.invoke.mockClear();
+    expect(await h.run({ dryRun: true })).toMatchObject({ no_writes: true, plan: {
+      expected_payments_created: 0, expected_orders_created: 0, will_invoke_grant: false,
+      continuation_repair: { will_relink: false, preserved_auto_renew: false, billing_review_required: true,
+        will_sync_billing_metadata: true, will_sync_provider_snapshot: true },
+    } });
+    expect(h.writes).toEqual([]);
+    await h.run();
+    expect(h.rows.payments_v2).toHaveLength(2); expect(h.rows.orders_v2).toHaveLength(3);
+    expect(h.db.functions.invoke).not.toHaveBeenCalled();
+    expect(h.target.auto_renew).toBe(false); expect(h.target.access_end_at).toBe(newEnd);
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'completed', attempts: 7 });
+    expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.relinked')).toHaveLength(1);
+    expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.billing_synced')).toHaveLength(1);
+    const snapshot = structuredClone(h.rows); await h.run(); expect(h.rows).toEqual(snapshot);
+  });
+  it.each(['missing_flag', 'unknown_billing', 'foreign_sbs', 'scheduled_cancel', 'past_schedule'])('blocks unplannable billing before all writes: %s', async kind => {
+    const h = continuationFixture();
+    if (kind === 'missing_flag') delete h.target.auto_renew;
+    if (kind === 'unknown_billing') h.target.billing_type = 'unknown';
+    if (kind === 'foreign_sbs') h.target.meta.bepaid_subscription_id = 'sbs_foreign';
+    if (kind === 'scheduled_cancel') h.target.cancel_at = newEnd;
+    if (kind === 'past_schedule') h.sbs.renew_at = oldEnd;
+    await expect(h.run({ dryRun: true })).rejects.toThrow('recovery_');
+    expect(h.writes).toEqual([]); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('still stops on an actual concurrent renewal-setting change after the grant', async () => {
+    const h = continuationFixture(); const invoke = h.db.functions.invoke.getMockImplementation();
+    h.db.functions.invoke.mockImplementation(async (...args: any[]) => {
+      const result = await invoke(...args); h.target.auto_renew = false; return result;
+    });
+    await expect(h.run()).rejects.toThrow('recovery_continuation_billing_state_changed');
+    expect(h.target.auto_renew).toBe(false); expect(h.target.billing_type).toBe('mit');
+    expect(h.rows.payment_reconcile_queue[0].status).toBe('error');
   });
   it.each(['source_cancelled','target_cancelled','foreign_user','foreign_tariff','prior_refunded','wrong_tracking','missing_rollover','stale_provider','wrong_previous_amount'])('fails closed before writes: %s', async kind => {
     const h = continuationFixture();
