@@ -109,8 +109,8 @@ async function paidContinuation(db: any, ps: any, tx: any, repair: PaidContinuat
   const prior = await paymentByUid(db, repair.previousPaymentUid);
   const parent = prior?.order_id ? await one(db, 'orders_v2', prior.order_id) : null;
   const sourceOrder = source?.order_id ? await one(db, 'orders_v2', source.order_id) : null;
-  if (!source || !target || !prior || !parent || !sourceOrder || source.status !== 'superseded' || source.canceled_at ||
-      !['active', 'expired'].includes(target.status) || target.canceled_at || target.auto_renew_disabled_at ||
+  if (!source || !target || !prior || !parent || !sourceOrder || source.status !== 'superseded' || source.canceled_at || source.cancel_at ||
+      !['active', 'expired'].includes(target.status) || target.canceled_at || target.cancel_at || target.auto_renew_disabled_at ||
       prior.status !== 'succeeded' || parent.status !== 'paid' || sourceOrder.status !== 'paid' ||
       target.meta?.initial_order_id !== parent.id || target.order_id !== parent.id ||
       ['user_id','profile_id','product_id','tariff_id'].some(key => !target[key] || target[key] !== parent[key]) ||
@@ -223,6 +223,12 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
     if (repair) {
       continuation = await paidContinuation(db, ps, tx, repair, auth, fetcher);
       sub = continuation.target;
+      // Plan every billing prerequisite before the queue or paid access writes.
+      // false is a setting to preserve, never evidence of new renewal consent.
+      if (typeof sub.auto_renew !== 'boolean' || !['mit', 'provider_managed'].includes(sub.billing_type) ||
+          (sub.meta?.bepaid_subscription_id && sub.meta.bepaid_subscription_id !== sbs)) {
+        throw new Error('recovery_continuation_billing_snapshot_invalid');
+      }
     }
   }
   if (repair && !continuation) throw new Error('recovery_continuation_provider_required');
@@ -300,11 +306,15 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
   if (alreadyFulfilled && minimumEnd && !await fulfillmentProof(db, parent, now, minimumEnd)) {
     throw new Error('recovery_paid_access_window_short');
   }
+  const nextCharge = providerSub ? new Date(providerSub.renew_at || providerSub.next_billing_at).toISOString() : null;
+  if (continuation && (!nextCharge || Date.parse(nextCharge) <= now.getTime() || Date.parse(nextCharge) <= Date.parse(payment.paid_at))) {
+    throw new Error('recovery_continuation_billing_schedule_invalid');
+  }
   return { item, uid, payment, sbs, ps, sub, parent, profile, existingPayment, existingRebill, isRebill,
     continuation,
     alreadyFulfilled, accessStart: accessStart.toISOString(), expectedEnd: expectedEnd.toISOString(),
     minimumEnd: minimumEnd?.toISOString() ?? null,
-    nextCharge: providerSub ? new Date(providerSub.renew_at || providerSub.next_billing_at).toISOString() : null };
+    nextCharge };
 }
 
 function safePlan(plan: any) {
@@ -318,6 +328,13 @@ function safePlan(plan: any) {
     will_invoke_grant: !plan.alreadyFulfilled, queue_updated_at: plan.item.updated_at,
     ...(plan.continuation ? { continuation_repair: { source_subscription_id: plan.continuation.source.id,
       target_subscription_id: plan.sub.id, will_relink: !plan.continuation.alreadyRelinked,
+      billing_type: 'provider_managed', preserved_auto_renew: plan.sub.auto_renew,
+      billing_review_required: plan.sub.auto_renew === false,
+      will_sync_billing_metadata: plan.sub.billing_type !== 'provider_managed' ||
+        date(plan.sub.next_charge_at)?.toISOString() !== plan.nextCharge || plan.sub.meta?.bepaid_subscription_id !== plan.sbs,
+      will_sync_provider_snapshot: date(plan.ps.last_charge_at)?.toISOString() !== plan.payment.paid_at ||
+        date(plan.ps.next_charge_at)?.toISOString() !== plan.nextCharge ||
+        plan.ps.meta?.paid_continuation_repair?.billing_review_required !== (plan.sub.auto_renew === false),
       notifications_suppressed: true, expected_provider_updated_at: plan.ps.updated_at } } : {}) };
 }
 
@@ -335,7 +352,7 @@ async function executePlan(db: any, plan: any) {
     const currentSub = await one(db, 'subscriptions_v2', plan.sub.id);
     if (!currentPs || currentPs.updated_at !== plan.ps.updated_at || currentPs.state !== 'active' ||
         currentPs.subscription_v2_id !== plan.ps.subscription_v2_id || !currentSub ||
-        ['user_id', 'profile_id', 'product_id', 'tariff_id', 'status', 'access_end_at', 'canceled_at', 'auto_renew_disabled_at', 'updated_at'].some(key => currentSub[key] !== plan.sub[key])) {
+        ['user_id', 'profile_id', 'product_id', 'tariff_id', 'status', 'access_end_at', 'canceled_at', 'cancel_at', 'auto_renew_disabled_at', 'auto_renew', 'billing_type', 'updated_at'].some(key => currentSub[key] !== plan.sub[key])) {
       throw new Error('recovery_provider_link_changed');
     }
     if (plan.continuation && !plan.continuation.alreadyRelinked) {
@@ -452,16 +469,37 @@ async function executePlan(db: any, plan: any) {
   if (plan.sbs) {
     if (plan.continuation) {
       const currentSub = await one(db, 'subscriptions_v2', plan.sub.id);
-      if (!currentSub || currentSub.status !== 'active' || currentSub.canceled_at || currentSub.auto_renew_disabled_at ||
-          !date(currentSub.updated_at) || date(currentSub.access_end_at)?.toISOString() !== plan.expectedEnd || currentSub.auto_renew === false) {
+      if (!currentSub || currentSub.status !== 'active' || currentSub.canceled_at || currentSub.cancel_at || currentSub.auto_renew_disabled_at ||
+          !date(currentSub.updated_at) || date(currentSub.access_end_at)?.toISOString() !== plan.expectedEnd ||
+          currentSub.auto_renew !== plan.sub.auto_renew || currentSub.billing_type !== plan.sub.billing_type ||
+          (currentSub.meta?.bepaid_subscription_id && currentSub.meta.bepaid_subscription_id !== plan.sbs)) {
         throw new Error('recovery_continuation_billing_state_changed');
       }
       // Billing timestamp is the verified provider schedule, not the slightly
-      // different calendar-month learning window. Never move access here.
-      const synced = await checked(db.from('subscriptions_v2').update({ next_charge_at: plan.nextCharge })
-        .eq('id', currentSub.id).eq('updated_at', currentSub.updated_at).eq('status', 'active')
-        .select('id').maybeSingle(), 'continuation_billing_sync');
-      if (!synced) throw new Error('recovery_continuation_billing_conflict');
+      // different calendar-month learning window. Match the existing webhook
+      // STEP C policy: provider metadata never enables a persisted false flag.
+      // provider_managed also keeps this stream out of the local MIT charger.
+      const billingChanged = currentSub.billing_type !== 'provider_managed' ||
+        date(currentSub.next_charge_at)?.toISOString() !== plan.nextCharge || currentSub.meta?.bepaid_subscription_id !== plan.sbs;
+      if (billingChanged) {
+        const synced = await checked(db.from('subscriptions_v2').update({
+          billing_type: 'provider_managed', next_charge_at: plan.nextCharge,
+          meta: { ...currentSub.meta, bepaid_subscription_id: plan.sbs },
+        }).eq('id', currentSub.id).eq('updated_at', currentSub.updated_at).eq('status', 'active')
+          .eq('auto_renew', currentSub.auto_renew).eq('billing_type', currentSub.billing_type)
+          .select('id').maybeSingle(), 'continuation_billing_sync');
+        if (!synced) throw new Error('recovery_continuation_billing_conflict');
+      }
+      const billingAudit = await checked(db.from('audit_logs').select('id')
+        .eq('action', 'bepaid.paid_continuation.billing_synced')
+        .contains('meta', { queue_id: plan.item.id, payment_uid: plan.uid }), 'continuation_billing_audit_lookup');
+      if (!billingAudit.length) await checked(db.from('audit_logs').insert({
+        actor_type: plan.operatorUserId ? 'user' : 'system', actor_user_id: plan.operatorUserId || null,
+        actor_label: 'payments-reconcile', action: 'bepaid.paid_continuation.billing_synced',
+        meta: { queue_id: plan.item.id, payment_uid: plan.uid, target_subscription_id: plan.sub.id,
+          preserved_auto_renew: currentSub.auto_renew, billing_review_required: currentSub.auto_renew === false,
+          next_charge_at: plan.nextCharge, policy: 'preserve_local_auto_renew' },
+      }), 'continuation_billing_audit');
     }
     const current = await one(db, 'provider_subscriptions', plan.ps.id);
     if (!current || current.subscription_v2_id !== plan.ps.subscription_v2_id || current.provider_subscription_id !== plan.sbs ||
@@ -470,6 +508,10 @@ async function executePlan(db: any, plan: any) {
     // timestamps only; access remains owned by grant-access-for-order.
     const updated = await checked(db.from('provider_subscriptions').update({
       last_charge_at: plan.payment.paid_at, next_charge_at: plan.nextCharge,
+      ...(plan.continuation ? { meta: { ...current.meta, paid_continuation_repair: {
+        ...current.meta?.paid_continuation_repair, billing_review_required: plan.sub.auto_renew === false,
+        billing_policy: 'preserve_local_auto_renew',
+      } } } : {}),
     }).eq('id', current.id).eq('updated_at', current.updated_at).select('id').maybeSingle(), 'provider_sync');
     if (!updated) throw new Error('recovery_provider_sync_conflict');
   }

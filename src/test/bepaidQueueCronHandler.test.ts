@@ -219,4 +219,9 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     expect(h.tableReads).toEqual([]); expect(h.writes).toEqual([]);
     expect(h.recover).not.toHaveBeenCalled(); expect(h.invoke).not.toHaveBeenCalled();
   });
+  it('returns a snapshot conflict as 409 rather than a retryable server failure', async () => {
+    const h = harness({}, 'win', 'reconcile'); h.recover.mockRejectedValueOnce(new Error('recovery_queue_snapshot_changed'));
+    expect((await h.run({ queueItemId: h.item.id, dryRun: true })).status).toBe(409);
+    expect(h.writes).toEqual([]);
+  });
 });

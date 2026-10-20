@@ -2101,7 +2101,8 @@ Deno.serve(async (req) => {
     // PATCH: Disable auto_renew on OLD subscriptions for same product (manual payment cleans up grace)
     // BLOCKER FIX: Skip this cleanup for staff accounts to protect internal access
     const newSubId = results.subscription?.id;
-    if (newSubId) {
+    // An exact paid-window repair owns only its confirmed existing target.
+    if (newSubId && !exactAccessTarget) {
       // First check if this user is staff
       const { data: userProfile } = await supabase
         .from('profiles')
