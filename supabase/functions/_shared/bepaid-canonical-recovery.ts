@@ -15,6 +15,18 @@ const UID = /^[A-Za-z0-9_-]{1,128}$/;
 const date = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 const sameMoney = (a: unknown, b: unknown) => Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.abs(Number(a) - Number(b)) < 0.005;
 
+// A historical webhook may have persisted a provider timestamp at whole-second
+// precision. Accept only truncation within that exact second, never a rolling
+// tolerance or a mismatch between two fractional timestamps. UID, money,
+// tracking and the paid successor are still independently proved below.
+function sameHistoricalPaidAt(providerValue: unknown, storedValue: unknown) {
+  const provider = date(providerValue), stored = date(storedValue);
+  if (!provider || !stored) return false;
+  const providerMs = provider.getTime(), storedMs = stored.getTime();
+  return providerMs === storedMs || (storedMs % 1000 === 0 &&
+    Math.floor(providerMs / 1000) === Math.floor(storedMs / 1000));
+}
+
 async function checked(query: any, label: string): Promise<any> {
   const result = await query;
   if (result.error) throw new Error(`recovery_${label}_failed`);
@@ -118,7 +130,7 @@ async function paidContinuation(db: any, ps: any, tx: any, repair: PaidContinuat
   if (!previous || previous.uid !== repair.previousPaymentUid || !['successful','succeeded'].includes(previous.status) ||
       !['payment','capture'].includes(previous.type) || !sameMoney(previous.amount / 100, prior.amount) ||
       previous.currency !== prior.currency || !date(previous.paid_at) || !date(tx.paid_at) ||
-      !date(prior.paid_at) || Date.parse(previous.paid_at) !== Date.parse(prior.paid_at) ||
+      !sameHistoricalPaidAt(previous.paid_at, prior.paid_at) ||
       Date.parse(previous.paid_at) >= Date.parse(tx.paid_at) ||
       !a.orderId || a.kind !== 'link_order' || b.kind !== 'link_order' || a.orderId !== b.orderId) {
     throw new Error('recovery_continuation_provider_chain_mismatch');

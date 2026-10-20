@@ -272,6 +272,34 @@ describe('exact paid continuation repair', () => {
       continuation_repair: { source_subscription_id: id(30), target_subscription_id: id(4), will_relink: true, notifications_suppressed: true } } });
     expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
   });
+  it('accepts historical whole-second truncation only after proving the same UID and chain', async () => {
+    const h = continuationFixture();
+    h.previous.paid_at = '2026-07-29T08:00:00.899Z';
+    const before = structuredClone(h.rows);
+    expect(await h.run({ dryRun: true })).toMatchObject({ no_writes: true });
+    expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
+  });
+  it.each([
+    ['2026-07-29T08:00:00.899Z', '2026-07-29T08:00:00.100Z'],
+    ['2026-07-29T08:00:00.899Z', '2026-07-29T08:00:01.000Z'],
+    ['2026-07-29T08:00:00.999Z', '2026-07-29T07:59:59.000Z'],
+    ['2026-07-29T08:00:00.000Z', '2026-07-29T08:00:00.899Z'],
+    ['2026-07-29T08:00:00.899Z', '2026-07-29T09:00:00.000Z'],
+    ['invalid', '2026-07-29T08:00:00.000Z'],
+    ['2026-07-29T08:00:00.899Z', 'invalid'],
+  ])('rejects a different second, fractional time or invalid timestamp: %s / %s', async (providerAt, storedAt) => {
+    const h = continuationFixture(); h.previous.paid_at = providerAt; h.rows.payments_v2[0].paid_at = storedAt;
+    await expect(h.run({ dryRun: true })).rejects.toThrow('recovery_continuation_provider_chain_mismatch');
+    expect(h.writes).toEqual([]); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('does not substitute a different UID even in the same truncated second', async () => {
+    const h = continuationFixture(); h.previous.paid_at = '2026-07-29T08:00:00.899Z'; h.previous.uid = id(98);
+    const wrongUidFetcher = async (url: any, init: any) => String(url).includes(`/transactions/${id(98)}`)
+      ? new Response(JSON.stringify({ transaction: { ...h.previous, uid: id(99) } })) : h.fetcher(url, init);
+    h.rows.payments_v2[0].provider_payment_id = id(98);
+    await expect(h.run({ dryRun: true, fetcher: wrongUidFetcher })).rejects.toThrow('recovery_continuation_provider_chain_mismatch');
+    expect(h.writes).toEqual([]);
+  });
   it('relinks by CAS and reuses the canonical writer, preserving history and idempotency', async () => {
     const h = continuationFixture();
     await h.run();
