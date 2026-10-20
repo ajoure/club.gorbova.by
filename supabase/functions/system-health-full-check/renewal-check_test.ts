@@ -51,11 +51,12 @@ Deno.test("refunds, failed or unproven transactions cannot cover a missed renewa
 Deno.test("probe is fixed-origin GET only and does not echo arbitrary provider data", async () => {
   let calls = 0;
   const fetcher: typeof fetch = async (url, init) => {
+    const request = init as { method?: string; redirect?: string; body?: unknown } | undefined;
     calls++;
     assertEquals(url, `https://api.bepaid.by/subscriptions/${ID}`);
-    assertEquals(init?.method, "GET");
-    assertEquals(init?.redirect, "error");
-    assertEquals(init?.body, undefined);
+    assertEquals(request?.method, "GET");
+    assertEquals(request?.redirect, "error");
+    assertEquals(request?.body, undefined);
     return respond({ ...payload(), customer: { private: "must_not_escape" }, credit_card: { private: "must_not_escape" } });
   };
   const result = await probeProviderRenewal(ID, "Basic fixture", NOW, fetcher);

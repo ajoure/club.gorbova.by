@@ -136,6 +136,23 @@ async function paidContinuation(db: any, ps: any, tx: any, repair: PaidContinuat
       Math.abs(Date.parse(row.created_at) - Date.parse(target.created_at)) <= 1000)) {
     throw new Error('recovery_continuation_rollover_unproven');
   }
+  const tupleSubs = await checked(db.from('subscriptions_v2').select('id')
+    .eq('user_id', target.user_id).eq('product_id', target.product_id).eq('tariff_id', target.tariff_id), 'continuation_tuple');
+  const streams = await checked(db.from('provider_subscriptions').select('provider_subscription_id')
+    .eq('provider', 'bepaid').eq('user_id', target.user_id)
+    .in('subscription_v2_id', tupleSubs.map((row: any) => row.id)).limit(7), 'continuation_streams');
+  const others = [...new Set<string>(streams.map((row: any) => row.provider_subscription_id))]
+    .filter(id => id !== ps.provider_subscription_id);
+  if (streams.length >= 7 || others.length > 5) throw new Error('recovery_continuation_stream_limit');
+  for (const id of others) {
+    if (!SBS.test(id)) throw new Error('recovery_continuation_unknown_stream');
+    const value = await providerGet(fetcher, `https://api.bepaid.by/subscriptions/${encodeURIComponent(id)}`, auth);
+    const other = value.subscription || value;
+    if (other.id !== id || !['canceled','cancelled','terminated','expired','completed','failed','error']
+      .includes(String(other.state || other.status).toLowerCase())) {
+      throw new Error('recovery_continuation_competing_provider_stream');
+    }
+  }
   const receipt = ps.meta?.paid_continuation_repair;
   const alreadyRelinked = ps.subscription_v2_id === target.id && receipt?.source_subscription_id === source.id &&
     receipt?.target_subscription_id === target.id && receipt?.payment_uid === tx.uid;
@@ -422,7 +439,7 @@ async function executePlan(db: any, plan: any) {
     if (plan.continuation) {
       const currentSub = await one(db, 'subscriptions_v2', plan.sub.id);
       if (!currentSub || currentSub.status !== 'active' || currentSub.canceled_at || currentSub.auto_renew_disabled_at ||
-          date(currentSub.access_end_at)?.toISOString() !== plan.expectedEnd || currentSub.auto_renew === false) {
+          !date(currentSub.updated_at) || date(currentSub.access_end_at)?.toISOString() !== plan.expectedEnd || currentSub.auto_renew === false) {
         throw new Error('recovery_continuation_billing_state_changed');
       }
       // Billing timestamp is the verified provider schedule, not the slightly

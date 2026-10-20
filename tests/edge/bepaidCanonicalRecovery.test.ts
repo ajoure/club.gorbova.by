@@ -53,10 +53,13 @@ function fixture() {
       const filters: Array<(row: any) => boolean> = [];
       let op = 'select', values: any;
       let single = false;
+      let cap: number | undefined;
       const builder: any = {
         select: () => builder,
         eq: (key: string, value: any) => { filters.push(row => row[key] === value); return builder; },
         gt: (key: string, value: any) => { filters.push(row => row[key] > value); return builder; },
+        in: (key: string, values: any[]) => { filters.push(row => values.includes(row[key])); return builder; },
+        limit: (value: number) => { cap = value; return builder; },
         contains: (key: string, value: any) => { filters.push(row => Object.entries(value).every(([k,v]) => row[key]?.[k] === v)); return builder; },
         or: (expression: string) => {
           const uid = expression.split('provider_payment_id.eq.')[1].split(',')[0];
@@ -68,6 +71,7 @@ function fixture() {
         single: () => { single = true; return builder; },
         then(resolve: (value: any) => any) {
           let found = rows[table].filter(row => filters.every(f => f(row)));
+          if (cap !== undefined) found = found.slice(0, cap);
           if (op !== 'select') {
             writes.push({ table, op, values: structuredClone(values) });
             if (claimConflict && table === 'payment_reconcile_queue' && values.status === 'processing') found = [];
@@ -236,7 +240,7 @@ describe('exact paid continuation repair', () => {
     const h = fixture();
     const rolloverAt = '2026-08-01T12:00:00.000Z';
     const target = h.rows.subscriptions_v2[0];
-    Object.assign(target, { created_at: rolloverAt, meta: { initial_order_id: id(5) } });
+    Object.assign(target, { created_at: rolloverAt, updated_at: rolloverAt, meta: { initial_order_id: id(5) } });
     const source = { ...structuredClone(target), id: id(30), order_id: id(31),
       status: 'superseded', auto_renew: false, updated_at: rolloverAt };
     h.rows.subscriptions_v2.push(source);
@@ -259,7 +263,7 @@ describe('exact paid continuation repair', () => {
       previousPaymentUid: previous.uid, expectedProviderUpdatedAt: h.rows.provider_subscriptions[0].updated_at });
     const run = (options: any = {}) => h.run({ paidContinuation: repair(), providerSubscriptionId: 'sbs_test',
       expectedUpdatedAt: h.rows.payment_reconcile_queue[0].updated_at, fetcher, ...options });
-    return { ...h, source, target, previous, repair, run };
+    return { ...h, source, target, previous, repair, run, fetcher };
   }
   it('dry-runs an exhausted queue with zero writes and exact paid-chain proof', async () => {
     const h = continuationFixture(); const before = structuredClone(h.rows);
@@ -310,6 +314,19 @@ describe('exact paid continuation repair', () => {
     await expect(h.run({ expectedUpdatedAt: undefined })).rejects.toThrow('exact_manual_required');
     await expect(h.run({ recordPreflightFailure: true })).rejects.toThrow('exact_manual_required');
     expect(h.writes).toEqual([]);
+  });
+  it('verifies competing streams against bePaid even when their local snapshot says expired', async () => {
+    const h = continuationFixture();
+    h.rows.subscriptions_v2.push({ ...structuredClone(h.target), id: id(81), status: 'past_due' });
+    h.rows.provider_subscriptions.push({ id: id(82), provider: 'bepaid', user_id: id(6),
+      subscription_v2_id: id(81), provider_subscription_id: 'sbs_other', state: 'expired' });
+    const fetcher = async (url: any, init: any) => String(url).endsWith('/subscriptions/sbs_other')
+      ? new Response(JSON.stringify({ id: 'sbs_other', state: 'active' })) : h.fetcher(url, init);
+    await expect(h.run({ dryRun: true, fetcher })).rejects.toThrow('competing_provider_stream');
+    expect(h.writes).toEqual([]);
+    const terminalFetcher = async (url: any, init: any) => String(url).endsWith('/subscriptions/sbs_other')
+      ? new Response(JSON.stringify({ id: 'sbs_other', state: 'expired' })) : h.fetcher(url, init);
+    expect(await h.run({ dryRun: true, fetcher: terminalFetcher })).toMatchObject({ no_writes: true });
   });
   it('retries a partial writer failure without a second payment, order or relink', async () => {
     const h = continuationFixture(); h.failGrant(true);
