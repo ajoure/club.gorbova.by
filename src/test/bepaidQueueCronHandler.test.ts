@@ -6,6 +6,8 @@ import { authorizeQueueCronRequest } from "../../supabase/functions/bepaid-queue
 import * as policy from "../../supabase/functions/_shared/bepaid-queue-policy";
 import { authorizePaymentsReconcile } from "../../supabase/functions/_shared/payments-reconcile-auth";
 import { requireExactGrantCapability } from "../../supabase/functions/payments-reconcile/grant-capability";
+import { authorizeManualContinuation } from "../../supabase/functions/payments-reconcile/manual-continuation";
+import { resolveGrantAccessCaller } from "../../supabase/functions/_shared/verified-financial-caller";
 
 const compiled = ts.transpileModule(
   readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8"),
@@ -16,13 +18,14 @@ const reconcileCompiled = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 
-function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" | "error" = "win", processor = "queue") {
+function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" | "error" = "win", processor = "queue", operator = 'admin') {
   const item = {
     id: "test-queue-id", status: "processing", attempts: 1, source: "webhook",
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", last_error: null,
     ...overrides,
   };
   const writes: Array<{ table: string; values: Record<string, unknown>; filters: unknown[] }> = [];
+  const tableReads: string[] = [];
   const response = claim === "lose" ? { success: true, claim_conflicts: 1 } :
     { success: true, stale_recovered: 1, results: { orders_reconciled: 1 } };
   const invoke = claim === "error" ? vi.fn().mockResolvedValue({ data: null, error: { message: "worker failed" } }) :
@@ -34,7 +37,12 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
   let queueReads = 0;
   const client = {
     functions: { invoke },
+    auth: { getUser: vi.fn(async () => operator === 'invalid'
+      ? { data: { user: null }, error: {} }
+      : { data: { user: { id: '00000000-0000-4000-8000-000000000001' } }, error: null }) },
+    rpc: vi.fn(async (_name: string, args: any) => ({ data: operator === args?._role_code, error: null })),
     from(table: string) {
+      tableReads.push(table);
       let values: Record<string, unknown> | undefined;
       const filters: unknown[] = [];
       const complete = () => {
@@ -70,6 +78,8 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       if (path === "./auth.ts") return { authorizeQueueCronRequest };
       if (path.endsWith("/payments-reconcile-auth.ts")) return { authorizePaymentsReconcile };
       if (path === "./grant-capability.ts") return { requireExactGrantCapability };
+      if (path === "./manual-continuation.ts") return { authorizeManualContinuation };
+      if (path.endsWith('/_shared/verified-financial-caller.ts')) return { resolveGrantAccessCaller };
       if (path.endsWith("/bepaid-canonical-recovery.ts")) return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {
@@ -80,10 +90,18 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       throw new Error(`Unexpected dependency ${path}`);
     },
   });
-  const run = (body: Record<string, unknown> = {}, authorized = true) => handler(new Request("https://example.test", {
-    method: "POST", headers: authorized ? { apikey: "service-test" } : {}, body: JSON.stringify(body),
+  const run = (body: Record<string, unknown> = {}, authorized: boolean | 'staff' = true) => handler(new Request("https://example.test", {
+    method: "POST", headers: authorized === 'staff' ? { Authorization: 'Bearer verified-staff' } : authorized ? { apikey: "service-test" } : {}, body: JSON.stringify(body),
   }));
-  return { run, writes, invoke, item, recover };
+  return { run, writes, invoke, item, recover, tableReads };
+}
+
+function manualBody() {
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  return { manualPaidContinuation: true, queueItemId: id(2), expectedUpdatedAt: '2026-01-01T00:00:00Z',
+    providerSubscriptionId: 'sbs_test', recordPreflightFailure: false,
+    paidContinuation: { sourceSubscriptionId: id(3), targetSubscriptionId: id(4), previousPaymentUid: 'test_uid',
+      expectedProviderUpdatedAt: '2026-01-01T00:00:00Z' } };
 }
 
 describe("actual bePaid queue cron handler with isolated database", () => {
@@ -171,5 +189,34 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     expect((await h.run({ queueItemId: h.item.id, paidContinuation: {} })).status).toBe(500);
     expect(h.recover).not.toHaveBeenCalled(); expect(h.writes).toEqual([]);
     expect(h.invoke).toHaveBeenCalledExactlyOnceWith('grant-access-for-order', { method: 'GET' });
+  });
+  it.each(['admin', 'super_admin'])('uses verified %s identity for an exact manual dry-run, never body identity', async role => {
+    const h = harness({}, 'win', 'reconcile', role);
+    h.invoke.mockResolvedValueOnce({ data: { capabilities: { exact_existing_access_v1: true } }, error: null } as any);
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const response = await h.run({ manualPaidContinuation: true, queueItemId: id(2), expectedUpdatedAt: '2026-01-01T00:00:00Z',
+      providerSubscriptionId: 'sbs_test', recordPreflightFailure: false,
+      paidContinuation: { sourceSubscriptionId: id(3), targetSubscriptionId: id(4), previousPaymentUid: 'test_uid',
+        expectedProviderUpdatedAt: '2026-01-01T00:00:00Z' } }, 'staff');
+    expect(response.status).toBe(200);
+    expect(h.recover.mock.calls[0][1]).toMatchObject({ dryRun: true, operatorUserId: id(1), recordPreflightFailure: false });
+    expect(h.writes).toEqual([]);
+  });
+  it.each(['admin', 'ordinary_user', 'invalid'])('keeps generic reconciliation service-only for %s', async role => {
+    const h = harness({}, 'win', 'reconcile', role);
+    expect((await h.run({}, 'staff')).status).toBe(role === 'invalid' ? 401 : 403);
+    expect(h.recover).not.toHaveBeenCalled(); expect(h.invoke).not.toHaveBeenCalled(); expect(h.writes).toEqual([]);
+  });
+  it.each(['ordinary_user', 'invalid'])('rejects a well-formed manual request from %s before any financial read', async role => {
+    const h = harness({}, 'win', 'reconcile', role);
+    expect((await h.run(manualBody(), 'staff')).status).toBe(role === 'invalid' ? 401 : 403);
+    expect(h.tableReads).toEqual([]); expect(h.writes).toEqual([]);
+    expect(h.recover).not.toHaveBeenCalled(); expect(h.invoke).not.toHaveBeenCalled();
+  });
+  it('rejects an admin body claiming an operator before any financial read or sweep', async () => {
+    const h = harness({}, 'win', 'reconcile', 'admin');
+    expect((await h.run({ ...manualBody(), operatorUserId: 'spoofed' }, 'staff')).status).toBe(400);
+    expect(h.tableReads).toEqual([]); expect(h.writes).toEqual([]);
+    expect(h.recover).not.toHaveBeenCalled(); expect(h.invoke).not.toHaveBeenCalled();
   });
 });

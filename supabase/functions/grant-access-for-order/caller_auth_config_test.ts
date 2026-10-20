@@ -7,8 +7,9 @@ const indexSource = await Deno.readTextFile(
   new URL("./index.ts", import.meta.url),
 );
 const authSource = await Deno.readTextFile(
-  new URL("./caller_auth.ts", import.meta.url),
+  new URL("../_shared/verified-financial-caller.ts", import.meta.url),
 );
+const branchSource = await Deno.readTextFile(new URL("./caller_auth.ts", import.meta.url));
 
 Deno.test("grant-access owns auth before any order lookup", () => {
   const authCall = indexSource.indexOf("resolveGrantAccessCaller(req, supabase)");
@@ -23,7 +24,8 @@ Deno.test("grant-access gateway permits secret-key calls only through custom aut
   );
   assert(authSource.includes("requestHasServiceRoleKey(req, serviceRoleKey)"));
   assert(authSource.includes('supabase.auth.getUser(token)'));
-  assert(authSource.includes('enforceBranchPolicy'));
+  assert(branchSource.includes('enforceBranchPolicy'));
+  assert(branchSource.includes('export { resolveGrantAccessCaller } from'));
 });
 
 Deno.test("composable fulfillment gateway delegates exact service key auth to handler", () => {

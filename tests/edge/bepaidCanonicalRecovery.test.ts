@@ -320,6 +320,14 @@ describe('exact paid continuation repair', () => {
     expect(h.writes).toHaveLength(writes);
     expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.relinked')).toHaveLength(1);
   });
+  it('records the authenticated manual operator in the existing receipt and relink audit', async () => {
+    const h = continuationFixture(); await h.run({ operatorUserId: id(80) });
+    expect(h.rows.provider_subscriptions[0].meta.paid_continuation_repair.operator_user_id).toBe(id(80));
+    expect(h.rows.audit_logs.find(row => row.action === 'bepaid.paid_continuation.relinked'))
+      .toMatchObject({ actor_type: 'user', actor_user_id: id(80) });
+    const before = structuredClone(h.rows); await h.run({ operatorUserId: id(80) });
+    expect(h.rows).toEqual(before);
+  });
   it.each(['source_cancelled','target_cancelled','foreign_user','foreign_tariff','prior_refunded','wrong_tracking','missing_rollover','stale_provider','wrong_previous_amount'])('fails closed before writes: %s', async kind => {
     const h = continuationFixture();
     if (kind === 'source_cancelled') h.source.status = 'canceled';

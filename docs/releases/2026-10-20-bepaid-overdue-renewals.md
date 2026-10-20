@@ -20,9 +20,23 @@ INV-P0-1 использовал устаревший provider_subscriptions ка
 
 ## Узкое восстановление оплаченного продолжения
 
-В существующий service-only payments-reconcile добавлен явный параметр
+В существующий payments-reconcile добавлен явный параметр
 `paidContinuation` исключительно с `queueItemId`, `expectedUpdatedAt` и
 `providerSubscriptionId`. По умолчанию этот режим — dry-run.
+
+Общий обработчик и автоматическая очередь остаются service/cron-only.
+Для ручной операции существующий администратор может передать
+`manualPaidContinuation=true`: его JWT и текущая роль admin/super_admin
+проверяются каноническим resolveGrantAccessCaller. Принимается только POST с
+семью разрешёнными полями и точной вложенной схемой; неизвестные поля,
+строковые boolean, aliases, batch и recordPreflightFailure=true запрещены.
+Actor берётся только из проверенной сессии и фиксируется в существующих
+receipt/audit. Нет новых ключей, чтения Vault из операторских инструментов,
+новых ролей или автоматического перехода в общий sweep. Dry-run не пишет аудит.
+Канонический resolver находится в `_shared/verified-financial-caller.ts`;
+старый `grant-access-for-order/caller_auth.ts` сохраняет прежние exports и
+матрицу веток. Это позволяет собирать функции из своего каталога и `_shared`,
+не создавая межфункциональной зависимости или копии логики авторизации.
 
 Параметры `sourceSubscriptionId`, `targetSubscriptionId`, `previousPaymentUid`,
 `expectedProviderUpdatedAt` берутся из защищённых read-only данных операции,

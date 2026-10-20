@@ -8,6 +8,8 @@ import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from
 import { staleProcessingCutoff } from '../_shared/bepaid-queue-policy.ts';
 import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
 import { requireExactGrantCapability } from './grant-capability.ts';
+import { resolveGrantAccessCaller } from '../_shared/verified-financial-caller.ts';
+import { authorizeManualContinuation } from './manual-continuation.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,10 +46,28 @@ serve(async (req) => {
   console.info("Starting payments reconciliation...");
 
   try {
-    if (!await authorizePaymentsReconcile(req, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", supabase)) {
-      return new Response(JSON.stringify({ error: "unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const serviceAuthorized = await authorizePaymentsReconcile(req, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", supabase);
+    const manualCaller = serviceAuthorized ? null : await resolveGrantAccessCaller(req, supabase);
+    if (manualCaller?.ok === false) {
+      return new Response(JSON.stringify(manualCaller.body), {
+        status: manualCaller.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+    if (manualCaller?.ok === true && manualCaller.caller.type !== 'admin') {
+      return new Response(JSON.stringify({ success: false, error: 'forbidden' }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const body = await req.json().catch(() => ({}));
+    let operatorUserId: string | undefined;
+    if (manualCaller) {
+      const manualAuth = authorizeManualContinuation(req.method, body, manualCaller);
+      if (manualAuth.ok === false) {
+        return new Response(JSON.stringify(manualAuth.body), {
+          status: manualAuth.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      operatorUserId = manualAuth.operatorUserId;
     }
     // PATCH-P0.9.1: Strict creds
     const credsResult = await getBepaidCredsStrict(supabase);
@@ -65,7 +85,6 @@ serve(async (req) => {
     
     console.log("Using bePaid secret from strict integration_instances");
 
-    const body = await req.json().catch(() => ({}));
     if (body.paidContinuation && !body.queueItemId) {
       return new Response(JSON.stringify({ error: 'continuation_requires_exact_queue_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -78,6 +97,7 @@ serve(async (req) => {
         dryRun: body.paidContinuation ? body.dryRun !== false && body.dry_run !== false : body.dryRun === true || body.dry_run === true,
         recordPreflightFailure: body.recordPreflightFailure === true,
         paidContinuation: body.paidContinuation,
+        ...(operatorUserId ? { operatorUserId } : {}),
         providerAuth: createBepaidAuthHeader(bepaidCreds),
       });
       return new Response(JSON.stringify(exact), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
