@@ -127,6 +127,59 @@ provider-managed metadata не заменяет явный false новым со
 8. Publish только после PASS. Скриншоты опубликованной ручной проверки на ПК
    и mobile 390x844, с URL/SHA/версией и без персональных данных.
 
+## Триггер графика provider-managed и completed-коррекция
+
+Фактический `ensure_billing_alignment` перезаписывал provider next_charge_at
+концом обучения. Миграция `20261020202000_preserve_provider_billing_schedule`
+добавляет ранний RETURN только для provider_managed, после прежнего клубного
+фильтра, до обеих правил. NULL финального provider-цикла также не заменяется
+выдуманной датой. MIT/legacy/прочие типы сохраняют прежние правила. CREATE OR
+REPLACE сохраняет owner, SECURITY DEFINER, search_path, ACL и привязку триггера;
+данные и состояния других триггеров миграция не меняет. Канонический recovery
+после billing CAS теперь читает сохранённую дату/флаги/окно и не завершает
+очередь при расхождении с подтверждённым provider schedule.
+
+Уже completed/7 операция не переоткрывается. Вместо нового режима API/RPC
+используется отдельный проверяемый операторский SQL
+`scripts/bepaid/correct-completed-provider-schedule.sql` через Lovable Cloud.
+Он не входит в миграцию и не доступен клиентскому приложению.
+
+Перед ним обязательны свежий exact dry-run канонического payments-reconcile
+(включая прежний payment GET, refund/cancel/suppression и competing streams)
+и свежий GET provider schedule. Только одна ранее согласованная операция A;
+никаких групповых исправлений по snapshot-кандидатам.
+
+В одном managed SQL-вызове: BEGIN ISOLATION LEVEL SERIALIZABLE; bind через
+`set_config('app.bepaid_schedule_repair', <экранированный JSON>, true)`; затем
+неизменённый DO-блок из репозитория; COMMIT. Вход не сохранять в Git/отчёте:
+
+- target_id, source_id, provider_row_id, queue_id, payment_uid,
+  previous_payment_uid — точные защищённые значения одобренного preflight;
+- target_updated_at, source_updated_at, provider_updated_at, queue_updated_at —
+  PostgreSQL timestamps как строки с полной точностью, без округления JS;
+- protected_target_md5 — md5((to_jsonb(target)-'next_charge_at'-'updated_at')::text);
+- before_next_charge_at — одобренная прежняя дата конца доступа;
+- verified_next_charge_at и verified_at — только свежий GET, не ввод клиента.
+
+DO проверяет whitelist 14 ключей, свежесть proof до 5 минут, блокирует точные
+строки, подтверждает связи/receipt/оператора/оплаты/старые заказы и доступ,
+сохраняет false и все защищённые поля. Он меняет только next_charge_at;
+существующий updated_at trigger срабатывает штатно. Списки status/auto_renew
+не входят в UPDATE, поэтому supersede cleanup не вызывается. При расхождении
+read-back или rowcount весь DO откатывается вместе с аудитом.
+
+Ожидание: target update 1, audit schedule_corrected 1; остальные таблицы +0.
+Повтор со свежими CAS и тем же подтверждённым schedule: update0/audit0;
+completed/7, прежние billing/relink audits и receipt остаются прежними.
+После коррекции выполнить ранее запланированный canonical completed replay,
+полный health notify=false и шесть безопасных runtime probes нового digest.
+Publish и оба опубликованных viewport-пруфа — только после всех PASS.
+
+Исторические расхождения снимков — кандидаты отдельного аудита, не доказанные
+ошибки и не разрешение на массовый UPDATE. Trial-ветка scheduler, способная
+менять provider schedule, отмечена как отдельный follow-up; её в этом релизе
+не запускать и не менять.
+
 ## Ограничения
 
 Отказ банка не исправляется повторным списанием. Он остаётся на ручном

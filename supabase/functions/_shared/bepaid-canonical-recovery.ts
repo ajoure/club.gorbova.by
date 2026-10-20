@@ -490,6 +490,15 @@ async function executePlan(db: any, plan: any) {
           .select('id').maybeSingle(), 'continuation_billing_sync');
         if (!synced) throw new Error('recovery_continuation_billing_conflict');
       }
+      const persistedBilling = await one(db, 'subscriptions_v2', currentSub.id);
+      if (!persistedBilling || persistedBilling.billing_type !== 'provider_managed' ||
+          date(persistedBilling.next_charge_at)?.toISOString() !== plan.nextCharge ||
+          persistedBilling.auto_renew !== currentSub.auto_renew || persistedBilling.status !== 'active' ||
+          persistedBilling.canceled_at || persistedBilling.cancel_at || persistedBilling.auto_renew_disabled_at ||
+          date(persistedBilling.access_end_at)?.toISOString() !== plan.expectedEnd ||
+          persistedBilling.meta?.bepaid_subscription_id !== plan.sbs) {
+        throw new Error('recovery_continuation_billing_readback_failed');
+      }
       const billingAudit = await checked(db.from('audit_logs').select('id')
         .eq('action', 'bepaid.paid_continuation.billing_synced')
         .contains('meta', { queue_id: plan.item.id, payment_uid: plan.uid }), 'continuation_billing_audit_lookup');
