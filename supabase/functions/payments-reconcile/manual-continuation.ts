@@ -14,7 +14,8 @@ export function authorizeManualContinuation(method: string, body: unknown, auth:
   { ok: true; operatorUserId: string } | { ok: false; status: number; body: { success: false; error: string } } {
   if (auth.ok === false) return auth;
   const deny = (status: number, error: string) => ({ ok: false as const, status, body: { success: false as const, error } });
-  if (auth.caller.type !== 'admin' || !UUID.test(auth.caller.actorUserId || '')) return deny(403, 'forbidden');
+  const operatorUserId = auth.caller.actorUserId;
+  if (auth.caller.type !== 'admin' || typeof operatorUserId !== 'string' || !UUID.test(operatorUserId)) return deny(403, 'forbidden');
   if (method !== 'POST') return deny(405, 'method_not_allowed');
   if (!isRecord(body) || body.manualPaidContinuation !== true) return deny(403, 'manual_continuation_only');
   const repair = body.paidContinuation;
@@ -30,5 +31,5 @@ export function authorizeManualContinuation(method: string, body: unknown, auth:
       (body.dryRun !== undefined && typeof body.dryRun !== 'boolean')) {
     return deny(400, 'invalid_manual_continuation');
   }
-  return { ok: true, operatorUserId: auth.caller.actorUserId! };
+  return { ok: true, operatorUserId };
 }
