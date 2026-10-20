@@ -366,6 +366,15 @@ describe('exact paid continuation repair', () => {
     expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.billing_synced')).toHaveLength(1);
     const snapshot = structuredClone(h.rows); await h.run(); expect(h.rows).toEqual(snapshot);
   });
+  it('does not report completion when a database trigger overwrites the verified billing date', async () => {
+    const h = continuationFixture(); h.target.auto_renew = false;
+    Object.defineProperty(h.target, 'next_charge_at', { enumerable: true, configurable: true,
+      get: () => newEnd, set: () => {} });
+    await expect(h.run()).rejects.toThrow('recovery_continuation_billing_readback_failed');
+    expect(h.rows.payment_reconcile_queue[0].status).toBe('error');
+    expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.billing_synced')).toHaveLength(0);
+    expect(h.target.auto_renew).toBe(false);
+  });
   it.each(['missing_flag', 'unknown_billing', 'foreign_sbs', 'scheduled_cancel', 'past_schedule'])('blocks unplannable billing before all writes: %s', async kind => {
     const h = continuationFixture();
     if (kind === 'missing_flag') delete h.target.auto_renew;

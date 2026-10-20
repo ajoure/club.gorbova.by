@@ -113,6 +113,7 @@ jobs:
           deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
       - name: Live bePaid renewal diagnostics and authorization
         run: |
+          node --test scripts/tests/provider-billing-alignment.test.mjs scripts/tests/provider-billing-repair.test.mjs
           deno test --no-lock supabase/functions/system-health-full-check/renewal-check_test.ts supabase/functions/_shared/payment-health-policy.test.ts supabase/functions/grant-access-for-order/notification-policy_test.ts supabase/functions/payments-reconcile/grant-capability_test.ts supabase/functions/payments-reconcile/manual-continuation_test.ts
           deno test --no-lock --allow-read supabase/functions/grant-access-for-order/caller_auth_config_test.ts
           deno check --no-lock supabase/functions/system-health-full-check/index.ts supabase/functions/payments-reconcile/index.ts
