@@ -1,3 +1,4 @@
+import { ReleaseHealthCheck } from "../ReleaseHealthCheck";
 import { Card, CardContent } from "@/components/ui/card";
 import { Info } from "lucide-react";
 import { SystemHealthOverview } from "../SystemHealthOverview";
@@ -27,6 +28,7 @@ export function OwnerTechInfoTab({ run, checks, runs, selectedRunId, onSelectRun
         </CardContent>
       </Card>
 
+      <ReleaseHealthCheck />
       <SystemHealthOverview run={run} checks={checks} />
       <EdgeFunctionsHealth />
       <HealthRunHistory runs={runs} selectedRunId={selectedRunId} onSelectRun={onSelectRun} />

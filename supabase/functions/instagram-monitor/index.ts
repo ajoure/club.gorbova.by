@@ -95,6 +95,7 @@ Deno.serve(async (req) => {
         {
           webhook: Deno.env.get("TELEGRAM_WEBHOOK_SECRET"),
           media: Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN"),
+          emailService: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
         },
       );
       return jsonResponse({ ok: true, result: health });

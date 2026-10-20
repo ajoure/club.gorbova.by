@@ -1,10 +1,11 @@
+import { CB2_ACCESS_RELEASE } from "../_shared/cb2-access-release.ts";
 import { CB21_RELEASE_DIGEST } from "../_shared/cb21-release.ts";
 
 /** Read-only fixed health probes. Secrets stay in the Edge runtime. */
 export async function instagramReleaseHealth(
   baseUrl: string,
   requesterAuthorization: string,
-  secrets: { webhook?: string; media?: string },
+  secrets: { webhook?: string; media?: string; emailService?: string },
   fetcher: typeof fetch = fetch,
 ) {
   const base = new URL(baseUrl);
@@ -15,7 +16,8 @@ export async function instagramReleaseHealth(
   ) {
     throw new Error("invalid_runtime_url");
   }
-  const targets = [
+  const targets: { name: string; path?: string; headers: Record<string, string> | null;
+    senderKind?: 'service' | 'staff' }[] = [
     { name: "sales-runtime-worker", headers: {} },
     {
       name: "sales-runtime-control",
@@ -29,7 +31,16 @@ export async function instagramReleaseHealth(
     },
     {
       name: "telegram-media-worker",
-      headers: secrets.media ? { "x-worker-token": secrets.media } : null,
+      // Preserve the existing JWT gateway as well as the worker's exact-token gate.
+      headers: secrets.media ? { "x-worker-token": secrets.media, Authorization: requesterAuthorization } : null,
+    },
+    {
+      name: "send-email:service", path: "send-email", senderKind: "service",
+      headers: secrets.emailService ? { apikey: secrets.emailService, "Content-Type": "application/json" } : null,
+    },
+    {
+      name: "send-email:staff", path: "send-email", senderKind: "staff",
+      headers: requesterAuthorization ? { Authorization: requesterAuthorization, "Content-Type": "application/json" } : null,
     },
   ];
   const probes = await Promise.all(targets.map(async (target) => {
@@ -44,10 +55,11 @@ export async function instagramReleaseHealth(
     let status: number | null = null;
     try {
       const response = await fetcher(
-        `${base.origin}/functions/v1/${target.name}?health=cb21`,
+        `${base.origin}/functions/v1/${target.path || target.name}${target.senderKind ? "" : "?health=cb21"}`,
         {
-          method: "GET",
-          headers: target.headers as Record<string, string>,
+          method: target.senderKind ? "POST" : "GET",
+          headers: target.headers,
+          ...(target.senderKind ? { body: JSON.stringify({ action: "diagnose" }) } : {}),
           redirect: "error",
           signal: AbortSignal.timeout(10_000),
         },
@@ -82,7 +94,9 @@ export async function instagramReleaseHealth(
       return {
         function: target.name,
         status,
-        matches: body?.release_digest === CB21_RELEASE_DIGEST,
+        matches: target.senderKind
+          ? body?.success === true && body?.sent === false && body?.release === CB2_ACCESS_RELEASE && body?.authorized_as === target.senderKind
+          : body?.release_digest === CB21_RELEASE_DIGEST,
       };
     } catch {
       return {
@@ -95,6 +109,7 @@ export async function instagramReleaseHealth(
   }));
   return {
     expected_digest: CB21_RELEASE_DIGEST,
+    expected_sender_release: CB2_ACCESS_RELEASE,
     ready: probes.every((p) => p.status === 200 && p.matches),
     probes,
   };
