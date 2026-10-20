@@ -5,6 +5,7 @@ import ts from "typescript";
 import { authorizeQueueCronRequest } from "../../supabase/functions/bepaid-queue-cron/auth";
 import * as policy from "../../supabase/functions/_shared/bepaid-queue-policy";
 import { authorizePaymentsReconcile } from "../../supabase/functions/_shared/payments-reconcile-auth";
+import { requireExactGrantCapability } from "../../supabase/functions/payments-reconcile/grant-capability";
 
 const compiled = ts.transpileModule(
   readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8"),
@@ -68,6 +69,7 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       if (path.includes("@supabase/supabase-js")) return { createClient: () => client };
       if (path === "./auth.ts") return { authorizeQueueCronRequest };
       if (path.endsWith("/payments-reconcile-auth.ts")) return { authorizePaymentsReconcile };
+      if (path === "./grant-capability.ts") return { requireExactGrantCapability };
       if (path.endsWith("/bepaid-canonical-recovery.ts")) return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {
@@ -154,5 +156,20 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     const h = harness({}, "win", "reconcile");
     expect((await h.run({ dryRun: true })).status).toBe(400);
     expect(h.writes).toEqual([]); expect(h.recover).not.toHaveBeenCalled();
+  });
+  it('proves deployed grant capability before planning an explicit continuation', async () => {
+    const h = harness({}, 'win', 'reconcile');
+    h.invoke.mockResolvedValueOnce({ data: { capabilities: { exact_existing_access_v1: true } }, error: null } as any);
+    expect((await h.run({ queueItemId: h.item.id, paidContinuation: { sourceSubscriptionId: 'test-source' } })).status).toBe(200);
+    expect(h.invoke).toHaveBeenCalledExactlyOnceWith('grant-access-for-order', { method: 'GET' });
+    expect(h.invoke.mock.invocationCallOrder[0]).toBeLessThan(h.recover.mock.invocationCallOrder[0]);
+    expect(h.recover.mock.calls[0][1]).toMatchObject({ dryRun: true });
+    expect(h.writes).toEqual([]);
+  });
+  it('does not plan or write a continuation when the deployed capability is absent', async () => {
+    const h = harness({}, 'win', 'reconcile');
+    expect((await h.run({ queueItemId: h.item.id, paidContinuation: {} })).status).toBe(500);
+    expect(h.recover).not.toHaveBeenCalled(); expect(h.writes).toEqual([]);
+    expect(h.invoke).toHaveBeenCalledExactlyOnceWith('grant-access-for-order', { method: 'GET' });
   });
 });
