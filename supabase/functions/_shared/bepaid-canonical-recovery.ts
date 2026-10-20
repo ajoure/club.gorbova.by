@@ -75,7 +75,75 @@ async function fulfillmentProof(db: any, order: any, now: Date, minimumEnd?: Dat
   return !!activeSub && !!activeEnt && (belongs(activeEnt) || deliveryRecorded);
 }
 
-async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch, now: Date, explicitSbs?: string) {
+export interface PaidContinuationRepair {
+  sourceSubscriptionId: string;
+  targetSubscriptionId: string;
+  previousPaymentUid: string;
+  expectedProviderUpdatedAt: string;
+}
+
+// Explicit manual repair only. A superseded row is NOT generally eligible for
+// recovery. Prove its trigger-created paid successor and the same provider
+// tracking chain before even planning a provider-link CAS.
+async function paidContinuation(db: any, ps: any, tx: any, repair: PaidContinuationRepair,
+  auth: string, fetcher: typeof fetch) {
+  if (!repair || !UUID.test(repair.sourceSubscriptionId || '') || !UUID.test(repair.targetSubscriptionId || '') ||
+      repair.sourceSubscriptionId === repair.targetSubscriptionId || !UID.test(repair.previousPaymentUid || '') ||
+      !date(repair.expectedProviderUpdatedAt) || ps.updated_at !== repair.expectedProviderUpdatedAt) {
+    throw new Error('recovery_continuation_snapshot_invalid');
+  }
+  const source = await one(db, 'subscriptions_v2', repair.sourceSubscriptionId);
+  const target = await one(db, 'subscriptions_v2', repair.targetSubscriptionId);
+  const prior = await paymentByUid(db, repair.previousPaymentUid);
+  const parent = prior?.order_id ? await one(db, 'orders_v2', prior.order_id) : null;
+  const sourceOrder = source?.order_id ? await one(db, 'orders_v2', source.order_id) : null;
+  if (!source || !target || !prior || !parent || !sourceOrder || source.status !== 'superseded' || source.canceled_at ||
+      !['active', 'expired'].includes(target.status) || target.canceled_at || target.auto_renew_disabled_at ||
+      prior.status !== 'succeeded' || parent.status !== 'paid' || sourceOrder.status !== 'paid' ||
+      target.meta?.initial_order_id !== parent.id || target.order_id !== parent.id ||
+      ['user_id','profile_id','product_id','tariff_id'].some(key => !target[key] || target[key] !== parent[key]) ||
+      ['user_id','product_id','tariff_id'].some(key => source[key] !== target[key] || sourceOrder[key] !== target[key]) ||
+      prior.user_id !== target.user_id || prior.profile_id !== target.profile_id || ps.user_id !== target.user_id ||
+      !sameMoney(prior.amount, tx.amount / 100) || !sameMoney(parent.final_price, prior.amount) || prior.currency !== tx.currency || parent.currency !== prior.currency) {
+    throw new Error('recovery_continuation_identity_mismatch');
+  }
+  for (const order of [sourceOrder, parent]) {
+    if (order.meta?.do_not_grant_access || order.meta?.refund_candidate || order.meta?.grant_status === 'suppressed_post_cancel_charge') {
+      throw new Error('recovery_continuation_suppressed');
+    }
+  }
+  const priorTxResponse = await providerGet(fetcher, `https://gateway.bepaid.by/transactions/${encodeURIComponent(repair.previousPaymentUid)}`, auth);
+  const previous = priorTxResponse.transaction;
+  const a = parseBepaidTrackingId(previous?.tracking_id), b = parseBepaidTrackingId(tx.tracking_id);
+  if (!previous || previous.uid !== repair.previousPaymentUid || !['successful','succeeded'].includes(previous.status) ||
+      !['payment','capture'].includes(previous.type) || !sameMoney(previous.amount / 100, prior.amount) ||
+      previous.currency !== prior.currency || !date(previous.paid_at) || !date(tx.paid_at) ||
+      !date(prior.paid_at) || Date.parse(previous.paid_at) !== Date.parse(prior.paid_at) ||
+      Date.parse(previous.paid_at) >= Date.parse(tx.paid_at) ||
+      !a.orderId || a.kind !== 'link_order' || b.kind !== 'link_order' || a.orderId !== b.orderId) {
+    throw new Error('recovery_continuation_provider_chain_mismatch');
+  }
+  const refundRows = await checked(db.from('payments_v2').select('amount,status,refunded_amount,meta')
+    .or(`provider_payment_id.eq.${repair.previousPaymentUid},meta->>parent_payment_uid.eq.${repair.previousPaymentUid}`), 'continuation_refunds');
+  if (refundRows.some((row: any) => Number(row.amount) < 0 || row.status === 'refunded' || Number(row.refunded_amount) > 0)) {
+    throw new Error('recovery_refund_requires_review');
+  }
+  const audit = await checked(db.from('audit_logs').select('created_at,meta')
+    .eq('action', 'subscription.auto_superseded').eq('actor_label', 'trg_close_superseded')
+    .contains('meta', { new_subscription_id: target.id, user_id: target.user_id, product_id: target.product_id }), 'continuation_audit');
+  if (!audit.some((row: any) => date(row.created_at) && date(source.updated_at) && date(target.created_at) &&
+      Math.abs(Date.parse(row.created_at) - Date.parse(source.updated_at)) <= 1000 &&
+      Math.abs(Date.parse(row.created_at) - Date.parse(target.created_at)) <= 1000)) {
+    throw new Error('recovery_continuation_rollover_unproven');
+  }
+  const receipt = ps.meta?.paid_continuation_repair;
+  const alreadyRelinked = ps.subscription_v2_id === target.id && receipt?.source_subscription_id === source.id &&
+    receipt?.target_subscription_id === target.id && receipt?.payment_uid === tx.uid;
+  if (ps.subscription_v2_id !== source.id && !alreadyRelinked) throw new Error('recovery_continuation_link_changed');
+  return { source, target, parent, alreadyRelinked };
+}
+
+async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch, now: Date, explicitSbs?: string, repair?: PaidContinuationRepair) {
   if (!UID.test(item.bepaid_uid || '')) throw new Error('recovery_missing_provider_uid');
   const uid = item.bepaid_uid;
   const response = await providerGet(fetcher, `https://gateway.bepaid.by/transactions/${encodeURIComponent(uid)}`, auth);
@@ -110,6 +178,7 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
   let ps: any = null;
   let providerSub: any = null;
   let sub: any = null;
+  let continuation: any = null;
   if (sbs) {
     const value = await providerGet(fetcher, `https://api.bepaid.by/subscriptions/${encodeURIComponent(sbs)}`, auth);
     providerSub = value.subscription || value;
@@ -122,13 +191,18 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
     if (!ps?.subscription_v2_id || ps.state !== 'active') throw new Error('recovery_missing_provider_link');
     sub = await one(db, 'subscriptions_v2', ps.subscription_v2_id);
     if (!sub) throw new Error('recovery_missing_subscription');
+    if (repair) {
+      continuation = await paidContinuation(db, ps, tx, repair, auth, fetcher);
+      sub = continuation.target;
+    }
   }
+  if (repair && !continuation) throw new Error('recovery_continuation_provider_required');
   const existingPayment = await paymentByUid(db, uid);
   if (existingPayment && (existingPayment.status !== 'succeeded' || !sameMoney(existingPayment.amount, payment.amount) ||
       existingPayment.currency !== payment.currency || !existingPayment.order_id)) {
     throw new Error('recovery_existing_payment_requires_review');
   }
-  let parent = existingPayment ? await one(db, 'orders_v2', existingPayment.order_id) : null;
+  let parent = existingPayment ? await one(db, 'orders_v2', existingPayment.order_id) : continuation?.parent ?? null;
   if (!parent && sub?.order_id) parent = await one(db, 'orders_v2', sub.order_id);
   if (!parent && ps?.order_id) parent = await one(db, 'orders_v2', ps.order_id);
   const providerTracking = parseBepaidTrackingId(tx.tracking_id);
@@ -198,6 +272,7 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
     throw new Error('recovery_paid_access_window_short');
   }
   return { item, uid, payment, sbs, ps, sub, parent, profile, existingPayment, existingRebill, isRebill,
+    continuation,
     alreadyFulfilled, accessStart: accessStart.toISOString(), expectedEnd: expectedEnd.toISOString(),
     minimumEnd: minimumEnd?.toISOString() ?? null,
     nextCharge: providerSub ? new Date(providerSub.renew_at || providerSub.next_billing_at).toISOString() : null };
@@ -211,7 +286,10 @@ function safePlan(plan: any) {
     provider_next_charge_at: plan.nextCharge, already_fulfilled: plan.alreadyFulfilled,
     expected_orders_created: plan.isRebill && !plan.existingRebill ? 1 : 0,
     expected_payments_created: plan.existingPayment ? 0 : 1,
-    will_invoke_grant: !plan.alreadyFulfilled, queue_updated_at: plan.item.updated_at };
+    will_invoke_grant: !plan.alreadyFulfilled, queue_updated_at: plan.item.updated_at,
+    ...(plan.continuation ? { continuation_repair: { source_subscription_id: plan.continuation.source.id,
+      target_subscription_id: plan.sub.id, will_relink: !plan.continuation.alreadyRelinked,
+      notifications_suppressed: true, expected_provider_updated_at: plan.ps.updated_at } } : {}) };
 }
 
 async function executePlan(db: any, plan: any) {
@@ -227,9 +305,27 @@ async function executePlan(db: any, plan: any) {
     const currentPs = await one(db, 'provider_subscriptions', plan.ps.id);
     const currentSub = await one(db, 'subscriptions_v2', plan.sub.id);
     if (!currentPs || currentPs.updated_at !== plan.ps.updated_at || currentPs.state !== 'active' ||
-        currentPs.subscription_v2_id !== plan.sub.id || !currentSub ||
-        ['user_id', 'profile_id', 'product_id', 'tariff_id', 'status', 'access_end_at'].some(key => currentSub[key] !== plan.sub[key])) {
+        currentPs.subscription_v2_id !== plan.ps.subscription_v2_id || !currentSub ||
+        ['user_id', 'profile_id', 'product_id', 'tariff_id', 'status', 'access_end_at', 'canceled_at', 'auto_renew_disabled_at', 'updated_at'].some(key => currentSub[key] !== plan.sub[key])) {
       throw new Error('recovery_provider_link_changed');
+    }
+    if (plan.continuation && !plan.continuation.alreadyRelinked) {
+      const source = await one(db, 'subscriptions_v2', plan.continuation.source.id);
+      if (!source || source.status !== 'superseded' || source.updated_at !== plan.continuation.source.updated_at || source.canceled_at) {
+        throw new Error('recovery_continuation_source_changed');
+      }
+      const repaired = await checked(db.from('provider_subscriptions').update({
+        subscription_v2_id: plan.sub.id,
+        meta: { ...currentPs.meta, paid_continuation_repair: { source_subscription_id: source.id,
+          target_subscription_id: plan.sub.id, payment_uid: plan.uid, queue_id: plan.item.id,
+          repaired_at: new Date().toISOString() } },
+      }).eq('id', currentPs.id).eq('updated_at', currentPs.updated_at)
+        .eq('subscription_v2_id', source.id).eq('state', 'active').select('id').maybeSingle(), 'continuation_relink');
+      if (!repaired) throw new Error('recovery_continuation_link_conflict');
+      plan.ps = await one(db, 'provider_subscriptions', currentPs.id);
+      await checked(db.from('audit_logs').insert({ actor_type: 'system', actor_label: 'payments-reconcile',
+        action: 'bepaid.paid_continuation.relinked', meta: { provider_row_id: currentPs.id,
+          source_subscription_id: source.id, target_subscription_id: plan.sub.id, payment_uid: plan.uid, queue_id: plan.item.id } }), 'continuation_audit');
     }
   }
   let orderId = plan.existingPayment?.order_id || plan.parent.id;
@@ -238,6 +334,7 @@ async function executePlan(db: any, plan: any) {
     const start = order?.provider_payment_id === plan.uid ? order?.meta?.recovery_access_start_at : null;
     const result = await db.functions.invoke('grant-access-for-order', { body: { orderId: id,
       grantTelegram: true, grantGetcourse: false, context: 'historical_payment_recovery',
+      ...(plan.continuation ? { expectedExistingSubscriptionId: plan.sub.id, extendFromCurrent: true, notifyCustomer: false } : {}),
       ...(start ? { customAccessStartAt: start, customAccessEndAt: order.meta.recovery_expected_end_at } : {}) } });
     if (result.error || result.data?.success !== true) throw new Error('recovery_canonical_grant_failed');
     return result.data;
@@ -264,7 +361,8 @@ async function executePlan(db: any, plan: any) {
       },
       insertRebillOrder: (payload: Record<string, unknown>) => base.insertRebillOrder({ ...payload,
         meta: { ...(payload.meta as Record<string, unknown>), recovery_access_start_at: plan.accessStart,
-          recovery_expected_end_at: plan.expectedEnd, recovery_queue_id: plan.item.id } }),
+          recovery_expected_end_at: plan.expectedEnd, recovery_queue_id: plan.item.id,
+          ...(plan.continuation ? { suppress_notifications: true } : {}) } }),
       updatePaymentOrderId: async ({ payment_id, rebill_order_id }: any) => {
         const payment = await one(db, 'payments_v2', payment_id);
         if (payment?.order_id !== rebill_order_id) throw new Error('recovery_payment_rebind_forbidden');
@@ -321,6 +419,19 @@ async function executePlan(db: any, plan: any) {
     }
   }
   if (plan.sbs) {
+    if (plan.continuation) {
+      const currentSub = await one(db, 'subscriptions_v2', plan.sub.id);
+      if (!currentSub || currentSub.status !== 'active' || currentSub.canceled_at || currentSub.auto_renew_disabled_at ||
+          date(currentSub.access_end_at)?.toISOString() !== plan.expectedEnd || currentSub.auto_renew === false) {
+        throw new Error('recovery_continuation_billing_state_changed');
+      }
+      // Billing timestamp is the verified provider schedule, not the slightly
+      // different calendar-month learning window. Never move access here.
+      const synced = await checked(db.from('subscriptions_v2').update({ next_charge_at: plan.nextCharge })
+        .eq('id', currentSub.id).eq('updated_at', currentSub.updated_at).eq('status', 'active')
+        .select('id').maybeSingle(), 'continuation_billing_sync');
+      if (!synced) throw new Error('recovery_continuation_billing_conflict');
+    }
     const current = await one(db, 'provider_subscriptions', plan.ps.id);
     if (!current || current.subscription_v2_id !== plan.ps.subscription_v2_id || current.provider_subscription_id !== plan.sbs ||
         current.state !== 'active') throw new Error('recovery_provider_link_changed');
@@ -337,9 +448,13 @@ async function executePlan(db: any, plan: any) {
 export async function reconcileExactQueuePayment(db: any, options: {
   queueItemId: string; dryRun?: boolean; expectedUpdatedAt?: string; providerSubscriptionId?: string;
   recordPreflightFailure?: boolean;
+  paidContinuation?: PaidContinuationRepair;
   providerAuth: string; fetcher?: typeof fetch; now?: Date;
 }) {
   if (!UUID.test(options.queueItemId)) throw new Error('recovery_invalid_queue_id');
+  if (options.paidContinuation && (!options.expectedUpdatedAt || !options.providerSubscriptionId || options.recordPreflightFailure)) {
+    throw new Error('recovery_continuation_exact_manual_required');
+  }
   if (options.recordPreflightFailure && !options.expectedUpdatedAt) throw new Error('recovery_preflight_snapshot_required');
   const now = options.now || new Date();
   const item = await one(db, 'payment_reconcile_queue', options.queueItemId);
@@ -348,7 +463,12 @@ export async function reconcileExactQueuePayment(db: any, options: {
   const stale = isStaleProcessingItem(item, staleProcessingCutoff(now));
   if (item.status === 'processing' && !stale) return { success: true, claim_conflicts: 1, results: { orders_reconciled: 0 } };
   const terminal = staleTerminalReason(item, { maxAttempts: 5, excludeCancelled: true, excludeFileImport: true, queueItemId: null });
-  if (terminal) {
+  // Only the explicit service-only exact mode may retry an exhausted recovery.
+  // It still proves the entire provider/paid/trigger chain below on EVERY call.
+  // Never override an operator cancellation or replay a generic queue batch.
+  const manualContinuationRetry = !!options.paidContinuation && (
+    ((item.status === 'error' || stale) && String(item.last_error || '').startsWith('recovery_')) || item.status === 'completed');
+  if (terminal && !(terminal === 'STALE_PROCESSING_MAX_ATTEMPTS' && manualContinuationRetry)) {
     if (options.dryRun) return { success: true, dry_run: true, no_writes: true, terminal_reason: terminal };
     if (!stale) throw new Error('recovery_queue_requires_manual_review');
     const released = await checked(db.from('payment_reconcile_queue').update({ status: 'error',
@@ -367,7 +487,7 @@ export async function reconcileExactQueuePayment(db: any, options: {
   }
   let plan: any;
   try {
-    plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId);
+    plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId, options.paidContinuation);
   } catch (error) {
     const message = safeRecoveryError(error, 'recovery_preflight_failed');
     if (!options.recordPreflightFailure || options.dryRun ||
@@ -391,7 +511,7 @@ export async function reconcileExactQueuePayment(db: any, options: {
   }
   if (options.dryRun) return { success: true, dry_run: true, no_writes: true, plan: safePlan(plan) };
   if (item.status === 'completed' && plan.alreadyFulfilled) return { success: true, already_completed: true, results: { already_materialized: 1 } };
-  if (!['pending', 'error', 'processing', 'successful'].includes(item.status) || (item.attempts || 0) >= 5) {
+  if (!['pending', 'error', 'processing', 'successful'].includes(item.status) || ((item.attempts || 0) >= 5 && !manualContinuationRetry)) {
     throw new Error('recovery_queue_requires_manual_review');
   }
   const claimed = await checked(db.from('payment_reconcile_queue').update({ status: 'processing',

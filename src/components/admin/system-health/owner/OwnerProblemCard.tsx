@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { AlertOctagon, ChevronDown, Copy, Check, ExternalLink } from "lucide-react";
+import { AlertOctagon, AlertTriangle, ChevronDown, Copy, Check, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { humanizeInvariant } from "@/lib/system-health/invariant-humanize";
@@ -16,6 +16,8 @@ interface Props {
 
 export function OwnerProblemCard({ code, count }: Props) {
   const d = humanizeInvariant(code);
+  const manual = d.problemType === "manual_review";
+  const StatusIcon = manual ? AlertTriangle : AlertOctagon;
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -24,7 +26,7 @@ export function OwnerProblemCard({ code, count }: Props) {
     try {
       await navigator.clipboard.writeText(patch);
       setCopied(true);
-      toast.success("PATCH скопирован — вставьте в Lovable");
+      toast.success(manual ? "Описание скопировано" : "PATCH скопирован — вставьте в Lovable");
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error("Не удалось скопировать");
@@ -32,29 +34,30 @@ export function OwnerProblemCard({ code, count }: Props) {
   };
 
   return (
-    <Card className="border-red-200 dark:border-red-900">
+    <Card className={manual ? "border-amber-200 dark:border-amber-900" : "border-red-200 dark:border-red-900"}>
       <CardContent className="p-5 space-y-4">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg p-2 bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 flex-shrink-0">
-            <AlertOctagon className="h-5 w-5" />
+          <div className={`rounded-lg p-2 flex-shrink-0 ${manual ? "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300" : "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300"}`}>
+            <StatusIcon className="h-5 w-5" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="destructive">{d.code}</Badge>
-              <Badge variant="outline" className="text-xs">требует исправления</Badge>
+              <Badge variant={manual ? "secondary" : "destructive"}>{d.code}</Badge>
+              <Badge variant="outline" className="text-xs">{manual ? "нужна ручная проверка" : "требует исправления"}</Badge>
             </div>
             <h3 className="mt-2 text-lg font-semibold leading-tight">{d.ownerTitle}</h3>
             {/* Крупный однострочный итог */}
             <p className="mt-1 text-base text-foreground/90 font-medium">
               {d.ownerSummary}
             </p>
+            {code === "INV-P0-1-R" && <p className="mt-2 text-sm text-muted-foreground">Подписок для проверки: {count}</p>}
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
           <Button onClick={handleCopy} className="gap-2">
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? "Скопировано" : "Скопировать PATCH для Lovable"}
+            {copied ? "Скопировано" : manual ? "Скопировать описание" : "Скопировать PATCH для Lovable"}
           </Button>
           {d.relatedRoute && (
             <Button asChild variant="outline" size="sm">

@@ -41,7 +41,7 @@ function fixture() {
       const order = rows.orders_v2.find(row => row.id === body.orderId);
       const end = body.customAccessEndAt || newEnd;
       Object.assign(rows.subscriptions_v2[0], { status: 'active', access_end_at: end,
-        meta: { extended_by_orders: [order.id] } });
+        meta: { ...rows.subscriptions_v2[0].meta, extended_by_orders: [order.id] } });
       if (partialGrant) return { error: { message: 'interrupted after subscription write' } };
       Object.assign(rows.entitlements[0], { status: 'active', expires_at: end, meta: { extended_by_orders: [order.id] } });
       rows.access_grant_ledger.push({ source_order_id: order.id, status: 'extended' });
@@ -57,6 +57,7 @@ function fixture() {
         select: () => builder,
         eq: (key: string, value: any) => { filters.push(row => row[key] === value); return builder; },
         gt: (key: string, value: any) => { filters.push(row => row[key] > value); return builder; },
+        contains: (key: string, value: any) => { filters.push(row => Object.entries(value).every(([k,v]) => row[key]?.[k] === v)); return builder; },
         or: (expression: string) => {
           const uid = expression.split('provider_payment_id.eq.')[1].split(',')[0];
           filters.push(row => row.provider_payment_id === uid || row.meta?.parent_payment_uid === uid); return builder;
@@ -227,6 +228,97 @@ describe('automatic preflight failure backoff', () => {
     expect(source).toContain('next_retry_at.is.null,next_retry_at.lte.${queueNow}');
     expect(source).toContain('recordPreflightFailure: !queueItemId');
     expect(source.indexOf('next_retry_at.is.null')).toBeLessThan(source.indexOf('.limit(limit)'));
+  });
+});
+
+describe('exact paid continuation repair', () => {
+  function continuationFixture() {
+    const h = fixture();
+    const rolloverAt = '2026-08-01T12:00:00.000Z';
+    const target = h.rows.subscriptions_v2[0];
+    Object.assign(target, { created_at: rolloverAt, meta: { initial_order_id: id(5) } });
+    const source = { ...structuredClone(target), id: id(30), order_id: id(31),
+      status: 'superseded', auto_renew: false, updated_at: rolloverAt };
+    h.rows.subscriptions_v2.push(source);
+    h.rows.orders_v2.push({ ...structuredClone(h.rows.orders_v2[0]), id: id(31) });
+    h.rows.provider_subscriptions[0].subscription_v2_id = source.id;
+    h.rows.payments_v2[0].user_id = id(6);
+    h.rows.payments_v2[0].profile_id = id(7);
+    h.rows.audit_logs.push({ action: 'subscription.auto_superseded', actor_label: 'trg_close_superseded',
+      created_at: rolloverAt, meta: { new_subscription_id: target.id, user_id: id(6), product_id: id(8) } });
+    Object.assign(h.rows.payment_reconcile_queue[0], { status: 'error', attempts: 5,
+      last_error: 'recovery_subscription_identity_mismatch', tracking_id: `link:order:${id(90)}` });
+    h.tx.tracking_id = `link:order:${id(90)}`;
+    const previous = { ...structuredClone(h.tx), uid: id(11), paid_at: h.rows.payments_v2[0].paid_at };
+    const fetcher = vi.fn(async (url: string, init: any) => {
+      expect(init.method).toBe('GET');
+      return new Response(JSON.stringify(url.endsWith(`/transactions/${id(11)}`)
+        ? { transaction: previous } : url.includes('/transactions/') ? { transaction: h.tx } : { subscription: h.sbs }));
+    });
+    const repair = () => ({ sourceSubscriptionId: source.id, targetSubscriptionId: target.id,
+      previousPaymentUid: previous.uid, expectedProviderUpdatedAt: h.rows.provider_subscriptions[0].updated_at });
+    const run = (options: any = {}) => h.run({ paidContinuation: repair(), providerSubscriptionId: 'sbs_test',
+      expectedUpdatedAt: h.rows.payment_reconcile_queue[0].updated_at, fetcher, ...options });
+    return { ...h, source, target, previous, repair, run };
+  }
+  it('dry-runs an exhausted queue with zero writes and exact paid-chain proof', async () => {
+    const h = continuationFixture(); const before = structuredClone(h.rows);
+    const result = await h.run({ dryRun: true });
+    expect(result).toMatchObject({ no_writes: true, plan: { expected_payments_created: 1, expected_orders_created: 1,
+      continuation_repair: { source_subscription_id: id(30), target_subscription_id: id(4), will_relink: true, notifications_suppressed: true } } });
+    expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
+  });
+  it('relinks by CAS and reuses the canonical writer, preserving history and idempotency', async () => {
+    const h = continuationFixture();
+    await h.run();
+    expect(h.rows.provider_subscriptions[0].subscription_v2_id).toBe(h.target.id);
+    expect(h.source.status).toBe('superseded');
+    expect(h.rows.payments_v2).toHaveLength(2);
+    expect(h.rows.orders_v2).toHaveLength(3);
+    expect(h.rows.orders_v2[2].meta.suppress_notifications).toBe(true);
+    expect(h.db.functions.invoke.mock.calls[0]).toMatchObject(['grant-access-for-order', { body: {
+      expectedExistingSubscriptionId: h.target.id, extendFromCurrent: true, grantTelegram: true, grantGetcourse: false, notifyCustomer: false,
+      customAccessEndAt: newEnd,
+    } }]);
+    expect(h.rows.payment_reconcile_queue[0].attempts).toBe(6);
+    expect(h.target.next_charge_at).toBe('2026-09-28T08:00:00.000Z');
+    expect(h.target.access_end_at).toBe(newEnd);
+    const writes = h.writes.length;
+    expect(await h.run()).toMatchObject({ already_completed: true });
+    expect(h.writes).toHaveLength(writes);
+    expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.relinked')).toHaveLength(1);
+  });
+  it.each(['source_cancelled','target_cancelled','foreign_user','foreign_tariff','prior_refunded','wrong_tracking','missing_rollover','stale_provider','wrong_previous_amount'])('fails closed before writes: %s', async kind => {
+    const h = continuationFixture();
+    if (kind === 'source_cancelled') h.source.status = 'canceled';
+    if (kind === 'target_cancelled') h.target.canceled_at = now.toISOString();
+    if (kind === 'foreign_user') h.target.user_id = id(76);
+    if (kind === 'foreign_tariff') h.target.tariff_id = id(77);
+    if (kind === 'prior_refunded') h.rows.payments_v2[0].refunded_amount = 1;
+    if (kind === 'wrong_tracking') h.previous.tracking_id = `link:order:${id(78)}`;
+    if (kind === 'missing_rollover') h.rows.audit_logs.length = 0;
+    if (kind === 'wrong_previous_amount') h.previous.amount = 1;
+    const paidContinuation = { ...h.repair(), ...(kind === 'stale_provider' ? { expectedProviderUpdatedAt: oldEnd } : {}) };
+    await expect(h.run({ dryRun: true, paidContinuation })).rejects.toThrow('recovery_');
+    expect(h.writes).toEqual([]);
+    expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('does not override an explicit operator cancellation or allow automatic/broad repair', async () => {
+    const h = continuationFixture();
+    h.rows.payment_reconcile_queue[0].last_error = 'SOFT_CANCELLED: operator';
+    expect(await h.run({ dryRun: true })).toMatchObject({ terminal_reason: 'STALE_PROCESSING_CANCELLED' });
+    await expect(h.run({ expectedUpdatedAt: undefined })).rejects.toThrow('exact_manual_required');
+    await expect(h.run({ recordPreflightFailure: true })).rejects.toThrow('exact_manual_required');
+    expect(h.writes).toEqual([]);
+  });
+  it('retries a partial writer failure without a second payment, order or relink', async () => {
+    const h = continuationFixture(); h.failGrant(true);
+    await expect(h.run()).rejects.toThrow('recovery_');
+    expect(h.rows.provider_subscriptions[0].subscription_v2_id).toBe(h.target.id);
+    h.restoreGrant(); await h.run();
+    expect(h.rows.payments_v2).toHaveLength(2); expect(h.rows.orders_v2).toHaveLength(3);
+    expect(h.rows.audit_logs.filter(row => row.action === 'bepaid.paid_continuation.relinked')).toHaveLength(1);
+    expect(h.target.access_end_at).toBe(newEnd);
   });
 });
 

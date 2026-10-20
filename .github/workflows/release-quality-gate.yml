@@ -111,6 +111,10 @@ jobs:
       - name: CB2 renewal, sender authorization and purchase proof
         run: |
           deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
+      - name: Live bePaid renewal diagnostics and authorization
+        run: |
+          deno test --no-lock supabase/functions/system-health-full-check/renewal-check_test.ts supabase/functions/_shared/payment-health-policy.test.ts supabase/functions/grant-access-for-order/notification-policy_test.ts
+          deno check --no-lock supabase/functions/system-health-full-check/index.ts supabase/functions/payments-reconcile/index.ts
       - name: Instagram monitor Edge types and media guards
         run: |
           deno check --no-lock supabase/functions/instagram-monitor/index.ts supabase/functions/instagram-monitor-worker/index.ts

@@ -157,7 +157,9 @@ export default function AdminSystemHealth() {
                   <CheckCircle2 className="h-12 w-12 text-emerald-600" />
                   <h3 className="text-lg font-semibold">Сейчас нет проблем, требующих исправления</h3>
                   <p className="text-muted-foreground max-w-md">
-                    Все автоматические инварианты в норме. При появлении проблемы она появится здесь.
+                    {classified.manualReview.length > 0
+                      ? "Критических сбоев не найдено. Откройте вкладку «Ручная проверка»: там есть вопросы, требующие внимания."
+                      : "Все автоматические инварианты в норме. При появлении проблемы она появится здесь."}
                   </p>
                 </CardContent>
               </Card>
