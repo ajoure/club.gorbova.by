@@ -11,7 +11,7 @@ Deno.test("fixed GET health probes keep credentials in the server and return onl
     requests.push({ url: String(input), init: init! });
     return Response.json(String(input).endsWith('/send-email') ? {
       success: true, sent: false, release: CB2_ACCESS_RELEASE,
-      authorized_as: new Headers(init?.headers).has('apikey') ? 'service' : 'staff', untrusted: 'fixture-private-token',
+      authorized_as: new Headers((init as { headers?: HeadersInit } | undefined)?.headers).has('apikey') ? 'service' : 'staff', untrusted: 'fixture-private-token',
     } : { release_digest: CB21_RELEASE_DIGEST, untrusted: 'fixture-private-token' });
   };
   const result = await instagramReleaseHealth(base, "Bearer fixture-user", {
@@ -127,7 +127,7 @@ Deno.test("a sender response must prove no send, the current release and the exa
       webhook:'fixture-webhook',media:'fixture-media',emailService:'fixture-service',
     },async(input,init)=>Response.json(String(input).endsWith('/send-email') ? {
       success:true,sent:false,release:CB2_ACCESS_RELEASE,
-      authorized_as:new Headers(init?.headers).has('apikey')?'service':'staff',...wrong,
+      authorized_as:new Headers((init as { headers?: HeadersInit } | undefined)?.headers).has('apikey')?'service':'staff',...wrong,
     }:{release_digest:CB21_RELEASE_DIGEST}));
     assert(!result.ready);
   }
