@@ -1,5 +1,7 @@
 import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeEmailSender } from "./authorization.ts";
+import { CB2_ACCESS_RELEASE } from "../_shared/cb2-access-release.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -462,63 +464,39 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Defense in depth beyond config.toml's JWT wall. A public/anon key can be
-    // presented as a JWT on legacy projects, so only the service role or a
-    // signed-in administrator with communication:manage may use this
-    // privileged SMTP sender.
-    const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization");
-    const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
-    console.log(`[send-email][auth] handler_enter method=${req.method} bearer=${bearer ? "present" : "missing"}`);
-    if (!bearer) {
-      console.warn("[send-email][auth] deny reason=missing_bearer");
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
+    // Opaque managed service keys arrive in apikey, not as user JWTs.
+    // User calls still require live verified claims and the existing staff RBAC.
+    const decision = await authorizeEmailSender(req, supabaseKey,
+      async (bearer) => {
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: { headers: { Authorization: `Bearer ${bearer}` } },
+        });
+        return await userClient.auth.getClaims(bearer);
+      },
+      async (actorId) => {
+        const checks = await Promise.all([
+          supabase.rpc("has_admin_section_access", { _user_id: actorId, _section_code: "communication", _min_level: "manage" }),
+          supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "admin" }),
+          supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "super_admin" }),
+        ]);
+        return checks.every(result => !result.error) && checks.some(result => result.data === true);
+      });
+    if (!decision.allowed) {
+      console.warn(`[send-email][auth] deny reason=${decision.reason}`);
+      return new Response(JSON.stringify({ error: decision.reason, error_stage: "authorization" }), {
+        status: decision.status, headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+    const body = await req.json();
+    // Authenticated, non-mutating transport probe. Never selects credentials,
+    // contacts, accounts or queues; no SMTP connection and no delivery log.
+    if (body.action === 'diagnose') {
+      return new Response(JSON.stringify({ success: true, release: CB2_ACCESS_RELEASE, authorized_as: decision.kind, sent: false }), {
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    if (bearer !== supabaseKey) {
-      const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-        global: { headers: { Authorization: `Bearer ${bearer}` } },
-      });
-      const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(bearer);
-      const actorId = claimsData?.claims?.sub;
-      if (claimsError || !actorId) {
-        console.warn("[send-email][auth] deny reason=invalid_claims");
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401,
-          headers: { "Content-Type": "application/json", ...corsHeaders },
-        });
-      }
-
-      const [communicationManage, adminRole, superAdminRole] = await Promise.all([
-        supabase.rpc("has_admin_section_access", {
-          _user_id: actorId,
-          _section_code: "communication",
-          _min_level: "manage",
-        }),
-        supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "admin" }),
-        supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "super_admin" }),
-      ]);
-      const hasCommunicationManage = communicationManage.data === true;
-      const hasAdminRole = adminRole.data === true;
-      const hasSuperAdminRole = superAdminRole.data === true;
-      const rbacError = communicationManage.error || adminRole.error || superAdminRole.error;
-      console.log(
-        `[send-email][auth] decision communication_manage=${hasCommunicationManage} admin=${hasAdminRole} super_admin=${hasSuperAdminRole} rbac_error=${rbacError ? "yes" : "no"}`,
-      );
-      if (rbacError || (!hasCommunicationManage && !hasAdminRole && !hasSuperAdminRole)) {
-        console.warn(`[send-email][auth] deny reason=${rbacError ? "rbac_lookup_failed" : "insufficient_access"}`);
-        return new Response(JSON.stringify({ error: "Forbidden" }), {
-          status: 403,
-          headers: { "Content-Type": "application/json", ...corsHeaders },
-        });
-      }
-    } else {
-      console.log("[send-email][auth] allow source=service_role");
-    }
-
-    parsedRequest = await req.json() as EmailRequest;
+    parsedRequest = body as EmailRequest;
     const {
       to,
       subject,
@@ -531,17 +509,12 @@ const handler = async (req: Request): Promise<Response> => {
       context,
     } = parsedRequest;
 
-    // PATCH-6: Log the received context for debugging - single source of truth
     const ctx = context ?? null;
-    console.log('[send-email] Received full context:', JSON.stringify(ctx));
-    console.log('[send-email] Key context fields:', JSON.stringify({
-      user_id: ctx?.user_id ?? 'NULL',
-      profile_id: ctx?.profile_id ?? 'NULL',
-      subscription_id: ctx?.subscription_id ?? 'NULL',
-      event_type: ctx?.event_type ?? 'NULL',
-    }));
-
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}, attachments=${attachments?.length || 0}`);
+    if (!to || !subject || !html) {
+      return new Response(JSON.stringify({ error: 'invalid_email_payload', error_stage: 'validation' }), {
+        status: 400, headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
 
     // Get email account from database (with product mapping support)
     const account = await getEmailAccount(supabase, account_id, product_id);
@@ -550,7 +523,7 @@ const handler = async (req: Request): Promise<Response> => {
       throw new Error("No active email account found. Please configure an email account first.");
     }
 
-    console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
+    console.log("[send-email] Active sending account selected");
 
     if (idempotency_key) {
       if (idempotency_key.length > 200) throw new Error("idempotency_key_too_long");

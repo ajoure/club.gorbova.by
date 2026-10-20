@@ -1,3 +1,5 @@
+import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { EffectiveProductAccessNote } from "@/components/purchases/EffectiveProductAccessNote";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -181,11 +183,12 @@ export function UserSubscriptions() {
         </div>
       </CardHeader>
       <CardContent className={cn("space-y-4", compact && "pt-1 pb-3 px-4")}>
+        {!compact && <EffectiveProductAccessNote userId={user?.id} productId={subscription.product_id} />}
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <span>
-              Доступ до:{" "}
+              {subscription.product_id === CB2_PRODUCT_ID ? "Покупка до:" : "Доступ до:"}{" "}
               {subscription.access_end_at
                 ? format(new Date(subscription.access_end_at), "dd.MM.yyyy", { locale: ru })
                 : "∞"}
@@ -265,7 +268,8 @@ export function UserSubscriptions() {
           </div>
         </CardHeader>
         <CardContent className={cn("space-y-4", compact && "pt-1 pb-3 px-4")}>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          {!compact && <EffectiveProductAccessNote userId={user?.id} productId={ent.product_id} />}
+          {ent.product_id !== CB2_PRODUCT_ID && <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
               <span>
@@ -275,7 +279,7 @@ export function UserSubscriptions() {
                   : "∞"}
               </span>
             </div>
-          </div>
+          </div>}
         </CardContent>
       </Card>
     );

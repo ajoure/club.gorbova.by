@@ -1,3 +1,5 @@
+import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { EffectiveProductAccessNote } from "./EffectiveProductAccessNote";
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
@@ -72,6 +74,7 @@ interface Subscription {
 
 interface SubscriptionDetailSheetProps {
   subscription: Subscription | null;
+  userId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCancel: (sub: Subscription) => void;
@@ -86,6 +89,7 @@ interface SubscriptionDetailSheetProps {
 
 export function SubscriptionDetailSheet({
   subscription,
+  userId,
   open,
   onOpenChange,
   onCancel,
@@ -294,9 +298,10 @@ export function SubscriptionDetailSheet({
               <span className="text-sm font-medium text-right break-words">{formatDate(subscription.access_start_at)}</span>
             </div>
 
+            <EffectiveProductAccessNote userId={userId} productId={subscription.products_v2?.id} />
             {subscription.access_end_at && (
               <div className="flex items-center justify-between gap-3 px-4 py-3">
-                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Действует до</span>
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">{subscription.products_v2?.id === CB2_PRODUCT_ID ? "Покупка до" : "Действует до"}</span>
                 <span className={`text-sm font-medium text-right break-words ${isExpired ? "text-destructive" : isCanceled ? "text-amber-600" : ""}`}>
                   {formatDate(subscription.access_end_at)}
                 </span>

@@ -1,3 +1,5 @@
+import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { EffectiveProductAccessNote } from "@/components/purchases/EffectiveProductAccessNote";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -454,6 +456,7 @@ export default function Purchases() {
                   <SubscriptionListItem
                     key={sub.id}
                     subscription={sub}
+                    userId={user?.id}
                     onClick={() => openSubscriptionDetail(sub)}
                   />
                 ))}
@@ -464,6 +467,7 @@ export default function Purchases() {
                     className="w-full flex items-start justify-between gap-3 p-4 sm:p-5 rounded-xl border border-border/60 bg-card"
                   >
                     <div className="min-w-0 space-y-2">
+                      <EffectiveProductAccessNote userId={user?.id} productId={entitlement.product_id} />
                       <div className="flex items-center gap-2">
                         <BookOpen className="h-4 w-4 text-primary shrink-0" />
                         <h3 className="font-medium text-foreground text-sm sm:text-base">
@@ -472,7 +476,7 @@ export default function Purchases() {
                       </div>
                       <p className="text-xs sm:text-sm text-muted-foreground">
                         Оплаченный доступ
-                        {entitlement.expires_at
+                        {entitlement.product_id === CB2_PRODUCT_ID ? "" : entitlement.expires_at
                           ? ` · действует до ${format(new Date(entitlement.expires_at), "d MMM yyyy", { locale: ru })}`
                           : " · бессрочно"}
                       </p>
@@ -611,6 +615,7 @@ export default function Purchases() {
                       <SubscriptionListItem
                         key={sub.id}
                         subscription={sub}
+                    userId={user?.id}
                         onClick={() => openSubscriptionDetail(sub)}
                       />
                     ))}
@@ -652,6 +657,7 @@ export default function Purchases() {
 
       {/* Subscription Detail Sheet */}
       <SubscriptionDetailSheet
+        userId={user?.id}
         subscription={selectedSubscription}
         open={detailSheetOpen}
         onOpenChange={setDetailSheetOpen}

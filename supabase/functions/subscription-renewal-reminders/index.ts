@@ -1,5 +1,7 @@
 // @ts-nocheck
+import { cb2ReminderCoverage } from '../_shared/cb2-access-window.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { invokeEmailDelivery, type EmailDeliveryResult } from '../_shared/email-delivery-result.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
@@ -799,7 +801,7 @@ async function sendEmailReminder(
   tariffId: string | null,
   isOneTime: boolean = false,
   nextChargeAt: Date | null = null,
-): Promise<boolean> {
+): Promise<EmailDeliveryResult> {
   try {
     // PATCH MINSK-TIME v1: единый формат с годом + строка списания
     const formattedDate = formatMinskDateTimeWithYear(expiryDate) || '';
@@ -926,13 +928,14 @@ async function sendEmailReminder(
         </div>`;
     }
 
-    if (!subject) return false;
+    if (!subject) return { sent: false, error_stage: 'invoke', error_code: 'invalid_reminder' };
 
     const eventType = `subscription_reminder_${daysLeft}d`;
     
     const emailPayload = {
       to: email,
       subject,
+      idempotency_key: `renewal-reminder:${subscriptionId}:${eventType}:${expiryDate.toISOString()}`,
       html: bodyHtml,
       context: {
         user_id: userId,
@@ -951,27 +954,12 @@ async function sendEmailReminder(
       }
     };
     
-    console.log('[reminders] send-email payload:', JSON.stringify({
-      to: email,
-      'context.user_id': userId,
-      'context.profile_id': profileId,
-      'context.subscription_id': subscriptionId,
-      'context.event_type': eventType,
-    }));
-
-    const { error } = await supabase.functions.invoke('send-email', {
+    return await invokeEmailDelivery(() => supabase.functions.invoke('send-email', {
       body: emailPayload,
-    });
-
-    if (error) {
-      console.error('Email send error:', error);
-      return false;
-    }
-
-    return true;
+    }));
   } catch (err) {
-    console.error('Failed to send email reminder:', err);
-    return false;
+    console.error('[reminders] email invocation failed');
+    return { sent: false, error_stage: 'invoke', error_code: 'invalid_reminder' };
   }
 }
 
@@ -1318,6 +1306,23 @@ Deno.serve(async (req) => {
         // PATCH ONE-TIME v1: classify product (ID-first) — SOT: tariff_offers.meta.recurring.is_recurring
         const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
         const productIsOneTime = classify.oneTime;
+        const coverage = await cb2ReminderCoverage(supabase, userId, productId, expiryDate, productIsOneTime);
+        if (coverage.covered) {
+          await logTelegramSkip(supabase, userId, sub.id, eventType, 'covered_by_canonical_source', {
+            days_left: daysLeft, product_id: productId, source_kind: coverage.source_kind, covering_end_at: coverage.covering_end_at,
+          });
+          await logEmailOutcome(supabase, userId, profile?.id || null, null, sub.id, eventType,
+            'skipped', 'covered_by_canonical_source', null, {
+              days_left: daysLeft, product_id: productId, source_kind: coverage.source_kind, covering_end_at: coverage.covering_end_at,
+            });
+          continue;
+        }
+        if ('lookup_failed' in coverage && coverage.lookup_failed) {
+          await supabase.from('audit_logs').insert({ action: 'reminders.covering_lookup_failed', actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders', target_user_id: userId,
+            meta: { subscription_id: sub.id, product_id: productId, error_code: 'cb2_window_lookup_failed' } });
+        }
+
         const finiteInstallment = isFiniteInstallmentSubscriptionMeta((sub as any).meta);
 
         // PATCH AMOUNT-RESOLVER v4: resolve amount ONLY for recurring/installment products.
@@ -1547,29 +1552,26 @@ Deno.serve(async (req) => {
           );
         } else {
           try {
-            const emailOk = await sendEmailReminder(
+            const emailDelivery = await sendEmailReminder(
               supabase, userId, profile?.id || null, userEmail,
               productName, tariffName, expiryDate, daysLeft,
               amount, currency, currentSubHasProviderManaged, oneTimeUrl, subscriptionUrl,
               sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
               await resolveProviderNextChargeAt(supabase, sub.id, expiryDate),
             );
-            // PATCH OUTCOME-PARITY v1: write canonical email outcome.
-            // send-email writes its OWN row with status='sent' on actual SMTP accept.
-            // We write a parallel "queued" row so UI shows green even if send-email log race-loses.
-            // Note: status='success' here means "invoke returned ok, queued for delivery"
-            if (emailOk) {
+            if (emailDelivery.sent) {
               await logEmailOutcome(
                 supabase, userId, profile?.id || null, userEmail, sub.id, eventType,
-                'success', 'email_queued', null,
+                'success', 'smtp_accepted', null,
                 { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
               );
               result.email_sent = true;
             } else {
               await logEmailOutcome(
                 supabase, userId, profile?.id || null, userEmail, sub.id, eventType,
-                'failed', 'send_failed', 'send-email invoke returned false',
-                { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
+                'failed', 'send_failed', emailDelivery.error_code || 'sender_acceptance_missing',
+                { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime,
+                  error_stage: emailDelivery.error_stage, http_status: emailDelivery.http_status },
               );
             }
           } catch (emailErr) {
