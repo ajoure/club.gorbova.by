@@ -347,12 +347,14 @@ async function executePlan(db: any, plan: any) {
         subscription_v2_id: plan.sub.id,
         meta: { ...currentPs.meta, paid_continuation_repair: { source_subscription_id: source.id,
           target_subscription_id: plan.sub.id, payment_uid: plan.uid, queue_id: plan.item.id,
+          ...(plan.operatorUserId ? { operator_user_id: plan.operatorUserId } : {}),
           repaired_at: new Date().toISOString() } },
       }).eq('id', currentPs.id).eq('updated_at', currentPs.updated_at)
         .eq('subscription_v2_id', source.id).eq('state', 'active').select('id').maybeSingle(), 'continuation_relink');
       if (!repaired) throw new Error('recovery_continuation_link_conflict');
       plan.ps = await one(db, 'provider_subscriptions', currentPs.id);
-      await checked(db.from('audit_logs').insert({ actor_type: 'system', actor_label: 'payments-reconcile',
+      await checked(db.from('audit_logs').insert({ actor_type: plan.operatorUserId ? 'user' : 'system',
+        actor_user_id: plan.operatorUserId || null, actor_label: 'payments-reconcile',
         action: 'bepaid.paid_continuation.relinked', meta: { provider_row_id: currentPs.id,
           source_subscription_id: source.id, target_subscription_id: plan.sub.id, payment_uid: plan.uid, queue_id: plan.item.id } }), 'continuation_audit');
     }
@@ -478,9 +480,13 @@ export async function reconcileExactQueuePayment(db: any, options: {
   queueItemId: string; dryRun?: boolean; expectedUpdatedAt?: string; providerSubscriptionId?: string;
   recordPreflightFailure?: boolean;
   paidContinuation?: PaidContinuationRepair;
+  operatorUserId?: string;
   providerAuth: string; fetcher?: typeof fetch; now?: Date;
 }) {
   if (!UUID.test(options.queueItemId)) throw new Error('recovery_invalid_queue_id');
+  if (options.operatorUserId && (!UUID.test(options.operatorUserId) || !options.paidContinuation)) {
+    throw new Error('recovery_invalid_manual_operator');
+  }
   if (options.paidContinuation && (!options.expectedUpdatedAt || !options.providerSubscriptionId || options.recordPreflightFailure)) {
     throw new Error('recovery_continuation_exact_manual_required');
   }
@@ -492,7 +498,7 @@ export async function reconcileExactQueuePayment(db: any, options: {
   const stale = isStaleProcessingItem(item, staleProcessingCutoff(now));
   if (item.status === 'processing' && !stale) return { success: true, claim_conflicts: 1, results: { orders_reconciled: 0 } };
   const terminal = staleTerminalReason(item, { maxAttempts: 5, excludeCancelled: true, excludeFileImport: true, queueItemId: null });
-  // Only the explicit service-only exact mode may retry an exhausted recovery.
+  // Only the explicit authenticated exact mode may retry an exhausted recovery.
   // It still proves the entire provider/paid/trigger chain below on EVERY call.
   // Never override an operator cancellation or replay a generic queue batch.
   const manualContinuationRetry = !!options.paidContinuation && (
@@ -517,6 +523,7 @@ export async function reconcileExactQueuePayment(db: any, options: {
   let plan: any;
   try {
     plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId, options.paidContinuation);
+    plan.operatorUserId = options.operatorUserId;
   } catch (error) {
     const message = safeRecoveryError(error, 'recovery_preflight_failed');
     if (!options.recordPreflightFailure || options.dryRun ||
