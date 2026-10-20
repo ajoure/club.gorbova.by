@@ -113,13 +113,6 @@
       "when": 1792141216441,
       "tag": "0015_webinar_registration_reuse",
       "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1792504890071,
-      "tag": "0016_club_cb2_bonus_access",
-      "breakpoints": true
     }
   ]
 }
