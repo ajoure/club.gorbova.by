@@ -8,7 +8,7 @@ import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from
 import { staleProcessingCutoff } from '../_shared/bepaid-queue-policy.ts';
 import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
 import { requireExactGrantCapability } from './grant-capability.ts';
-import { resolveGrantAccessCaller } from '../grant-access-for-order/caller_auth.ts';
+import { resolveGrantAccessCaller } from '../_shared/verified-financial-caller.ts';
 import { authorizeManualContinuation } from './manual-continuation.ts';
 
 const corsHeaders = {

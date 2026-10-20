@@ -114,6 +114,7 @@ jobs:
       - name: Live bePaid renewal diagnostics and authorization
         run: |
           deno test --no-lock supabase/functions/system-health-full-check/renewal-check_test.ts supabase/functions/_shared/payment-health-policy.test.ts supabase/functions/grant-access-for-order/notification-policy_test.ts supabase/functions/payments-reconcile/grant-capability_test.ts supabase/functions/payments-reconcile/manual-continuation_test.ts
+          deno test --no-lock --allow-read supabase/functions/grant-access-for-order/caller_auth_config_test.ts
           deno check --no-lock supabase/functions/system-health-full-check/index.ts supabase/functions/payments-reconcile/index.ts
       - name: Instagram monitor Edge types and media guards
         run: |

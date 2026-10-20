@@ -7,7 +7,7 @@ import * as policy from "../../supabase/functions/_shared/bepaid-queue-policy";
 import { authorizePaymentsReconcile } from "../../supabase/functions/_shared/payments-reconcile-auth";
 import { requireExactGrantCapability } from "../../supabase/functions/payments-reconcile/grant-capability";
 import { authorizeManualContinuation } from "../../supabase/functions/payments-reconcile/manual-continuation";
-import { resolveGrantAccessCaller } from "../../supabase/functions/grant-access-for-order/caller_auth";
+import { resolveGrantAccessCaller } from "../../supabase/functions/_shared/verified-financial-caller";
 
 const compiled = ts.transpileModule(
   readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8"),
@@ -77,7 +77,7 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       if (path.endsWith("/payments-reconcile-auth.ts")) return { authorizePaymentsReconcile };
       if (path === "./grant-capability.ts") return { requireExactGrantCapability };
       if (path === "./manual-continuation.ts") return { authorizeManualContinuation };
-      if (path.endsWith('/grant-access-for-order/caller_auth.ts')) return { resolveGrantAccessCaller };
+      if (path.endsWith('/_shared/verified-financial-caller.ts')) return { resolveGrantAccessCaller };
       if (path.endsWith("/bepaid-canonical-recovery.ts")) return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {

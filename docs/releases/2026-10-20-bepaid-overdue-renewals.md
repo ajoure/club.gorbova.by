@@ -33,6 +33,10 @@ INV-P0-1 использовал устаревший provider_subscriptions ка
 Actor берётся только из проверенной сессии и фиксируется в существующих
 receipt/audit. Нет новых ключей, чтения Vault из операторских инструментов,
 новых ролей или автоматического перехода в общий sweep. Dry-run не пишет аудит.
+Канонический resolver находится в `_shared/verified-financial-caller.ts`;
+старый `grant-access-for-order/caller_auth.ts` сохраняет прежние exports и
+матрицу веток. Это позволяет собирать функции из своего каталога и `_shared`,
+не создавая межфункциональной зависимости или копии логики авторизации.
 
 Параметры `sourceSubscriptionId`, `targetSubscriptionId`, `previousPaymentUid`,
 `expectedProviderUpdatedAt` берутся из защищённых read-only данных операции,

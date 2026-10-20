@@ -1,6 +1,6 @@
 import { assertEquals } from 'jsr:@std/assert';
 import { authorizeManualContinuation } from './manual-continuation.ts';
-import type { AuthSuccess } from '../grant-access-for-order/caller_auth.ts';
+import type { AuthSuccess } from '../_shared/verified-financial-caller.ts';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const admin: AuthSuccess = { ok: true, caller: { type: 'admin', actorUserId: id(1),

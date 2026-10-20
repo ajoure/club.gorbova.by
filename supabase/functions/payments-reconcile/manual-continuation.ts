@@ -1,4 +1,4 @@
-import type { AuthSuccess, AuthFailure } from '../grant-access-for-order/caller_auth.ts';
+import type { AuthSuccess, AuthFailure } from '../_shared/verified-financial-caller.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
