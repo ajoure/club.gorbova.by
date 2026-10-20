@@ -16,6 +16,11 @@
 4. Развернуть `send-email`, `subscription-renewal-reminders`,
    `grant-access-for-order`, `access-rules-nightly-reconcile`,
    `rules-retroapply`, `referral-redemption-worker`.
+   Существующий общий release digest включает весь `_shared`; после его
+   пересчёта также развернуть только упаковку/маркер `sales-runtime-worker`,
+   `sales-runtime-control`, `telegram-webhook`, `telegram-media-worker`.
+   Их бизнес-логика не изменена. Проверить прежние защищённые health probes
+   без сообщений и обработки очередей; четыре digest должны совпасть.
    Для send-email gateway verify_jwt=false, но обязательны точный managed
    service key либо живой проверенный JWT сотрудника с прежним RBAC.
    Никакого доверия декодированному role claim без проверки подписи.
