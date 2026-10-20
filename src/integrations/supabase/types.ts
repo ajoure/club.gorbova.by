@@ -26474,10 +26474,6 @@ export type Database = {
         Args: { p_account_code: string; p_kind: string; p_provider: string }
         Returns: string
       }
-      get_cb2_access_window: {
-        Args: { _user_id: string }
-        Returns: Json
-      }
       get_admin_access: {
         Args: { _user_id: string }
         Returns: {
