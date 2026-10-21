@@ -107,7 +107,7 @@ Digest manifest включён в digest сканирования, поэтом�
    `20261021084811_health_bounded_scan_scheduler.sql`.
    Допустим один managed-вызов с их дословной конкатенацией в этом порядке.
 6. Read-back: fingerprint74 политик
-   `71d05b8b49be4b2059913d44d0471808`, 0 лишних клиентских привилегий,
+   `9533ab393040dfe65fdfbfcc30a79cc1`, 0 лишних клиентских привилегий,
    неизменные service grants, RLS24/24, ожидаемые routing columns.
    Проверить гостевой каталог/страницы и кабинет/RBAC существующей сессии.
 7. Cron: остаются ровно два прежних задания. Job29 меняет только schedule
@@ -138,3 +138,16 @@ managed capability: Agent access to secrets is not allowed. Повторов и�
 68 политик/f6b..., job29=0 5 * * *, job28=0 * * * *, новых jobs/receipts нет.
 Поэтому до применения исправлен только pending scheduler-файл. Новый вариант
 вообще не требует доступа к секретам. RLS-файл остаётся дословно прежним.
+
+## Проверка production-типа после применения
+
+Read-back дал74/9533ab393040dfe65fdfbfcc30a79cc1 вместо прежнего локального
+71d05b8b49be4b2059913d44d0471808. Причина: fixture использовал text для
+orders_v2.status вместо настоящего public.order_status. При реальном enum
+отпечаток в изолированном PostgreSQL точно совпал с production; различаются
+только три paid literal casts (flows/products_v2/tariffs), а не условия доступа.
+Fixture и replay guard исправлены; правила production повторно не меняются.
+Исторический Drizzle receipt17 не редактируется и связан с executed SHA c02a3de9.
+Его SQL совпадает с двумя исходными файлами c02a3de9 кроме одного последнего LF:
+source concat f44a36800011c77fe0dd42cb349c10f52abe73c547fcf87b0584ebc574d37bd9,
+receipt 0e08a26f7cf9fd709adeba8a7a9496fcebd667cef1910b3b35734f0c8fcad197.

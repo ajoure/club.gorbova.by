@@ -11,7 +11,9 @@ BEGIN
   INTO fingerprint FROM pg_policies
   WHERE (schemaname='public' AND tablename IN ('flows','roles','fields','tariffs','permissions','products_v2','access_rules','kb_questions','admin_section','crm_pipelines','module_access','admin_resource','pricing_stages','tariff_features','role_permissions','lesson_price_rules','user_menu_sections','crm_pipeline_stages','site_domain_bindings','document_token_registry','privacy_policy_versions','legal_details_roles_catalog','crm_pipeline_product_bindings','legal_details_positions_catalog'))
     OR (schemaname='storage' AND tablename='objects' AND policyname='Staff can update telegram-media');
-  IF fingerprint IS NULL OR fingerprint NOT IN ('f6b34c79c1c4e5f872b45244eecc947e','71d05b8b49be4b2059913d44d0471808')
+  -- Production uses public.order_status; its paid literal deparses as enum,
+  -- not text. The historical managed receipt remains unchanged.
+  IF fingerprint IS NULL OR fingerprint NOT IN ('f6b34c79c1c4e5f872b45244eecc947e','9533ab393040dfe65fdfbfcc30a79cc1')
   THEN RAISE EXCEPTION 'health_rls_policy_baseline_changed'; END IF;
   -- Existing canonical routing already grants anon these five columns.
   -- Table REVOKE does not remove column ACLs: validate them independently.
