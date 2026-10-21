@@ -7,8 +7,9 @@ import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from
 import { getCallerUserId } from "../_shared/caller-user.ts";
 import { authorizeSystemHealth } from "./authorization.ts";
 import { loadRenewalCandidates, needsRenewalProbe, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
-import { runAvailabilityBatch, summarizeAvailability, SCAN_TTL_MS, type AvailabilityScan, type FunctionCheckResult } from "./availability.ts";
+import { runAvailabilityBatch, summarizeAvailability, AVAILABILITY_RELEASE, type AvailabilityScan, type FunctionCheckResult } from "./availability.ts";
 import { newestBusinessEvidence, retainMissingP0, type MissingEvidence } from "./critical-evidence.ts";
+import { cronTick, cronReportId } from "./cron-tick.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -388,21 +389,22 @@ Deno.serve(async (req) => {
       });
     }
     let continuationId = body.continue_from;
-    if (body.mode === "continue") {
-      // pg_cron starts independent requests; no recursive function-to-function
-      // chain, no changed trace headers and no idle probes or repeated alerts.
-      const { data: pending } = await supabase.from("system_health_reports")
-        .select("id,report_json").eq("source", "cron")
+    if (source === "cron" || body.mode === "continue") {
+      const { data: pending, error: pendingError } = await supabase.from("system_health_reports")
+        .select("id,report_json,created_at").eq("source", "cron")
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      const scan = pending?.report_json?.availability_scan;
-      if (source !== "cron" || !scan || scan.complete
-        || !Number.isFinite(Date.parse(scan.started_at)) || Date.now() - Date.parse(scan.started_at) > SCAN_TTL_MS
-        || Date.parse(scan.resume_after || "") > Date.now()) {
-        return new Response(JSON.stringify({ skipped: true, sent: false, reason: "no_pending_availability_scan" }), {
+      if (pendingError) return new Response(JSON.stringify({ error: "cron_state_unavailable" }), {
+        status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+      const tick = source === "cron" ? cronTick(new Date(), pending, body.mode === "continue")
+        : { kind: "idle" as const, reason: "no_pending_availability_scan" };
+      if (tick.kind === "idle") {
+        console.log(`[FULL-CHECK] cron tick idle (${AVAILABILITY_RELEASE}): ${tick.reason}`);
+        return new Response(JSON.stringify({ release: AVAILABILITY_RELEASE, skipped: true, sent: false, reason: tick.reason }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      continuationId = pending.id;
+      continuationId = tick.kind === "resume" ? tick.report_id : undefined;
     }
     
     const projectRef = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
@@ -480,6 +482,10 @@ Deno.serve(async (req) => {
     let availability;
     try { availability = await runAvailabilityBatch(registry, supabaseUrl, predecessor || undefined); }
     catch {
+      if (source === "cron") return new Response(JSON.stringify({ release: AVAILABILITY_RELEASE,
+        skipped: true, sent: false, reason: "cron_scan_expired_or_registry_changed" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       return new Response(JSON.stringify({ error: "availability_scan_expired_or_registry_changed" }), {
         status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -597,9 +603,11 @@ Deno.serve(async (req) => {
     };
     
     // STEP 5: Save report
+    const scheduledReportId = source === "cron" ? await cronReportId(new Date(availability.scan.started_at), continuationId) : undefined;
     const { data: savedReport, error: saveError } = await supabase
       .from("system_health_reports")
       .insert({
+        ...(scheduledReportId ? { id: scheduledReportId } : {}),
         status: finalStatus,
         edge_functions_total: registry.length,
         edge_functions_deployed: deployedCount,
@@ -616,6 +624,15 @@ Deno.serve(async (req) => {
       })
       .select("id")
       .single();
+
+    if (scheduledReportId && saveError?.code === "23505") {
+      const { data: existing, error: replayError } = await supabase.from("system_health_reports")
+        .select("id,report_json").eq("id", scheduledReportId).eq("source", "cron").maybeSingle();
+      if (!replayError && existing?.report_json?.availability_scan) return new Response(
+        JSON.stringify({ ...existing.report_json, report_id: existing.id, replayed: true, sent: false }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    }
     
     if (saveError || !savedReport?.id) {
       console.error("[FULL-CHECK] Failed to save report");
