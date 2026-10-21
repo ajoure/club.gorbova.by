@@ -31,6 +31,6 @@ export function retainMissingP0(
   }
   return [...evidence.values()].filter(item => {
     return ![active.get(item.name)!, ...otherVerified.filter(r => r.name === item.name)].some(fresh =>
-      fresh.status === "OK" && fresh.checked_at && Date.parse(fresh.checked_at) >= Date.parse(item.checked_at));
+      fresh.status === "OK" && fresh.checked_at && Date.parse(fresh.checked_at) > Date.parse(item.checked_at));
   }).sort((a, b) => a.name.localeCompare(b.name));
 }

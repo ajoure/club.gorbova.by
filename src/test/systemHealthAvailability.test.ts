@@ -125,6 +125,7 @@ describe("critical evidence across independent chains", () => {
       expect(retainMissingP0([{ ...deferred(entry), status, checked_at: "2026-10-21T10:02:00Z" }], prior)).toEqual(prior);
     }
     expect(retainMissingP0([{ ...success(entry), checked_at: "2026-10-21T10:00:00Z" }], prior)).toEqual(prior);
+    expect(retainMissingP0([{ ...success(entry), checked_at: "2026-10-21T10:01:00Z" }], prior)).toEqual(prior);
     expect(retainMissingP0([{ ...success(entry), checked_at: "2026-10-21T10:02:00Z" }], prior)).toEqual([]);
     expect(retainMissingP0([deferred(entry)], prior, [{ ...success(entry), checked_at: "2026-10-21T10:02:00Z" }])).toEqual([]);
   });
