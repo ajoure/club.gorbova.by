@@ -108,7 +108,7 @@ jobs:
       - name: Health scanner least privilege and bounded scheduler
         run: |
           node scripts/health-preflight-manifest.mjs --check
-          node --test scripts/tests/health-rls.test.mjs scripts/tests/health-scheduler.test.mjs
+          node --test scripts/tests/health-rls.test.mjs scripts/tests/health-scheduler.test.mjs scripts/tests/health-preflight-manifest.test.mjs
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
