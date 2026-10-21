@@ -39,6 +39,7 @@ async function fixture() {
   }
   await db.exec(`REVOKE ALL ON public.kb_questions FROM anon,authenticated; GRANT SELECT ON public.kb_questions TO authenticated;
     REVOKE SELECT ON public.site_domain_bindings FROM anon;
+    GRANT SELECT(id,site_page_id,domain,is_home,is_primary) ON public.site_domain_bindings TO anon;
     GRANT ALL ON storage.objects TO anon,authenticated,service_role;
     ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
     GRANT SELECT ON public.user_roles_v2,public.orders_v2,public.subscriptions_v2,public.entitlements,public.site_pages TO anon,authenticated,service_role;

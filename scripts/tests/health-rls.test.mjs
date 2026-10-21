@@ -28,6 +28,7 @@ test('anon catalog, published routing and privacy history work without privilege
     for(const table of publicTables) assert.deepEqual(await visible(db,table,null,'anon'),table==='privacy_policy_versions'?[id(1),id(3)]:[id(1)],table);
     for(const table of tables.filter(t=>!publicTables.includes(t))) await assert.rejects(visible(db,table,null,'anon'),e=>e.code==='42501',table);
     await assert.rejects(asRole(db,'anon',null,'SELECT metadata,created_by,workspace_id FROM public.site_domain_bindings'),e=>e.code==='42501');
+    assert.equal((await asRole(db,'anon',null,'SELECT id,site_page_id,domain,is_home,is_primary FROM public.site_domain_bindings')).length,1);
     await assert.rejects(asRole(db,'anon',null,"SELECT public.has_admin_section_access(auth.uid(),'products','view')"),e=>e.code==='42501');
   } finally { await db.close(); }
 });
@@ -91,6 +92,15 @@ test('unexpected policy baseline stops before changing privileges',async()=>{
   try {
     await db.exec('CREATE POLICY unexpected_wide_read ON public.roles FOR SELECT TO authenticated USING(true)');
     await assert.rejects(db.exec(migration),/health_rls_policy_baseline_changed/);
+    assert.equal((await db.query("SELECT has_table_privilege('anon','public.tariffs','TRUNCATE') ok")).rows[0].ok,true);
+  } finally { await db.close(); }
+});
+
+test('unexpected column privilege stops before changing table privileges',async()=>{
+  const db=await fixture();
+  try {
+    await db.exec('GRANT SELECT(metadata) ON public.site_domain_bindings TO anon');
+    await assert.rejects(db.exec(migration),/health_rls_column_acl_baseline_changed/);
     assert.equal((await db.query("SELECT has_table_privilege('anon','public.tariffs','TRUNCATE') ok")).rows[0].ok,true);
   } finally { await db.close(); }
 });

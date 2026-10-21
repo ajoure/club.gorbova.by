@@ -2,7 +2,7 @@
 -- Exact live68-policy baseline or exact post-apply74-policy fingerprint only.
 -- A changed/missing/extra policy stops before REVOKE/ALTER; replay is safe.
 DO $preflight$
-DECLARE fingerprint text;
+DECLARE fingerprint text; column_grants integer; unexpected_grants integer;
 BEGIN
   SELECT md5(jsonb_agg(jsonb_build_object(
     'schema',schemaname,'table',tablename,'policyname',policyname,'cmd',cmd,
@@ -13,6 +13,18 @@ BEGIN
     OR (schemaname='storage' AND tablename='objects' AND policyname='Staff can update telegram-media');
   IF fingerprint IS NULL OR fingerprint NOT IN ('f6b34c79c1c4e5f872b45244eecc947e','71d05b8b49be4b2059913d44d0471808')
   THEN RAISE EXCEPTION 'health_rls_policy_baseline_changed'; END IF;
+  -- Existing canonical routing already grants anon these five columns.
+  -- Table REVOKE does not remove column ACLs: validate them independently.
+  SELECT count(*),count(*) FILTER (WHERE c.relname<>'site_domain_bindings'
+    OR acl.grantee<>'anon'::regrole::oid OR acl.privilege_type<>'SELECT'
+    OR a.attname NOT IN ('id','site_page_id','domain','is_home','is_primary') OR acl.is_grantable)
+  INTO column_grants,unexpected_grants
+  FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+  CROSS JOIN LATERAL aclexplode(a.attacl) acl
+  WHERE n.nspname='public' AND c.relname IN ('flows','roles','fields','tariffs','permissions','products_v2','access_rules','kb_questions','admin_section','crm_pipelines','module_access','admin_resource','pricing_stages','tariff_features','role_permissions','lesson_price_rules','user_menu_sections','crm_pipeline_stages','site_domain_bindings','document_token_registry','privacy_policy_versions','legal_details_roles_catalog','crm_pipeline_product_bindings','legal_details_positions_catalog')
+    AND a.attnum>0 AND NOT a.attisdropped AND acl.grantee IN (0,'anon'::regrole::oid,'authenticated'::regrole::oid);
+  IF column_grants<>5 OR unexpected_grants<>0
+  THEN RAISE EXCEPTION 'health_rls_column_acl_baseline_changed'; END IF;
 END $preflight$;
 
 REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON public.access_rules FROM anon, authenticated;
@@ -162,7 +174,7 @@ CREATE POLICY health_catalog_authenticated_select ON public.site_domain_bindings
 
 -- Published domain routing exposes only routing columns to unauthenticated browsers.
 REVOKE SELECT ON public.site_domain_bindings FROM anon;
-GRANT SELECT (site_page_id, domain, is_home, is_primary) ON public.site_domain_bindings TO anon;
+GRANT SELECT (id, site_page_id, domain, is_home, is_primary) ON public.site_domain_bindings TO anon;
 
 -- Shared staff media remains shared; destination UPDATE has the same staff guard.
 ALTER POLICY "Staff can update telegram-media" ON storage.objects
