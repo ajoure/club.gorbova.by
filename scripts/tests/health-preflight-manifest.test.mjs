@@ -13,10 +13,14 @@ test('only an unconditional early OPTIONS Response before business code is a pre
     `${prefix}const text="req.method === 'OPTIONS'";await charge();});`,
     `${prefix}await charge();${guard}});`,
     `${prefix}const result=charge();${guard}});`,
+    `${prefix}const result=++counter;${guard}});`,
     `${prefix}if(false){${guard}}await charge();});`,
     `${prefix}if(req.method==='OPTIONS') return new Response(charge());});`,
     `${prefix}if(req.method==='OPTIONS') {charge();return new Response(null);} });`,
     `${prefix}if(req.method==='OPTIONS') return runBusiness();});`,
     `Deno.serve(createUnknownHandler());`,
+    `function dead(){${prefix}${guard}});}Deno.serve(async(req)=>{await charge();});`,
+    `let handler=async(req)=>{${guard}};handler=async(req)=>{await charge();};serve(handler);`,
+    `${prefix}${guard}});Deno.serve(async(req)=>{await charge();});`,
   ]) assert.equal(hasEarlyPreflight(source), false);
 });

@@ -15,6 +15,7 @@ export function hasEarlyPreflight(sourceText) {
   const noCalls = node => {
     if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isAwaitExpression(node)
       || ts.isDeleteExpression(node) || ts.isPostfixUnaryExpression(node)
+      || (ts.isPrefixUnaryExpression(node) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator))
       || (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
         && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)) return false;
     let safe = true; ts.forEachChild(node, child => { if (!noCalls(child)) safe = false; }); return safe;
@@ -22,8 +23,7 @@ export function hasEarlyPreflight(sourceText) {
   const resolveHandler = node => {
     if (!node || !ts.isIdentifier(node)) return node;
     for (const s of file.statements) {
-      if (ts.isFunctionDeclaration(s) && s.name?.text === node.text) return s;
-      if (ts.isVariableStatement(s)) for (const d of s.declarationList.declarations)
+      if (ts.isVariableStatement(s) && (s.declarationList.flags & ts.NodeFlags.Const)) for (const d of s.declarationList.declarations)
         if (ts.isIdentifier(d.name) && d.name.text === node.text) return d.initializer;
     }
     return null;
@@ -52,12 +52,12 @@ export function hasEarlyPreflight(sourceText) {
     }
     return false;
   };
-  const visit = node => {
-    if (ts.isCallExpression(node) && ['serve', 'Deno.serve'].includes(node.expression.getText(file)))
-      eligible ||= safeHandler(resolveHandler(node.arguments[0]));
-    ts.forEachChild(node, visit);
-  };
-  visit(file); return eligible;
+  // Exactly one actual top-level entrypoint. A dead nested serve must not
+  // certify a different unsafe handler. Mutable handler aliases are rejected.
+  const entrypoints = file.statements.filter(s => ts.isExpressionStatement(s)
+    && ts.isCallExpression(s.expression) && ['serve', 'Deno.serve'].includes(s.expression.expression.getText(file)));
+  if (entrypoints.length === 1) eligible = safeHandler(resolveHandler(entrypoints[0].expression.arguments[0]));
+  return eligible;
 }
 
 export function buildManifest() {
