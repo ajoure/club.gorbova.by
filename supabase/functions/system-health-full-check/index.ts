@@ -8,6 +8,7 @@ import { getCallerUserId } from "../_shared/caller-user.ts";
 import { authorizeSystemHealth } from "./authorization.ts";
 import { loadRenewalCandidates, needsRenewalProbe, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
 import { runAvailabilityBatch, summarizeAvailability, SCAN_TTL_MS, type AvailabilityScan, type FunctionCheckResult } from "./availability.ts";
+import { newestBusinessEvidence, retainMissingP0, type MissingEvidence } from "./critical-evidence.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -72,6 +73,7 @@ interface FullCheckReport {
   };
   availability_scan: AvailabilityScan;
   invariants_checked_at: string | null;
+  known_p0_missing: MissingEvidence[];
   report_id?: string;
   auto_fixes: any[]; // Now always empty - remediation is separate
   duration_ms: number;
@@ -419,7 +421,9 @@ Deno.serve(async (req) => {
     
     const previousStatus = lastReport?.status || null;
     let priorInvariants: InvariantResult[] = lastReport?.report_json?.invariants?.results || [];
-    let invariantsCheckedAt: string | null = lastReport?.report_json?.invariants_checked_at || lastReport?.created_at || null;
+    let invariantsCheckedAt: string | null = lastReport?.report_json?.availability_scan
+      ? lastReport.report_json.invariants_checked_at : lastReport?.created_at || null;
+    let predecessorReport = lastReport;
     
     // STEP 1: Read function list from registry (NO HARDCODE!)
     const { data: registry, error: registryError } = await supabase
@@ -469,6 +473,7 @@ Deno.serve(async (req) => {
         });
       }
       predecessor = { scan: data.report_json.availability_scan, results: data.report_json.edge_functions.results };
+      predecessorReport = data;
       priorInvariants = data.report_json.invariants?.results || [];
       invariantsCheckedAt = data.report_json.invariants_checked_at || null;
     }
@@ -491,8 +496,32 @@ Deno.serve(async (req) => {
     // STEP 3: Check business invariants
     // Keep previously verified problems visible while the next scan is partial.
     // A partial scan must not erase a known critical business finding.
-    const invariantResults = availability.scan.complete ? await checkBusinessInvariants(supabase) : priorInvariants;
+    const refreshedInvariants = availability.scan.complete ? await checkBusinessInvariants(supabase) : null;
     if (availability.scan.complete) invariantsCheckedAt = new Date().toISOString();
+    // Read after probes/provider verification, not only at request start. Other
+    // independent scan chains may have discovered a critical problem meanwhile.
+    const { data: recentEvidence, error: latestKnownError } = await supabase.from("system_health_reports")
+      .select("id,report_json,created_at").order("created_at", { ascending: false }).limit(30);
+    if (latestKnownError) throw new Error("health_latest_evidence_read_failed");
+    const knownReports = Array.isArray(recentEvidence) ? recentEvidence : [];
+    const newest = newestBusinessEvidence<InvariantResult>([
+      { results: refreshedInvariants || priorInvariants, checked_at: invariantsCheckedAt },
+      ...knownReports.map(row => ({ results: row.report_json?.invariants?.results || [],
+        checked_at: row.report_json?.availability_scan ? row.report_json.invariants_checked_at : row.created_at || null })),
+    ]);
+    const invariantResults = newest.results.filter(r => r.code !== "INV-EDGE-P0-MISSING"
+      && (!availability.scan.complete || r.code !== "INV-EDGE-AVAILABILITY"));
+    invariantsCheckedAt = newest.checked_at;
+    const priorMissing = [predecessorReport, ...knownReports].flatMap(row => [
+      ...(row?.report_json?.known_p0_missing || []),
+      ...(row?.report_json?.edge_functions?.results || [])
+        .filter((r: FunctionCheckResult) => r.tier === "P0" && r.status === "NOT_DEPLOYED")
+        .map((r: FunctionCheckResult) => ({ name: r.name, checked_at: r.checked_at || row?.created_at || "" })),
+    ]);
+    const knownP0Missing = retainMissingP0(functionResults, priorMissing,
+      knownReports.flatMap(row => row.report_json?.edge_functions?.results || []));
+    if (knownP0Missing.length > 0) invariantResults.push({ code: "INV-EDGE-P0-MISSING",
+      name: "Подтверждена недоступность критичных функций", passed: false, count: knownP0Missing.length, severity: "CRITICAL" });
     if (availability.scan.complete) invariantResults.push({
       code: "INV-EDGE-AVAILABILITY", name: "Ошибки проверок доступности серверных функций",
       passed: summary.errors.length + missingCount === 0, count: summary.errors.length + missingCount,
@@ -504,9 +533,7 @@ Deno.serve(async (req) => {
     console.log(`[FULL-CHECK] Invariants: ${passedInvariants}/${invariantResults.length} passed`);
     
     // STEP 4: Build breakdown by tier
-    const missingP0 = functionResults
-      .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P0")
-      .map(r => r.name);
+    const missingP0 = knownP0Missing.map(r => r.name);
     const missingP1 = functionResults
       .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P1")
       .map(r => r.name);
@@ -563,6 +590,7 @@ Deno.serve(async (req) => {
       },
       availability_scan: availability.scan,
       invariants_checked_at: invariantsCheckedAt,
+      known_p0_missing: knownP0Missing,
       auto_fixes: [], // Empty - remediation is now separate
       duration_ms: Date.now() - startTime,
       timestamp: new Date().toISOString(),

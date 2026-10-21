@@ -207,6 +207,8 @@ export function useTriggerFullCheck() {
       queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
     },
     onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
       toast.error("Ошибка запуска проверки", {
         description: String(error.message || error),
       });

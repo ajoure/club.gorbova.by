@@ -22,7 +22,7 @@ async function fixture(secondSecret=fixtureSecret){
   ['nightly-system-health-hourly','0 * * * *','nightly-system-health',secondSecret,"jsonb_build_object('source','cron-hourly','target_tz','Europe/London','target_hour',3)"]
  ]){
   const q="'"+secret.replaceAll("'","''")+"'";
-  await db.query('INSERT INTO cron.job(jobname,schedule,command) VALUES($1,$2,$3)',[name,schedule,`SELECT net.http_post(url := 'https://fixture.test/functions/v1/${endpoint}',headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',${q}),body := ${body});`]);
+  await db.query('INSERT INTO cron.job(jobname,schedule,command) VALUES($1,$2,$3)',[name,schedule,`SELECT net.http_post(url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/${endpoint}',headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',${q}),body := ${body});`]);
  }
  return db;
 }
@@ -58,4 +58,31 @@ test('mismatched secret, missing or altered job fail before Vault/job/request mu
    const before=await state(db);await assert.rejects(db.exec(sql),/health_cron_/);assert.deepEqual(await state(db),before);
   }finally{await db.close();}
  }
+});
+test('exact templates reject changed URL, body, quoted whitespace, extra SQL and forged Vault lookup on replay',async()=>{
+ const changes=[
+  command=>command.replace('hdjgkjceownmmnrqqtuz.supabase.co','other.invalid'),
+  command=>command.replace("'target_hour',3","'target_hour',4"),
+  command=>command.replace("'cron-hourly'","'cron hourly'"),
+  command=>command+' SELECT 1;',
+ ];
+ for(const change of changes){
+  const db=await fixture();try{
+   const job=(await state(db)).jobs.find(j=>j.jobname==='nightly-system-health-hourly');
+   await db.query('UPDATE cron.job SET command=$1 WHERE jobname=$2',[change(job.command),job.jobname]);
+   const before=await state(db);await assert.rejects(db.exec(sql),/health_cron_command_template_changed/);assert.deepEqual(await state(db),before);
+  }finally{await db.close();}
+ }
+ const db=await fixture();try{
+  await db.exec(sql);
+  const job=(await state(db)).jobs.find(j=>j.jobname==='nightly-system-health-hourly');
+  await db.query('UPDATE cron.job SET command=$1 WHERE jobname=$2',[job.command.replace("name = 'system_health_cron_secret'","name = 'system_health_cron_secret' OR true"),job.jobname]);
+  const before=await state(db);await assert.rejects(db.exec(sql),/health_cron_command_template_changed/);assert.deepEqual(await state(db),before);
+ }finally{await db.close();}
+});
+test('an existing altered continuation is never overwritten',async()=>{
+ const db=await fixture();try{
+  await db.exec(sql);await db.exec("UPDATE cron.job SET command='SELECT 1' WHERE jobname='system-health-full-check-continuation'");
+  const before=await state(db);await assert.rejects(db.exec(sql),/health_cron_existing_continuation_changed/);assert.deepEqual(await state(db),before);
+ }finally{await db.close();}
 });

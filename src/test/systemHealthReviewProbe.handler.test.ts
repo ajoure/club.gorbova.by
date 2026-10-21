@@ -6,6 +6,7 @@ import * as renewals from '../../supabase/functions/system-health-full-check/ren
 import * as policy from '../../supabase/functions/_shared/payment-health-policy';
 import { authorizeSystemHealth } from '../../supabase/functions/system-health-full-check/authorization';
 import * as availability from '../../supabase/functions/system-health-full-check/availability';
+import * as evidence from '../../supabase/functions/system-health-full-check/critical-evidence';
 
 const compiled = ts.transpileModule(readFileSync('supabase/functions/system-health-full-check/index.ts', 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -41,6 +42,7 @@ async function diagnose(flag?: boolean | string) {
       if (path === './authorization.ts') return { authorizeSystemHealth };
       if (path === './renewal-check.ts') return renewals;
       if (path === './availability.ts') return availability;
+      if (path === './critical-evidence.ts') return evidence;
       throw new Error(`Unexpected dependency ${path}`);
     } });
   const response = await handler(new Request('https://fixture.test', { method: 'POST', headers: { apikey: 'fixture-service' },

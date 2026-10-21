@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { webcrypto } from "node:crypto";
 import ts from "typescript";
 import * as availability from "../../supabase/functions/system-health-full-check/availability";
+import * as evidence from "../../supabase/functions/system-health-full-check/critical-evidence";
 import * as renewals from "../../supabase/functions/system-health-full-check/renewal-check";
 import * as paymentPolicy from "../../supabase/functions/_shared/payment-health-policy";
 import { authorizeSystemHealth } from "../../supabase/functions/system-health-full-check/authorization";
@@ -30,14 +31,18 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
   const audits: any[] = [];
   const rpc = vi.fn(async () => ({ data: 100, error: null }));
   const db = { rpc, from(table: string) {
-    reads.push(table); let inserted: any = null; const filters: Record<string, any> = {};
+    reads.push(table); let inserted: any = null; let limit = 1; const filters: Record<string, any> = {};
     const value = () => {
       if (table === "edge_functions_registry") return { data: registry, error: null };
-      if (table === "system_health_reports") return { data: reports.filter(r => Object.entries(filters).every(([k, v]) => r[k] === v)).at(-1) || null, error: null };
+      if (table === "system_health_reports") {
+        const matches = reports.filter(r => Object.entries(filters).every(([k, v]) => r[k] === v));
+        return { data: limit > 1 ? matches.slice(-limit).reverse() : matches.at(-1) || null, error: null };
+      }
       return { data: [], count: 0, error: null };
     };
     const q: any = { then: (resolve: (value: unknown) => unknown) => Promise.resolve(value()).then(resolve) };
-    for (const key of ["select", "order", "limit", "like", "gte", "or", "range", "in"]) q[key] = () => q;
+    for (const key of ["select", "order", "like", "gte", "or", "range", "in"]) q[key] = () => q;
+    q.limit = (n: number) => { limit = n; return q; };
     q.eq = (key: string, v: unknown) => { filters[key] = v; return q; };
     q.maybeSingle = async () => value();
     q.single = async () => {
@@ -62,6 +67,7 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
       if (path.endsWith("/payment-health-policy.ts")) return paymentPolicy;
       if (path === "./authorization.ts") return { authorizeSystemHealth };
       if (path === "./availability.ts") return availability;
+      if (path === "./critical-evidence.ts") return evidence;
       if (path === "./renewal-check.ts") return renewals;
       throw new Error(`Unknown import ${path}`);
     } });
@@ -97,6 +103,34 @@ describe("actual full-check handler", () => {
     const h = fixture({ savedCritical: true }); const response = await h.call({ source: "manual", notify: false });
     expect(response.body).toMatchObject({ status: "CRITICAL", invariants: { failed: 1 }, availability_scan: { complete: false } });
     expect(h.reads).not.toContain("provider_subscriptions");
+  });
+  it("a pinned older predecessor cannot erase a critical finding from another completed chain, even behind a newer partial row", async () => {
+    const h = fixture(); const first = await h.call({ source: "manual", notify: false });
+    const verifiedAt = new Date().toISOString();
+    h.reports.push({ id: uuid(900), source: "cron", created_at: verifiedAt,
+      report_json: { availability_scan: { complete: true }, invariants_checked_at: verifiedAt,
+        invariants: { results: [{ code: "INV-P0-1", severity: "CRITICAL", passed: false, count: 2 }] } } });
+    h.reports.push({ id: uuid(901), source: "manual", created_at: new Date().toISOString(),
+      report_json: { availability_scan: { complete: false }, invariants_checked_at: null, invariants: { results: [] } } });
+    const next = await h.call({ source: "manual", notify: false, continue_from: first.body.report_id });
+    expect(next.body).toMatchObject({ status: "CRITICAL", invariants_checked_at: verifiedAt,
+      invariants: { results: [expect.objectContaining({ code: "INV-P0-1", count: 2, passed: false })] } });
+  });
+  it("keeps a newer known P0 missing through a continuation and clears it only after a newer successful probe", async () => {
+    const h = fixture(); const first = await h.call({ source: "manual", notify: false });
+    const firstRow = h.reports.at(-1);
+    const old = new Date(Date.now() - 2000).toISOString();
+    firstRow.report_json.edge_functions.results[0].checked_at = old;
+    const verifiedAt = new Date(Date.now() - 1000).toISOString();
+    h.reports.push({ id: uuid(900), source: "cron", created_at: verifiedAt, report_json: {
+      availability_scan: { complete: false }, invariants_checked_at: null, invariants: { results: [] },
+      known_p0_missing: [{ name: "safe-0", checked_at: verifiedAt }], edge_functions: { results: [] } } });
+    const next = await h.call({ source: "manual", notify: false, continue_from: first.body.report_id });
+    expect(next.body).toMatchObject({ status: "CRITICAL", known_p0_missing: [{ name: "safe-0" }],
+      invariants: { results: [expect.objectContaining({ code: "INV-EDGE-P0-MISSING", count: 1 })] } });
+    const fresh = await h.call({ source: "manual", notify: false });
+    expect(fresh.body.known_p0_missing).toEqual([]);
+    expect(fresh.body.invariants.results.some((r: any) => r.code === "INV-EDGE-P0-MISSING")).toBe(false);
   });
   it("stops on actual RateLimit, keeps results UNKNOWN and never sends alerts for partial scans", async () => {
     const h = fixture({ fetchError: true }); const response = await h.call({ source: "manual", notify: false });

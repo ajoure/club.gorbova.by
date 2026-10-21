@@ -3,6 +3,7 @@ import { webcrypto } from "node:crypto";
 import { checkFunctionAvailability, deferred, registryDigest, runAvailabilityBatch, summarizeAvailability,
   type RegistryEntry, type FunctionCheckResult } from "../../supabase/functions/system-health-full-check/availability";
 import { availabilityView } from "@/lib/system-health/availability";
+import { newestBusinessEvidence, retainMissingP0 } from "../../supabase/functions/system-health-full-check/critical-evidence";
 
 const entry: RegistryEntry = { name: "safe-fixture", tier: "P0", category: "browser",
   expected_status: [200, 204], timeout_ms: 100, auto_fix_policy: "none" };
@@ -109,5 +110,22 @@ describe("safe preflight semantics", () => {
     expect(availabilityView({ edge_functions: { healthy: 172, results } })).toMatchObject({ healthy: 29, complete: false,
       rateLimited: 142, errors: 1, total: 172 });
     expect(availabilityView({ edge_functions: { healthy: 172, results: [{ status: "ERROR" }] } })?.healthy).toBe(0);
+  });
+});
+
+describe("critical evidence across independent chains", () => {
+  it("uses the latest verified block, never a newer partial row with no business verification", () => {
+    const older = { results: [{ passed: true, severity: "CRITICAL" }], checked_at: "2026-10-21T10:00:00Z" };
+    const newer = { results: [{ passed: false, severity: "CRITICAL" }], checked_at: "2026-10-21T10:01:00Z" };
+    expect(newestBusinessEvidence([older, newer, { results: [], checked_at: null }])).toBe(newer);
+  });
+  it("keeps a confirmed missing P0 when unprobed/UNKNOWN/TIMEOUT or older OK; only a newer OK can clear it", () => {
+    const prior = [{ name: entry.name, checked_at: "2026-10-21T10:01:00Z" }];
+    for (const status of ["UNKNOWN", "TIMEOUT", "RATE_LIMITED"] as const) {
+      expect(retainMissingP0([{ ...deferred(entry), status, checked_at: "2026-10-21T10:02:00Z" }], prior)).toEqual(prior);
+    }
+    expect(retainMissingP0([{ ...success(entry), checked_at: "2026-10-21T10:00:00Z" }], prior)).toEqual(prior);
+    expect(retainMissingP0([{ ...success(entry), checked_at: "2026-10-21T10:02:00Z" }], prior)).toEqual([]);
+    expect(retainMissingP0([deferred(entry)], prior, [{ ...success(entry), checked_at: "2026-10-21T10:02:00Z" }])).toEqual([]);
   });
 });
