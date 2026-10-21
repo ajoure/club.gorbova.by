@@ -16,10 +16,11 @@ async function fixture() {
     CREATE SCHEMA auth; CREATE SCHEMA storage; CREATE SCHEMA fixture;
     GRANT USAGE ON SCHEMA public,auth,storage TO anon,authenticated,service_role;
     CREATE TYPE public.app_role AS ENUM ('admin','superadmin','student','guest');
+    CREATE TYPE public.order_status AS ENUM ('draft','pending','paid','partial','failed','refunded','canceled','needs_mapping','lead','partial_refund');
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT current_user::text $$;
     CREATE TABLE public.user_roles_v2(user_id uuid,role_id uuid);
-    CREATE TABLE public.orders_v2(id uuid,user_id uuid,product_id uuid,tariff_id uuid,status text);
+    CREATE TABLE public.orders_v2(id uuid,user_id uuid,product_id uuid,tariff_id uuid,status public.order_status);
     CREATE TABLE public.subscriptions_v2(id uuid,user_id uuid,product_id uuid,tariff_id uuid,flow_id uuid);
     CREATE TABLE public.entitlements(id uuid,user_id uuid,product_id uuid);
     CREATE TABLE public.site_pages(id uuid,status text);

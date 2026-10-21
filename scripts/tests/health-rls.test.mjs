@@ -12,6 +12,9 @@ test('reproduces wide reads and unsafe grants, applies all24 tables idempotently
     const counts=async()=>Promise.all(tables.map(async t=>(await db.query(`SELECT count(*) n FROM public.${qi(t)}`)).rows[0].n));
     const before=await counts();
     await db.exec(migration); await db.exec(migration);
+    assert.equal((await db.query('SELECT pg_typeof(status)::text type FROM public.orders_v2 LIMIT 1')).rows[0].type,'order_status');
+    const fingerprintQuery=migration.slice(migration.indexOf('  SELECT md5('),migration.indexOf('  -- Production uses')).replace('INTO fingerprint','');
+    assert.equal((await db.query(fingerprintQuery)).rows[0].md5,'9533ab393040dfe65fdfbfcc30a79cc1');
     assert.deepEqual(await counts(),before);
     for(const table of tables) for(const role of ['anon','authenticated']) for(const privilege of ['TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) {
       assert.equal((await db.query('SELECT has_table_privilege($1,$2,$3) ok',[role,'public.'+table,privilege])).rows[0].ok,false,`${role}/${table}/${privilege}`);
