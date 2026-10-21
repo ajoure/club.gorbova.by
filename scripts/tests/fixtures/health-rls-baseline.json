@@ -1,0 +1,1356 @@
+{
+  "columns": {
+    "flows": [
+      "id:uuid NN",
+      "product_id:uuid NN",
+      "code:text NN",
+      "name:text NN",
+      "start_date:date",
+      "end_date:date",
+      "is_active:boolean NN",
+      "is_default:boolean NN",
+      "max_participants:integer",
+      "meta:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "roles": [
+      "id:uuid NN",
+      "code:text NN",
+      "name:text NN",
+      "description:text",
+      "created_at:timestamp with time zone NN"
+    ],
+    "fields": [
+      "id:uuid NN",
+      "entity_type:USER-DEFINED NN",
+      "key:text NN",
+      "label:text NN",
+      "data_type:USER-DEFINED NN",
+      "is_system:boolean NN",
+      "is_required:boolean NN",
+      "default_value:text",
+      "enum_options:jsonb",
+      "validation_rules:jsonb",
+      "external_id_amo:text",
+      "external_id_gc:text",
+      "external_id_b24:text",
+      "description:text",
+      "display_order:integer",
+      "is_active:boolean NN",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "tariffs": [
+      "id:uuid NN",
+      "product_id:uuid NN",
+      "code:text NN",
+      "name:text NN",
+      "description:text",
+      "access_days:integer NN",
+      "trial_enabled:boolean NN",
+      "trial_days:integer",
+      "trial_price:numeric",
+      "trial_auto_charge:boolean",
+      "is_active:boolean NN",
+      "display_order:integer",
+      "features:jsonb",
+      "meta:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "badge:text",
+      "subtitle:text",
+      "price_monthly:numeric",
+      "period_label:text",
+      "sort_order:integer",
+      "visible_from:timestamp with time zone",
+      "visible_to:timestamp with time zone",
+      "is_popular:boolean",
+      "discount_enabled:boolean",
+      "discount_percent:integer",
+      "original_price:numeric",
+      "getcourse_offer_id:integer",
+      "getcourse_offer_code:text",
+      "document_params:jsonb",
+      "public_id:text NN",
+      "is_public:boolean NN"
+    ],
+    "permissions": [
+      "id:uuid NN",
+      "code:text NN",
+      "name:text NN",
+      "category:text",
+      "created_at:timestamp with time zone NN"
+    ],
+    "products_v2": [
+      "id:uuid NN",
+      "code:text NN",
+      "name:text NN",
+      "description:text",
+      "is_active:boolean NN",
+      "telegram_club_id:uuid",
+      "meta:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "slug:text",
+      "status:text NN",
+      "primary_domain:text",
+      "currency:text NN",
+      "public_title:text",
+      "public_subtitle:text",
+      "payment_disclaimer_text:text",
+      "landing_config:jsonb",
+      "category:text",
+      "public_id:text",
+      "entitlement_mode:text",
+      "referral_settings_mode:text NN",
+      "referral_commission_percent_bps:integer",
+      "referral_customer_discount_percent_bps:integer",
+      "referral_commission_scheme:text",
+      "referral_tier_1_limit:integer",
+      "referral_tier_1_commission_percent_bps:integer",
+      "referral_tier_2_limit:integer",
+      "referral_tier_2_commission_percent_bps:integer",
+      "referral_tier_3_commission_percent_bps:integer",
+      "referral_club_first_payment_percent_bps:integer",
+      "referral_bonus_eligible:boolean NN"
+    ],
+    "access_rules": [
+      "id:uuid NN",
+      "product_id:uuid",
+      "tariff_id:uuid",
+      "grant_target_type:text NN",
+      "target_ref:text NN",
+      "target_label:text",
+      "is_active:boolean NN",
+      "priority:integer NN",
+      "duration_days:integer",
+      "conditions:jsonb",
+      "notes:text",
+      "created_by:uuid",
+      "updated_by:uuid",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "kb_questions": [
+      "id:uuid NN",
+      "lesson_id:uuid NN",
+      "episode_number:integer NN",
+      "question_number:integer",
+      "title:text NN",
+      "full_question:text",
+      "tags:ARRAY",
+      "kinescope_url:text",
+      "timecode_seconds:integer",
+      "answer_date:date NN",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "admin_section": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "code:text NN",
+      "label:text NN",
+      "route_prefix:text NN",
+      "icon:text",
+      "sort_order:integer NN",
+      "group_code:text",
+      "workspace_id:uuid",
+      "is_active:boolean NN",
+      "metadata:jsonb NN",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "created_by:uuid",
+      "updated_by:uuid"
+    ],
+    "crm_pipelines": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "name:text NN",
+      "code:text",
+      "order_index:integer NN",
+      "is_default:boolean NN",
+      "metadata:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "created_by:uuid",
+      "updated_by:uuid"
+    ],
+    "module_access": [
+      "id:uuid NN",
+      "module_id:uuid NN",
+      "tariff_id:uuid NN",
+      "created_at:timestamp with time zone NN"
+    ],
+    "admin_resource": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "section_id:uuid NN",
+      "code:text NN",
+      "label:text NN",
+      "route:text NN",
+      "sort_order:integer NN",
+      "workspace_id:uuid",
+      "is_active:boolean NN",
+      "metadata:jsonb NN",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "created_by:uuid",
+      "updated_by:uuid"
+    ],
+    "pricing_stages": [
+      "id:uuid NN",
+      "product_id:uuid NN",
+      "stage_type:USER-DEFINED NN",
+      "name:text NN",
+      "start_date:timestamp with time zone",
+      "end_date:timestamp with time zone",
+      "is_active:boolean NN",
+      "display_order:integer",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "tariff_features": [
+      "id:uuid NN",
+      "tariff_id:uuid NN",
+      "text:text NN",
+      "icon:text",
+      "is_bonus:boolean",
+      "is_highlighted:boolean",
+      "sort_order:integer",
+      "visibility_mode:text",
+      "active_from:timestamp with time zone",
+      "active_to:timestamp with time zone",
+      "label:text",
+      "link_url:text",
+      "bonus_type:text",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN"
+    ],
+    "role_permissions": [
+      "id:uuid NN",
+      "role_id:uuid NN",
+      "permission_id:uuid NN",
+      "created_at:timestamp with time zone NN"
+    ],
+    "lesson_price_rules": [
+      "id:uuid NN",
+      "lesson_id:uuid NN",
+      "tariff_id:uuid",
+      "price:numeric NN",
+      "sort_order:integer",
+      "created_at:timestamp with time zone"
+    ],
+    "user_menu_sections": [
+      "id:uuid NN",
+      "key:text NN",
+      "label:text NN",
+      "icon:text",
+      "url:text NN",
+      "sort_order:integer",
+      "parent_key:text",
+      "is_active:boolean",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "page_key:text",
+      "kind:text NN"
+    ],
+    "crm_pipeline_stages": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "pipeline_id:uuid NN",
+      "name:text NN",
+      "color:text",
+      "stage_type:text NN",
+      "order_index:integer NN",
+      "is_default:boolean NN",
+      "metadata:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "created_by:uuid",
+      "updated_by:uuid"
+    ],
+    "site_domain_bindings": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "workspace_id:uuid NN",
+      "site_page_id:uuid NN",
+      "domain:text NN",
+      "is_primary:boolean NN",
+      "created_by:uuid NN",
+      "updated_by:uuid",
+      "metadata:jsonb NN",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "is_home:boolean NN"
+    ],
+    "document_token_registry": [
+      "id:uuid NN",
+      "token_key:text NN",
+      "ui_label:text NN",
+      "description:text",
+      "category:text NN",
+      "source_type:text NN",
+      "field_id:uuid",
+      "resolver_key:text",
+      "data_type:text NN",
+      "is_required:boolean NN",
+      "display_order:integer NN",
+      "example_value:text",
+      "archived_at:timestamp with time zone",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "archive_reason:text"
+    ],
+    "privacy_policy_versions": [
+      "id:uuid NN",
+      "version:text NN",
+      "effective_date:date NN",
+      "summary:text",
+      "is_current:boolean",
+      "created_at:timestamp with time zone",
+      "changes:jsonb"
+    ],
+    "legal_details_roles_catalog": [
+      "id:uuid NN",
+      "role_type:text NN",
+      "code:text NN",
+      "label:text NN",
+      "sort_order:integer NN",
+      "is_active:boolean NN"
+    ],
+    "crm_pipeline_product_bindings": [
+      "id:uuid NN",
+      "public_id:text NN",
+      "pipeline_id:uuid NN",
+      "product_id:uuid NN",
+      "metadata:jsonb",
+      "created_at:timestamp with time zone NN",
+      "updated_at:timestamp with time zone NN",
+      "created_by:uuid",
+      "updated_by:uuid"
+    ],
+    "legal_details_positions_catalog": [
+      "id:uuid NN",
+      "code:text NN",
+      "label:text NN",
+      "country_scope:text",
+      "is_system:boolean NN",
+      "is_active:boolean NN",
+      "sort_order:integer NN"
+    ]
+  },
+  "policies": [
+    {
+      "cmd": "DELETE",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "access_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can delete access_rules",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "access_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can insert access_rules",
+      "with_check": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "access_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can update access_rules",
+      "with_check": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "access_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated users can read access_rules",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_resource",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_resource read for authenticated",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "has_role_v2(auth.uid(), 'super_admin'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_resource",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_resource update only super_admin",
+      "with_check": "has_role_v2(auth.uid(), 'super_admin'::text)"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_resource",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_resource write only super_admin",
+      "with_check": "has_role_v2(auth.uid(), 'super_admin'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_section",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_section read for authenticated",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "has_role_v2(auth.uid(), 'super_admin'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_section",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_section update only super_admin",
+      "with_check": "has_role_v2(auth.uid(), 'super_admin'::text)"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "admin_section",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "admin_section write only super_admin",
+      "with_check": "has_role_v2(auth.uid(), 'super_admin'::text)"
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_product_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_product_bindings_delete",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_product_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_product_bindings_insert",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_product_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_product_bindings_select",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_product_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_product_bindings_update",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_stages_delete",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_stages_insert",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_stages_select",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipeline_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipeline_stages_update",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipelines",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipelines_delete",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipelines",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipelines_insert",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipelines",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipelines_select",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "crm_pipelines",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "crm_pipelines_update",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "public"
+      ],
+      "table": "document_token_registry",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "doc_token_registry_admin_all",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "roles": [
+        "public"
+      ],
+      "table": "document_token_registry",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "doc_token_registry_authenticated_read",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "fields",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Fields are editable by admins",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(auth.role() = 'authenticated'::text)",
+      "roles": [
+        "public"
+      ],
+      "table": "fields",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Fields are viewable by authenticated users",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "flows",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Flows editable by admins",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "flows",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Flows viewable by authenticated users",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "kb_questions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "kb_questions_admin_all",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "kb_questions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "kb_questions_select_authenticated",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_any_role(auth.uid(), ARRAY['admin'::app_role, 'superadmin'::app_role])",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "legal_details_positions_catalog",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "positions_catalog_admin_manage",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "legal_details_positions_catalog",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "positions_catalog_read",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_any_role(auth.uid(), ARRAY['admin'::app_role, 'superadmin'::app_role])",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "legal_details_roles_catalog",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "roles_catalog_admin_manage",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "legal_details_roles_catalog",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "roles_catalog_read",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(EXISTS ( SELECT 1\n   FROM (user_roles_v2 ur\n     JOIN roles r ON ((r.id = ur.role_id)))\n  WHERE ((ur.user_id = auth.uid()) AND (r.code = ANY (ARRAY['admin'::text, 'super_admin'::text])))))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "lesson_price_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admin manage lesson price rules",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "lesson_price_rules",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Users can view lesson price rules",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_permission(auth.uid(), 'content.manage'::text)",
+      "roles": [
+        "public"
+      ],
+      "table": "module_access",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can manage module access",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "module_access",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can manage module access (role)",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "module_access",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated users can read module_access",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "permissions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated can view permissions",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_permission(auth.uid(), 'roles.manage'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "permissions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Permissions manage required",
+      "with_check": "has_permission(auth.uid(), 'roles.manage'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "public"
+      ],
+      "table": "pricing_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Pricing stages are viewable by everyone",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "pricing_stages",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Pricing stages editable by admins",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "anon",
+        "authenticated"
+      ],
+      "table": "privacy_policy_versions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Anyone can read policy versions",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "public"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Products are viewable by everyone",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Products editable by admins",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "has_admin_section_access(( SELECT auth.uid() AS uid), 'forms-hub'::text, 'view'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "RBAC v3: view products by forms hub",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "has_admin_section_access(( SELECT auth.uid() AS uid), 'referrals'::text, 'view'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "products_referrals_rbac_view",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "has_admin_section_access(auth.uid(), 'products'::text, 'manage'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "products_v2_rbac_delete",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "has_admin_section_access(auth.uid(), 'products'::text, 'view'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "products_v2_rbac_history_view",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "products_v2_rbac_insert",
+      "with_check": "has_admin_section_access(auth.uid(), 'products'::text, 'edit'::text)"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "has_admin_section_access(auth.uid(), 'products'::text, 'edit'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "products_v2",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "products_v2_rbac_update",
+      "with_check": "has_admin_section_access(auth.uid(), 'products'::text, 'edit'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "role_permissions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated can view role_permissions",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_permission(auth.uid(), 'roles.manage'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "role_permissions",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Role permissions manage required",
+      "with_check": "has_permission(auth.uid(), 'roles.manage'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "roles",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated can view roles",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "has_permission(auth.uid(), 'roles.manage'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "roles",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Roles manage permission required",
+      "with_check": "has_permission(auth.uid(), 'roles.manage'::text)"
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "site_domain_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "site_domain_bindings_admin_delete",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table": "site_domain_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "site_domain_bindings_admin_insert",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "site_domain_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "site_domain_bindings_admin_select",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "site_domain_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "site_domain_bindings_admin_update",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "anon",
+        "authenticated"
+      ],
+      "table": "site_domain_bindings",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "site_domain_bindings_public_select",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "tariff_features",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can manage tariff features",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "public"
+      ],
+      "table": "tariff_features",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Public can read tariff features",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "public"
+      ],
+      "table": "tariffs",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Tariffs are viewable by everyone",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role))",
+      "roles": [
+        "public"
+      ],
+      "table": "tariffs",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Tariffs editable by admins",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "user_menu_sections",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Admins can manage menu sections",
+      "with_check": "(has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'super_admin'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "user_menu_sections",
+      "schema": "public",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated users can view menu sections",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "((bucket_id = 'telegram-media'::text) AND (has_role(auth.uid(), 'admin'::app_role) OR has_role(auth.uid(), 'superadmin'::app_role) OR has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text) OR has_role_v2(auth.uid(), 'support'::text) OR has_role_v2(auth.uid(), 'editor'::text) OR has_role_v2(auth.uid(), 'admin_gost'::text) OR has_admin_section_access(auth.uid(), 'communication'::text, 'manage'::text)))",
+      "roles": [
+        "authenticated"
+      ],
+      "table": "objects",
+      "schema": "storage",
+      "permissive": "PERMISSIVE",
+      "policyname": "Staff can update telegram-media",
+      "with_check": "(bucket_id = 'telegram-media'::text)"
+    }
+  ],
+  "table_acl": {
+    "flows": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "roles": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "fields": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "tariffs": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "permissions": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "products_v2": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "access_rules": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "kb_questions": [
+      "postgres=arwdDxtm/postgres",
+      "authenticated=r/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "admin_section": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "crm_pipelines": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "module_access": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "admin_resource": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "pricing_stages": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "tariff_features": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "role_permissions": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "lesson_price_rules": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "user_menu_sections": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "crm_pipeline_stages": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "site_domain_bindings": [
+      "postgres=arwdDxtm/postgres",
+      "anon=awdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "document_token_registry": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "privacy_policy_versions": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "legal_details_roles_catalog": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "crm_pipeline_product_bindings": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ],
+    "legal_details_positions_catalog": [
+      "postgres=arwdDxtm/postgres",
+      "anon=arwdDxtm/postgres",
+      "authenticated=arwdDxtm/postgres",
+      "service_role=arwdDxtm/postgres",
+      "sandbox_exec_hdjgkjceownmmnrqqtuz=ar/postgres",
+      "sandbox_exec=ar/postgres"
+    ]
+  }
+}

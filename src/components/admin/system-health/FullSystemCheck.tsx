@@ -218,7 +218,7 @@ export function FullSystemCheck() {
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold text-green-600">
-                  {displayData.edge_functions?.healthy || displayData.edge_functions?.deployed || 0}
+                  {displayData.edge_functions?.results?.filter(r => r.status === "OK").length ?? 0}
                 </div>
                 <div className="text-xs text-muted-foreground">healthy</div>
               </div>

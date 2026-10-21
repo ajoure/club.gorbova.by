@@ -31,7 +31,6 @@ export const TIER1_FUNCTIONS: Array<{ name: string; category: EdgeFunctionStatus
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const OPTIONS_TIMEOUT = 15000; // 15s for OPTIONS
-const POST_TIMEOUT = 10000;    // 10s for POST fallback
 
 export function useEdgeFunctionsHealth() {
   const [functions, setFunctions] = useState<EdgeFunctionStatus[]>(
@@ -45,56 +44,6 @@ export function useEdgeFunctionsHealth() {
   );
   const [isChecking, setIsChecking] = useState(false);
   const [lastFullCheck, setLastFullCheck] = useState<Date | null>(null);
-
-  /**
-   * Check if function exists via POST ping (fallback when OPTIONS fails)
-   * Returns: ok (2xx/4xx = exists), not_found (404), error (timeout/other)
-   */
-  const checkViaPost = useCallback(async (name: string): Promise<{
-    status: "ok" | "not_found" | "error";
-    latency: number;
-    error?: string;
-  }> => {
-    const startTime = performance.now();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), POST_TIMEOUT);
-
-    try {
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ ping: true }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-      const latency = Math.round(performance.now() - startTime);
-
-      // Check for 404
-      if (response.status === 404) {
-        const text = await response.text();
-        if (text.includes('"code":"NOT_FOUND"') || text.includes("Function not found")) {
-          return { status: "not_found", latency, error: "Function not deployed (404)" };
-        }
-      }
-
-      // 2xx, 4xx (except 404), 5xx with body = function exists
-      // Even 401/403 means the function is deployed but auth is required
-      return { status: "ok", latency };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      const latency = Math.round(performance.now() - startTime);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      
-      return {
-        status: "error",
-        latency,
-        error: errorMessage.includes("abort") ? `POST timeout (${POST_TIMEOUT/1000}s)` : errorMessage,
-      };
-    }
-  }, []);
 
   const checkFunction = useCallback(async (name: string): Promise<EdgeFunctionStatus> => {
     const functionDef = TIER1_FUNCTIONS.find((f) => f.name === name);
@@ -111,10 +60,9 @@ export function useEdgeFunctionsHealth() {
 
     const startTime = performance.now();
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OPTIONS_TIMEOUT);
     try {
-      // Step 1: Try OPTIONS request (15s timeout)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), OPTIONS_TIMEOUT);
 
       const response = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
         method: "OPTIONS",
@@ -129,7 +77,7 @@ export function useEdgeFunctionsHealth() {
       clearTimeout(timeoutId);
       const latency = Math.round(performance.now() - startTime);
 
-      // Check response for NOT_FOUND (absolute blocker, no need for POST)
+      // Check response for NOT_FOUND (absolute blocker, no business fallback)
       if (response.status === 404) {
         return {
           name,
@@ -154,6 +102,9 @@ export function useEdgeFunctionsHealth() {
         };
       }
 
+      if (!response.ok) return { name, category: functionDef.category, status: "error", latency,
+        lastCheck: new Date(), error: `Unexpected preflight status ${response.status}` };
+
       // OPTIONS succeeded
       return {
         name,
@@ -167,33 +118,6 @@ export function useEdgeFunctionsHealth() {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       const isTimeout = errorMessage.includes("abort");
 
-      // Step 2: OPTIONS failed/timeout → try POST fallback
-      const postResult = await checkViaPost(name);
-      
-      if (postResult.status === "ok") {
-        // OPTIONS timeout but POST worked → slow_preflight (function exists, cold start issue)
-        return {
-          name,
-          category: functionDef.category,
-          status: isTimeout ? "slow_preflight" : "ok",
-          latency: postResult.latency,
-          lastCheck: new Date(),
-          error: isTimeout ? `OPTIONS timeout (${OPTIONS_TIMEOUT/1000}s), POST OK` : undefined,
-        };
-      }
-
-      if (postResult.status === "not_found") {
-        return {
-          name,
-          category: functionDef.category,
-          status: "not_found",
-          latency: postResult.latency,
-          lastCheck: new Date(),
-          error: postResult.error,
-        };
-      }
-
-      // Both OPTIONS and POST failed
       return {
         name,
         category: functionDef.category,
@@ -201,11 +125,11 @@ export function useEdgeFunctionsHealth() {
         latency: optionsLatency,
         lastCheck: new Date(),
         error: isTimeout 
-          ? `Timeout (OPTIONS ${OPTIONS_TIMEOUT/1000}s, POST ${POST_TIMEOUT/1000}s)` 
+          ? `OPTIONS timeout (${OPTIONS_TIMEOUT/1000}s)`
           : errorMessage,
       };
-    }
-  }, [checkViaPost]);
+    } finally { clearTimeout(timeoutId); }
+  }, []);
 
   const checkSingleFunction = useCallback(async (name: string) => {
     // Set status to checking

@@ -52,7 +52,7 @@ describe("Edge Function integration contracts", () => {
 
   it("keeps the production health audit read-only", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "supabase/functions/system-health-full-check/index.ts"),
+      resolve(process.cwd(), "supabase/functions/system-health-full-check/availability.ts"),
       "utf8",
     );
 

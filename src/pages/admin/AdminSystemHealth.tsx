@@ -18,6 +18,8 @@ import { OwnerProblemCard } from "@/components/admin/system-health/owner/OwnerPr
 import { OwnerLegacyNoiseCard } from "@/components/admin/system-health/owner/OwnerLegacyNoiseCard";
 import { OwnerDiffPanel } from "@/components/admin/system-health/owner/OwnerDiffPanel";
 import { OwnerTechInfoTab } from "@/components/admin/system-health/owner/OwnerTechInfoTab";
+import { AvailabilitySummary } from "@/components/admin/system-health/AvailabilitySummary";
+import { availabilityView } from "@/lib/system-health/availability";
 
 import { humanizeInvariant } from "@/lib/system-health/invariant-humanize";
 import { buildAggregatePatch } from "@/lib/system-health/patch-generator";
@@ -71,16 +73,21 @@ export default function AdminSystemHealth() {
 
   // Diff между последними двумя report_json
   const diff = useMemo(() => {
-    if (reports.length < 2) return [];
-    const prev = extractInvariants(reports[1].report_json);
+    if (availabilityView(latestFullCheck?.report_json)?.complete === false) return [];
+    const previous = reports.find(r => r.id !== latestFullCheck?.id
+      && availabilityView(r.report_json)?.complete !== false);
+    if (!previous) return [];
+    const prev = extractInvariants(previous.report_json);
     return diffInvariants(prev, currentInvariants);
-  }, [reports, currentInvariants]);
+  }, [reports, currentInvariants, latestFullCheck]);
 
   // Hero status
   const ownerStatus: OwnerStatus = isLoading
     ? "loading"
     : classified.criticalFix.length > 0
       ? "problems"
+      : availabilityView(latestFullCheck?.report_json)?.complete === false
+        ? "incomplete"
       : classified.manualReview.length > 0
         ? "manual_review"
         : "ok";
@@ -115,7 +122,10 @@ export default function AdminSystemHealth() {
             queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
           }}
           isRunning={triggerFullCheck.isPending}
+          progress={triggerFullCheck.progress}
         />
+
+        <AvailabilitySummary report={latestFullCheck?.report_json} />
 
         <OwnerSummaryStrip
           problemsCount={classified.criticalFix.length}
@@ -155,9 +165,10 @@ export default function AdminSystemHealth() {
               <Card className="border-dashed bg-emerald-50/40 dark:bg-emerald-950/10">
                 <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-3">
                   <CheckCircle2 className="h-12 w-12 text-emerald-600" />
-                  <h3 className="text-lg font-semibold">Сейчас нет проблем, требующих исправления</h3>
+                  <h3 className="text-lg font-semibold">{ownerStatus === "incomplete" ? "Результат проверки пока неполный" : "Сейчас нет проблем, требующих исправления"}</h3>
                   <p className="text-muted-foreground max-w-md">
-                    {classified.manualReview.length > 0
+                    {ownerStatus === "incomplete" ? "Непроверенные функции не считаются исправными. Полный запуск последовательно проверит все порции."
+                    : classified.manualReview.length > 0
                       ? "Критических сбоев не найдено. Откройте вкладку «Ручная проверка»: там есть вопросы, требующие внимания."
                       : "Все автоматические инварианты в норме. При появлении проблемы она появится здесь."}
                   </p>
