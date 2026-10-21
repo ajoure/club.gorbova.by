@@ -25,7 +25,7 @@ test('anon catalog, published routing and privacy history work without privilege
   const db=await fixture();
   try {
     await db.exec(migration);
-    for(const table of publicTables) assert.deepEqual(await visible(db,table,null,'anon'),[id(1)],table);
+    for(const table of publicTables) assert.deepEqual(await visible(db,table,null,'anon'),table==='privacy_policy_versions'?[id(1),id(3)]:[id(1)],table);
     for(const table of tables.filter(t=>!publicTables.includes(t))) await assert.rejects(visible(db,table,null,'anon'),e=>e.code==='42501',table);
     await assert.rejects(asRole(db,'anon',null,'SELECT metadata,created_by,workspace_id FROM public.site_domain_bindings'),e=>e.code==='42501');
     await assert.rejects(asRole(db,'anon',null,"SELECT public.has_admin_section_access(auth.uid(),'products','view')"),e=>e.code==='42501');
@@ -43,7 +43,7 @@ test('clients keep own historical metadata, own roles, active menus/legal catalo
       for(const table of ['roles','permissions','role_permissions']) assert.deepEqual(await visible(db,table,u),[id(u===users.a?1:2)],table);
       assert.deepEqual(await visible(db,'kb_questions',u),[id(u===users.a?1:2)]);
       assert.deepEqual(await visible(db,'flows',u),[id(own)]);
-      for(const table of ['user_menu_sections','legal_details_positions_catalog','legal_details_roles_catalog','privacy_policy_versions','document_token_registry']) assert.deepEqual(await visible(db,table,u),[id(1)],table);
+      for(const table of ['user_menu_sections','legal_details_positions_catalog','legal_details_roles_catalog','privacy_policy_versions','document_token_registry']) assert.deepEqual(await visible(db,table,u),table==='privacy_policy_versions'?[id(1),id(3)]:[id(1)],table);
       for(const table of ['crm_pipelines','crm_pipeline_stages','crm_pipeline_product_bindings','fields','lesson_price_rules','admin_section','admin_resource']) assert.deepEqual(await visible(db,table,u),[],table);
     }
   } finally { await db.close(); }

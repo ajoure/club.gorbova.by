@@ -11,7 +11,7 @@ BEGIN
   INTO fingerprint FROM pg_policies
   WHERE (schemaname='public' AND tablename IN ('flows','roles','fields','tariffs','permissions','products_v2','access_rules','kb_questions','admin_section','crm_pipelines','module_access','admin_resource','pricing_stages','tariff_features','role_permissions','lesson_price_rules','user_menu_sections','crm_pipeline_stages','site_domain_bindings','document_token_registry','privacy_policy_versions','legal_details_roles_catalog','crm_pipeline_product_bindings','legal_details_positions_catalog'))
     OR (schemaname='storage' AND tablename='objects' AND policyname='Staff can update telegram-media');
-  IF fingerprint IS NULL OR fingerprint NOT IN ('f6b34c79c1c4e5f872b45244eecc947e','7b7cbfb1fcb6553e3925bb9d980d7ef5')
+  IF fingerprint IS NULL OR fingerprint NOT IN ('f6b34c79c1c4e5f872b45244eecc947e','71d05b8b49be4b2059913d44d0471808')
   THEN RAISE EXCEPTION 'health_rls_policy_baseline_changed'; END IF;
 END $preflight$;
 
@@ -126,7 +126,7 @@ ALTER POLICY "Authenticated can view permissions" ON public.permissions TO authe
 ALTER POLICY "Pricing stages are viewable by everyone" ON public.pricing_stages TO anon
   USING ((is_active AND EXISTS (SELECT 1 FROM public.products_v2 p WHERE p.id = pricing_stages.product_id AND p.is_active AND p.status = 'active')));
 ALTER POLICY "Anyone can read policy versions" ON public.privacy_policy_versions TO anon
-  USING ((effective_date <= CURRENT_DATE));
+  USING ((is_current OR effective_date <= CURRENT_DATE));
 ALTER POLICY "Products are viewable by everyone" ON public.products_v2 TO anon
   USING ((is_active AND status = 'active'));
 ALTER POLICY "Authenticated can view role_permissions" ON public.role_permissions TO authenticated
@@ -149,7 +149,7 @@ CREATE POLICY health_catalog_authenticated_select ON public.pricing_stages FOR S
   USING ((is_active AND EXISTS (SELECT 1 FROM public.products_v2 p WHERE p.id = pricing_stages.product_id AND p.is_active AND p.status = 'active')) OR ((public.has_admin_section_access((SELECT auth.uid()), 'products', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'training', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'deals', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'payments', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'forms-hub', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'referrals', 'view'))));
 DROP POLICY IF EXISTS health_catalog_authenticated_select ON public.privacy_policy_versions;
 CREATE POLICY health_catalog_authenticated_select ON public.privacy_policy_versions FOR SELECT TO authenticated
-  USING ((effective_date <= CURRENT_DATE) OR (public.has_admin_section_access((SELECT auth.uid()), 'consents', 'view')));
+  USING ((is_current OR effective_date <= CURRENT_DATE) OR (public.has_admin_section_access((SELECT auth.uid()), 'consents', 'view')));
 DROP POLICY IF EXISTS health_catalog_authenticated_select ON public.tariffs;
 CREATE POLICY health_catalog_authenticated_select ON public.tariffs FOR SELECT TO authenticated
   USING ((is_active AND is_public AND (visible_from IS NULL OR visible_from <= now()) AND (visible_to IS NULL OR visible_to > now()) AND EXISTS (SELECT 1 FROM public.products_v2 p WHERE p.id = tariffs.product_id AND p.is_active AND p.status = 'active')) OR (((public.has_admin_section_access((SELECT auth.uid()), 'products', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'training', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'deals', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'payments', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'forms-hub', 'view') OR public.has_admin_section_access((SELECT auth.uid()), 'referrals', 'view')) OR EXISTS (SELECT 1 FROM public.orders_v2 o WHERE o.user_id = (SELECT auth.uid()) AND o.tariff_id = tariffs.id AND o.status = 'paid') OR EXISTS (SELECT 1 FROM public.subscriptions_v2 s WHERE s.user_id = (SELECT auth.uid()) AND s.tariff_id = tariffs.id) OR EXISTS (SELECT 1 FROM public.entitlements e WHERE e.user_id = (SELECT auth.uid()) AND e.product_id = tariffs.product_id))));

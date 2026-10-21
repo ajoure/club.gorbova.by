@@ -116,6 +116,9 @@ async function fixture() {
     await insert('site_domain_bindings',{id:id(n),site_page_id:id(n),domain:'fixture.test'});
     for (const table of ['crm_pipelines','crm_pipeline_stages','crm_pipeline_product_bindings']) await insert(table,{id:id(n)});
   }
+  // The canonical consent hook selects is_current, including a published version
+  // whose effective date is in the future. Do not turn it into a fallback.
+  await insert('privacy_policy_versions',{id:id(3),effective_date:'2099-01-01',is_current:true});
   // Shared staff storage has SELECT/INSERT/DELETE policies in addition to the
   // live UPDATE baseline. They are intentionally untouched by this migration.
   await db.exec(`CREATE POLICY staff_storage_read ON storage.objects FOR SELECT TO authenticated USING(public.has_admin_section_access(auth.uid(),'communication','view'));
