@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
+import { useState } from "react";
 
 export interface AutoFix {
   target: string;
@@ -29,18 +30,20 @@ export interface SystemHealthReport {
 }
 
 export interface FullCheckResponse {
+  report_id?: string;
+  availability_scan?: { complete: boolean; checked: number; total: number; pending: number; retry_after_ms: number };
   status: "OK" | "DEGRADED" | "CRITICAL";
   project_ref: string;
   expected_project_ref: string;
   edge_functions: {
     total: number;
     deployed: number;
-    healthy: number;    // PATCH P0.9.4: Functions that responded (OK/ERROR/CORS_ERROR)
+    healthy: number; // Successful expected OPTIONS only
     timeout: string[];  // PATCH P0.9.4: Functions that timed out (exist but slow)
     missing: string[];
     results: Array<{
       name: string;
-      exists: boolean;
+      exists: boolean | null;
       http_status: number | null;
       status: string;
       tier: string;
@@ -144,16 +147,31 @@ export function useLatestFullCheck() {
 
 export function useTriggerFullCheck() {
   const queryClient = useQueryClient();
+  const [progress, setProgress] = useState<{ checked: number; total: number } | null>(null);
 
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: async () => {
       try {
-        const { data, error } = await supabase.functions.invoke("system-health-full-check", {
-          body: { source: "manual", notify: false },
-        });
-
-        if (error) throw error;
-        return data as FullCheckResponse;
+        let predecessor: string | undefined;
+        let lastChecked = -1;
+        setProgress(null);
+        // Separate inbound requests, each with the server's20-probe budget.
+        // Never retry an actual rate limit or submit browser-owned outcomes.
+        for (let page = 0; page < 100; page++) {
+          const { data, error } = await supabase.functions.invoke("system-health-full-check", {
+            body: { source: "manual", notify: false, ...(predecessor ? { continue_from: predecessor } : {}) },
+          });
+          if (error) throw error;
+          const report = data as FullCheckResponse;
+          const scan = report.availability_scan;
+          if (!scan) return report; // Compatible while backend rolls out first.
+          setProgress({ checked: scan.checked, total: scan.total });
+          if (scan.complete || scan.retry_after_ms > 0) return report;
+          if (!report.report_id || scan.checked <= lastChecked) throw new Error("Проверка остановлена: нет прогресса. Обновите страницу.");
+          lastChecked = scan.checked;
+          predecessor = report.report_id;
+        }
+        throw new Error("Проверка остановлена: превышен безопасный предел порций.");
       } catch (e) {
         // Distinguish network/timeout errors from business errors
         if (e instanceof Error && (
@@ -189,11 +207,14 @@ export function useTriggerFullCheck() {
       queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
     },
     onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
       toast.error("Ошибка запуска проверки", {
         description: String(error.message || error),
       });
     },
   });
+  return { ...mutation, progress };
 }
 
 // Remediation types

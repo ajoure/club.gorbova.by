@@ -7,6 +7,8 @@ import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from
 import { getCallerUserId } from "../_shared/caller-user.ts";
 import { authorizeSystemHealth } from "./authorization.ts";
 import { loadRenewalCandidates, needsRenewalProbe, verifyRenewalCandidates, RENEWAL_CHECK_RELEASE } from "./renewal-check.ts";
+import { runAvailabilityBatch, summarizeAvailability, SCAN_TTL_MS, type AvailabilityScan, type FunctionCheckResult } from "./availability.ts";
+import { newestBusinessEvidence, retainMissingP0, type MissingEvidence } from "./critical-evidence.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -35,18 +37,6 @@ interface RegistryEntry {
   notes: string | null;
 }
 
-interface FunctionCheckResult {
-  name: string;
-  exists: boolean;
-  http_status: number | null;
-  status: "OK" | "NOT_DEPLOYED" | "ERROR" | "TIMEOUT" | "CORS_ERROR";
-  tier: string;
-  category: string;
-  auto_fix_policy: string;
-  cors_ok?: boolean;
-  error?: string;
-}
-
 interface InvariantResult {
   code: string;
   name: string;
@@ -63,7 +53,7 @@ interface FullCheckReport {
   edge_functions: {
     total: number;
     deployed: number;
-    healthy: number;    // PATCH P0.9.4: Functions that responded (OK/ERROR/CORS_ERROR)
+    healthy: number; // Only a successful expected preflight, never business-runtime proof
     timeout: string[];  // PATCH P0.9.4: Functions that timed out (exist but slow)
     missing: string[];
     results: FunctionCheckResult[];
@@ -81,117 +71,13 @@ interface FullCheckReport {
     failed: number;
     results: InvariantResult[];
   };
+  availability_scan: AvailabilityScan;
+  invariants_checked_at: string | null;
+  known_p0_missing: MissingEvidence[];
+  report_id?: string;
   auto_fixes: any[]; // Now always empty - remediation is separate
   duration_ms: number;
   timestamp: string;
-}
-
-// Check single function availability without executing business logic.
-// A generic POST { ping: true } is not a safe healthcheck: many functions do
-// not implement a ping branch and can mutate real data before rejecting it.
-async function checkFunctionAvailability(
-  entry: RegistryEntry,
-  projectRef: string
-): Promise<FunctionCheckResult> {
-  const url = `https://${projectRef}.supabase.co/functions/v1/${entry.name}`;
-  const timeout = Math.min(entry.timeout_ms, 8000);
-  
-  try {
-    const controller = new AbortController();
-    // Respect registry timeout_ms with an 8s cap for preflight.
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-    const headers: Record<string, string> = {
-      "Origin": "https://gorbova.by",
-      "Access-Control-Request-Method": "POST",
-      "Access-Control-Request-Headers": "authorization,content-type,apikey,x-client-info",
-    };
-    
-    const response = await fetch(url, {
-      method: "OPTIONS",
-      headers,
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-    
-    // Check for NOT_DEPLOYED (404)
-    if (response.status === 404) {
-      const text = await response.text().catch(() => "");
-      if (text.includes('"code":"NOT_FOUND"') || text.includes("Function not found")) {
-        return {
-          name: entry.name,
-          exists: false,
-          http_status: 404,
-          status: "NOT_DEPLOYED",
-          tier: entry.tier,
-          category: entry.category,
-          auto_fix_policy: entry.auto_fix_policy,
-        };
-      }
-    }
-    
-    // Check CORS headers for browser functions
-    let corsOk = true;
-    if (entry.category === "browser") {
-      const allowHeaders = (response.headers.get("Access-Control-Allow-Headers") || "").toLowerCase();
-      corsOk = ["authorization", "content-type", "apikey", "x-client-info"]
-        .every((requiredHeader) => allowHeaders.includes(requiredHeader));
-    }
-    
-    // Check if status is in expected list
-    const statusOk = entry.expected_status.includes(response.status);
-    
-    if (!corsOk) {
-      return {
-        name: entry.name,
-        exists: true,
-        http_status: response.status,
-        status: "CORS_ERROR",
-        tier: entry.tier,
-        category: entry.category,
-        auto_fix_policy: entry.auto_fix_policy,
-        cors_ok: false,
-        error: "Missing one or more supabase-js invocation headers in CORS allowlist",
-      };
-    }
-    
-    return {
-      name: entry.name,
-      exists: true,
-      http_status: response.status,
-      status: statusOk ? "OK" : "ERROR",
-      tier: entry.tier,
-      category: entry.category,
-      auto_fix_policy: entry.auto_fix_policy,
-      cors_ok: corsOk,
-      error: statusOk ? undefined : `Unexpected status ${response.status}`,
-    };
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      // PATCH P0.9.4: TIMEOUT means function EXISTS but was slow to respond
-      return {
-        name: entry.name,
-        exists: true, // Function exists, just slow
-        http_status: null,
-        status: "TIMEOUT",
-        tier: entry.tier,
-        category: entry.category,
-        auto_fix_policy: entry.auto_fix_policy,
-        error: `Request timeout (${timeout}ms)`,
-      };
-    }
-    
-    return {
-      name: entry.name,
-      exists: false,
-      http_status: null,
-      status: "ERROR",
-      tier: entry.tier,
-      category: entry.category,
-      auto_fix_policy: entry.auto_fix_policy,
-      error: String(error),
-    };
-  }
 }
 
 async function checkBepaidRenewals(supabase: any, now: Date) {
@@ -417,7 +303,7 @@ async function sendTelegramAlert(
     }
     message += "\n";
   } else {
-    message += `✅ Edge Functions: ${report.edge_functions.deployed}/${report.edge_functions.total} OK\n\n`;
+    message += `Проверки доступности: ${report.edge_functions.healthy}/${report.edge_functions.total} OK (OPTIONS)\n\n`;
   }
   
   const failedInvariants = report.invariants.results.filter(i => !i.passed && i.severity !== "INFO");
@@ -496,6 +382,28 @@ Deno.serve(async (req) => {
       });
     }
     const source = typeof body.source === "string" ? body.source.slice(0, 64) : "manual";
+    if (body.mode !== undefined && body.mode !== "continue") {
+      return new Response(JSON.stringify({ error: "Unknown mode" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    let continuationId = body.continue_from;
+    if (body.mode === "continue") {
+      // pg_cron starts independent requests; no recursive function-to-function
+      // chain, no changed trace headers and no idle probes or repeated alerts.
+      const { data: pending } = await supabase.from("system_health_reports")
+        .select("id,report_json").eq("source", "cron")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const scan = pending?.report_json?.availability_scan;
+      if (source !== "cron" || !scan || scan.complete
+        || !Number.isFinite(Date.parse(scan.started_at)) || Date.now() - Date.parse(scan.started_at) > SCAN_TTL_MS
+        || Date.parse(scan.resume_after || "") > Date.now()) {
+        return new Response(JSON.stringify({ skipped: true, sent: false, reason: "no_pending_availability_scan" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      continuationId = pending.id;
+    }
     
     const projectRef = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
     const expectedProjectRef = "hdjgkjceownmmnrqqtuz"; // PINNED for safety
@@ -506,19 +414,24 @@ Deno.serve(async (req) => {
     // Get previous status for comparison
     const { data: lastReport } = await supabase
       .from("system_health_reports")
-      .select("status")
+      .select("id,status,report_json,source,created_at")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     
     const previousStatus = lastReport?.status || null;
+    let priorInvariants: InvariantResult[] = lastReport?.report_json?.invariants?.results || [];
+    let invariantsCheckedAt: string | null = lastReport?.report_json?.availability_scan
+      ? lastReport.report_json.invariants_checked_at : lastReport?.created_at || null;
+    let predecessorReport = lastReport;
     
     // STEP 1: Read function list from registry (NO HARDCODE!)
     const { data: registry, error: registryError } = await supabase
       .from("edge_functions_registry")
       .select("*")
       .eq("enabled", true)
-      .order("tier", { ascending: true });
+      .order("tier", { ascending: true })
+      .order("name", { ascending: true });
     
     if (registryError) {
       console.error("[FULL-CHECK] Failed to read registry:", registryError);
@@ -538,82 +451,89 @@ Deno.serve(async (req) => {
     
     console.log(`[FULL-CHECK] Checking ${registry.length} functions from registry...`);
     
-    // STEP 2: Check availability (parallel, batched)
-    // PATCH P0.9.4: Reduced from 30 to 10 to prevent self-DDoS on cold starts
-    const batchSize = 10;
-    const functionResults: FunctionCheckResult[] = [];
-    let previewDetected = false;
-    
-    for (let i = 0; i < registry.length; i += batchSize) {
-      const batch = registry.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map((entry: RegistryEntry) => checkFunctionAvailability(entry, projectRef))
-      );
-      functionResults.push(...batchResults);
-      
-      // Early exit detection: if >50% of first batch is NOT_DEPLOYED, likely preview env
-      if (i === 0) {
-        const notDeployedCount = batchResults.filter(r => r.status === "NOT_DEPLOYED").length;
-        if (notDeployedCount > batchSize * 0.5) {
-          console.log(`[FULL-CHECK] Preview environment detected: ${notDeployedCount}/${batchSize} NOT_DEPLOYED in first batch`);
-          previewDetected = true;
-        }
+    // Resume only a server-persisted predecessor. A browser cannot submit probe
+    // outcomes. Each invocation performs at most20 OPTIONS without trace tricks.
+    let predecessor = null;
+    if (continuationId !== undefined) {
+      if (typeof continuationId !== "string" || !/^[0-9a-f-]{36}$/i.test(continuationId)) {
+        return new Response(JSON.stringify({ error: "invalid_availability_predecessor" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-      
-      // If preview detected and >60 functions already NOT_DEPLOYED, skip remaining
-      const currentNotDeployed = functionResults.filter(r => r.status === "NOT_DEPLOYED").length;
-      if (previewDetected && currentNotDeployed > 60 && i + batchSize < registry.length) {
-        console.log(`[FULL-CHECK] Early exit: ${currentNotDeployed} NOT_DEPLOYED, marking remaining as NOT_DEPLOYED without requests`);
-        
-        // Mark remaining functions as NOT_DEPLOYED without making requests
-        for (let j = i + batchSize; j < registry.length; j++) {
-          const entry = registry[j] as RegistryEntry;
-          functionResults.push({
-            name: entry.name,
-            exists: false,
-            http_status: null,
-            status: "NOT_DEPLOYED",
-            tier: entry.tier,
-            category: entry.category,
-            auto_fix_policy: entry.auto_fix_policy,
-            error: "Skipped (preview environment detected)",
-          });
-        }
-        break;
+      const { data, error } = await supabase.from("system_health_reports")
+        .select("id,status,report_json,source,created_at").eq("id", continuationId).maybeSingle();
+      if (error || !data?.report_json?.availability_scan || data.source !== source) {
+        return new Response(JSON.stringify({ error: "availability_predecessor_not_found" }), {
+          status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
+      if (data.report_json.availability_scan.complete) {
+        return new Response(JSON.stringify({ ...data.report_json, report_id: data.id, replayed: true, sent: false }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      predecessor = { scan: data.report_json.availability_scan, results: data.report_json.edge_functions.results };
+      predecessorReport = data;
+      priorInvariants = data.report_json.invariants?.results || [];
+      invariantsCheckedAt = data.report_json.invariants_checked_at || null;
     }
-    
-    // PATCH P0.9.4: Proper counting logic
-    // - NOT_DEPLOYED = 404 only (truly missing)
-    // - TIMEOUT = slow but exists
-    // - deployed = everything that is NOT missing
-    const isMissing = (r: FunctionCheckResult) => r.status === "NOT_DEPLOYED";
-    const isTimeout = (r: FunctionCheckResult) => r.status === "TIMEOUT";
-    const isHealthy = (r: FunctionCheckResult) => 
-      r.status === "OK" || r.status === "ERROR" || r.status === "CORS_ERROR";
-    
-    const missingFunctions = functionResults.filter(isMissing);
-    const timeoutFunctions = functionResults.filter(isTimeout);
-    const healthyFunctions = functionResults.filter(isHealthy);
-    
-    const deployedCount = functionResults.filter(r => !isMissing(r)).length;
-    const healthyCount = healthyFunctions.length;
-    const timeoutCount = timeoutFunctions.length;
-    const missingCount = missingFunctions.length;
-    
-    console.log(`[FULL-CHECK] total=${registry.length} deployed=${deployedCount} healthy=${healthyCount} timeout=${timeoutCount} missing=${missingCount}`);
-    
+    let availability;
+    try { availability = await runAvailabilityBatch(registry, supabaseUrl, predecessor || undefined); }
+    catch {
+      return new Response(JSON.stringify({ error: "availability_scan_expired_or_registry_changed" }), {
+        status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const functionResults = availability.results;
+    const summary = summarizeAvailability(functionResults);
+    const missingFunctions = functionResults.filter(r => r.status === "NOT_DEPLOYED");
+    const timeoutFunctions = functionResults.filter(r => r.status === "TIMEOUT");
+    const deployedCount = summary.deployed;
+    const healthyCount = summary.healthy;
+    const timeoutCount = summary.timeout.length;
+    const missingCount = summary.missing.length;
+
     // STEP 3: Check business invariants
-    const invariantResults = await checkBusinessInvariants(supabase);
+    // Keep previously verified problems visible while the next scan is partial.
+    // A partial scan must not erase a known critical business finding.
+    const refreshedInvariants = availability.scan.complete ? await checkBusinessInvariants(supabase) : null;
+    if (availability.scan.complete) invariantsCheckedAt = new Date().toISOString();
+    // Read after probes/provider verification, not only at request start. Other
+    // independent scan chains may have discovered a critical problem meanwhile.
+    const { data: recentEvidence, error: latestKnownError } = await supabase.from("system_health_reports")
+      .select("id,report_json,created_at").order("created_at", { ascending: false }).limit(30);
+    if (latestKnownError) throw new Error("health_latest_evidence_read_failed");
+    const knownReports = Array.isArray(recentEvidence) ? recentEvidence : [];
+    const newest = newestBusinessEvidence<InvariantResult>([
+      { results: refreshedInvariants || priorInvariants, checked_at: invariantsCheckedAt },
+      ...knownReports.map(row => ({ results: row.report_json?.invariants?.results || [],
+        checked_at: row.report_json?.availability_scan ? row.report_json.invariants_checked_at : row.created_at || null })),
+    ]);
+    const invariantResults = newest.results.filter(r => r.code !== "INV-EDGE-P0-MISSING"
+      && (!availability.scan.complete || r.code !== "INV-EDGE-AVAILABILITY"));
+    invariantsCheckedAt = newest.checked_at;
+    const priorMissing = [predecessorReport, ...knownReports].flatMap(row => [
+      ...(row?.report_json?.known_p0_missing || []),
+      ...(row?.report_json?.edge_functions?.results || [])
+        .filter((r: FunctionCheckResult) => r.tier === "P0" && r.status === "NOT_DEPLOYED")
+        .map((r: FunctionCheckResult) => ({ name: r.name, checked_at: r.checked_at || row?.created_at || "" })),
+    ]);
+    const knownP0Missing = retainMissingP0(functionResults, priorMissing,
+      knownReports.flatMap(row => row.report_json?.edge_functions?.results || []));
+    if (knownP0Missing.length > 0) invariantResults.push({ code: "INV-EDGE-P0-MISSING",
+      name: "Подтверждена недоступность критичных функций", passed: false, count: knownP0Missing.length, severity: "CRITICAL" });
+    if (availability.scan.complete) invariantResults.push({
+      code: "INV-EDGE-AVAILABILITY", name: "Ошибки проверок доступности серверных функций",
+      passed: summary.errors.length + missingCount === 0, count: summary.errors.length + missingCount,
+      severity: "WARNING",
+    });
     const passedInvariants = invariantResults.filter(i => i.passed).length;
     const failedCritical = invariantResults.filter(i => !i.passed && i.severity === "CRITICAL");
     
     console.log(`[FULL-CHECK] Invariants: ${passedInvariants}/${invariantResults.length} passed`);
     
     // STEP 4: Build breakdown by tier
-    const missingP0 = functionResults
-      .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P0")
-      .map(r => r.name);
+    const missingP0 = knownP0Missing.map(r => r.name);
     const missingP1 = functionResults
       .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P1")
       .map(r => r.name);
@@ -638,7 +558,7 @@ Deno.serve(async (req) => {
     } else if (
       missingP1.length > 0 || 
       invariantResults.some(i => !i.passed && i.severity === "WARNING") ||
-      corsErrors.length > 0
+      summary.errors.length > 0 || !availability.scan.complete
     ) {
       finalStatus = "DEGRADED";
     }
@@ -668,6 +588,9 @@ Deno.serve(async (req) => {
         failed: invariantResults.length - passedInvariants,
         results: invariantResults,
       },
+      availability_scan: availability.scan,
+      invariants_checked_at: invariantsCheckedAt,
+      known_p0_missing: knownP0Missing,
       auto_fixes: [], // Empty - remediation is now separate
       duration_ms: Date.now() - startTime,
       timestamp: new Date().toISOString(),
@@ -694,13 +617,17 @@ Deno.serve(async (req) => {
       .select("id")
       .single();
     
-    if (saveError) {
-      console.error("[FULL-CHECK] Failed to save report:", saveError);
+    if (saveError || !savedReport?.id) {
+      console.error("[FULL-CHECK] Failed to save report");
+      return new Response(JSON.stringify({ error: "health_report_persistence_failed" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
+    report.report_id = savedReport.id;
     
     // Send Telegram if needed
     // Controlled release checks can persist a new truthful report without sends.
-    const telegramSent = body.notify === false ? false : await sendTelegramAlert(supabase, report, previousStatus);
+    const telegramSent = body.notify === false || !availability.scan.complete ? false : await sendTelegramAlert(supabase, report, previousStatus);
     
     if (telegramSent && savedReport?.id) {
       await supabase

@@ -20,6 +20,28 @@ export interface InvariantDescriptor {
 }
 
 export const INVARIANT_HUMANIZE: Record<string, InvariantDescriptor> = {
+  "INV-EDGE-P0-MISSING": {
+    code: "INV-EDGE-P0-MISSING", problemType: "critical_fix", recommendedAction: "fix_via_lovable",
+    ownerTitle: "Критичная серверная функция недоступна",
+    ownerSummary: "Подтверждённая недоступность сохраняется до свежей успешной проверки",
+    whatHappened: "Проверка получила ответ о неразвёрнутой функции P0. Неполный новый обход не отменяет этот результат.",
+    whyItMatters: "Может быть недоступен один из основных сценариев платформы.",
+    whyNotAutofixed: "Нельзя разворачивать функции или повторять бизнес-запросы без проверки исходников.",
+    consequenceOfInaction: "Критичная функция останется недоступна.",
+    suggestedFix: "Проверьте развёртывание и логи функции, затем выполните свежую безопасную проверку OPTIONS.",
+  },
+  "INV-EDGE-AVAILABILITY": {
+    code: "INV-EDGE-AVAILABILITY",
+    problemType: "critical_fix",
+    recommendedAction: "fix_via_lovable",
+    ownerTitle: "Не все серверные функции прошли проверку",
+    ownerSummary: "Есть ошибки OPTIONS, CORS или соединения",
+    whatHappened: "Одна или несколько проверок доступности завершились ошибкой. Это не успешная проверка бизнес-сценария.",
+    whyItMatters: "Функция может быть недоступна из браузера или не отвечать. Нельзя считать такой результат исправной системой.",
+    whyNotAutofixed: "Автоматический повтор бизнес-запросов может изменить данные. Проверка использует только OPTIONS.",
+    consequenceOfInaction: "Причина недоступности останется без разбора.",
+    suggestedFix: "Сверьте ошибки в результатах проверки и логи названных функций; исправьте причину и повторите безопасную проверку.",
+  },
   "INV-P0-1-R": {
     code: "INV-P0-1-R",
     problemType: "manual_review",

@@ -105,6 +105,10 @@ jobs:
         run: node --test scripts/tests/accounting-regulations-migration.test.mjs
       - name: Instagram monitor queue, budget and RLS
         run: node scripts/tests/instagram-monitor-db.mjs
+      - name: Health scanner least privilege and bounded scheduler
+        run: |
+          node scripts/health-preflight-manifest.mjs --check
+          node --test scripts/tests/health-rls.test.mjs scripts/tests/health-scheduler.test.mjs scripts/tests/health-preflight-manifest.test.mjs
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x

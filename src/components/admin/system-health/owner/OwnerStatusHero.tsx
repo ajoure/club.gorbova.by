@@ -2,7 +2,7 @@ import { CheckCircle2, AlertOctagon, AlertTriangle, Loader2, Play, RefreshCw } f
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type OwnerStatus = "ok" | "problems" | "manual_review" | "loading";
+export type OwnerStatus = "ok" | "problems" | "manual_review" | "incomplete" | "loading";
 
 interface Props {
   status: OwnerStatus;
@@ -12,6 +12,7 @@ interface Props {
   onRunCheck: () => void;
   onRefresh: () => void;
   isRunning: boolean;
+  progress?: { checked: number; total: number } | null;
 }
 
 const STATUS_CONFIG: Record<Exclude<OwnerStatus, "loading">, {
@@ -21,6 +22,13 @@ const STATUS_CONFIG: Record<Exclude<OwnerStatus, "loading">, {
   bg: string;
   fg: string;
 }> = {
+  incomplete: {
+    title: "Проверка не завершена",
+    subtitle: () => "Часть серверных функций ещё не проверена. Запустите проверку, чтобы получить полный результат.",
+    Icon: AlertTriangle,
+    bg: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900",
+    fg: "text-amber-700 dark:text-amber-300",
+  },
   ok: {
     title: "Всё в порядке",
     subtitle: () => "Система работает без проблем, требующих вашего внимания.",
@@ -60,6 +68,7 @@ export function OwnerStatusHero({
   onRunCheck,
   onRefresh,
   isRunning,
+  progress,
 }: Props) {
   if (status === "loading") {
     return (
@@ -96,6 +105,7 @@ export function OwnerStatusHero({
             {isRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             Запустить проверку
           </Button>
+          {isRunning && progress && <p className="text-xs text-muted-foreground" role="status">Проверено {progress.checked} из {progress.total}</p>}
           <Button onClick={onRefresh} variant="outline" size="sm">
             <RefreshCw className="h-4 w-4 mr-2" />
             Обновить
