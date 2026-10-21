@@ -13,6 +13,9 @@ export function AvailabilitySummary({ report }: { report: Record<string, unknown
     {(view.rateLimited > 0 || view.unknown > 0 || view.errors > 0) && <p className="text-sm">
       Лимит запросов: {view.rateLimited}. Не проверены или недоступны для проверки: {view.unknown}. Ошибки: {view.errors}.
     </p>}
+    {view.sourceUnavailable > 0 && <p className="text-sm text-amber-700 dark:text-amber-300">
+      Не отправляли запросы к {view.sourceUnavailable} функциям: в GitHub нет проверяемого обработчика OPTIONS. Нужна проверка исходников; повторный запуск это не исправит.
+    </p>}
     {knownMissing > 0 && <p className="text-sm text-destructive">Подтверждена недоступность критичных функций: {knownMissing}. Результат сохраняется до свежей успешной проверки.</p>}
     <p className="text-xs text-muted-foreground">OPTIONS проверяет доступность и CORS. Работу платежей, писем и других сценариев подтверждают отдельные проверки.</p>
   </CardContent></Card>;

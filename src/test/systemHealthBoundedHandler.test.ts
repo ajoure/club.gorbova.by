@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { webcrypto } from "node:crypto";
 import ts from "typescript";
 import * as availability from "../../supabase/functions/system-health-full-check/availability";
+import { PREFLIGHT_FUNCTIONS } from "../../supabase/functions/system-health-full-check/preflight-manifest.generated";
 import * as evidence from "../../supabase/functions/system-health-full-check/critical-evidence";
 import * as renewals from "../../supabase/functions/system-health-full-check/renewal-check";
 import * as paymentPolicy from "../../supabase/functions/_shared/payment-health-policy";
@@ -12,6 +13,7 @@ import { authorizeSystemHealth } from "../../supabase/functions/system-health-fu
 const source = ts.transpileModule(readFileSync("supabase/functions/system-health-full-check/index.ts", "utf8"),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const safeNames = [...PREFLIGHT_FUNCTIONS].slice(0, 172);
 function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}) {
   vi.stubGlobal("crypto", webcrypto);
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
@@ -21,7 +23,7 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
       "Access-Control-Allow-Headers": "authorization,content-type,apikey,x-client-info" } });
   });
   vi.stubGlobal("fetch", fetcher);
-  const registry = Array.from({ length: 172 }, (_, n) => ({ name: `safe-${n}`, tier: n < 12 ? "P0" : "P1",
+  const registry = safeNames.map((name, n) => ({ name, tier: n < 12 ? "P0" : "P1",
     category: "browser", expected_status: [200], timeout_ms: 100, auto_fix_policy: "none" }));
   const reports: any[] = options.savedCritical ? [{ id: uuid(999), source: "manual", status: "CRITICAL",
     created_at: new Date().toISOString(), report_json: { invariants: { results: [
@@ -124,9 +126,9 @@ describe("actual full-check handler", () => {
     const verifiedAt = new Date(Date.now() - 1000).toISOString();
     h.reports.push({ id: uuid(900), source: "cron", created_at: verifiedAt, report_json: {
       availability_scan: { complete: false }, invariants_checked_at: null, invariants: { results: [] },
-      known_p0_missing: [{ name: "safe-0", checked_at: verifiedAt }], edge_functions: { results: [] } } });
+      known_p0_missing: [{ name: safeNames[0], checked_at: verifiedAt }], edge_functions: { results: [] } } });
     const next = await h.call({ source: "manual", notify: false, continue_from: first.body.report_id });
-    expect(next.body).toMatchObject({ status: "CRITICAL", known_p0_missing: [{ name: "safe-0" }],
+    expect(next.body).toMatchObject({ status: "CRITICAL", known_p0_missing: [{ name: safeNames[0] }],
       invariants: { results: [expect.objectContaining({ code: "INV-EDGE-P0-MISSING", count: 1 })] } });
     const fresh = await h.call({ source: "manual", notify: false });
     expect(fresh.body.known_p0_missing).toEqual([]);

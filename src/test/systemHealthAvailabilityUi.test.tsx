@@ -22,6 +22,13 @@ describe("truthful availability UI", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Проверено 40 из 172");
     expect(screen.getByRole("button", { name: "Запустить проверку" })).toBeDisabled();
   });
+  it("does not claim skipped legacy handlers were probed or suggest rerunning can verify their source", () => {
+    render(<AvailabilitySummary report={{ availability_scan: { complete: true, checked: 2 },
+      edge_functions: { results: [{ status: "OK" }, { status: "UNKNOWN", probe_skipped: true }] } }} />);
+    expect(screen.getByText(/Проверено 1 из 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Не отправляли запросы к 1 функциям/)).toBeInTheDocument();
+    expect(screen.queryByText(/Нажмите «Запустить проверку»/)).not.toBeInTheDocument();
+  });
 });
 describe("legacy tech-info probes remain read-only", () => {
   it.each(["transport", "http500", "http429"])("never falls back to a business POST on %s", async variant => {

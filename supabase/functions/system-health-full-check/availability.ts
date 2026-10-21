@@ -1,3 +1,5 @@
+import { PREFLIGHT_FUNCTIONS, PREFLIGHT_SOURCE_DIGEST } from "./preflight-manifest.generated.ts";
+
 // Each invocation has its own bounded work budget. Never alter trace headers or
 // retry inside the request: hosted function-to-function chains have a hard cap.
 export const PROBE_BUDGET = 20;
@@ -25,6 +27,7 @@ export interface FunctionCheckResult {
   error?: string;
   checked_at?: string;
   retry_after_ms?: number;
+  probe_skipped?: boolean;
 }
 export interface AvailabilityScan {
   release: string;
@@ -47,7 +50,7 @@ export const deferred = (e: RegistryEntry): FunctionCheckResult => ({
 export async function registryDigest(entries: RegistryEntry[]): Promise<string> {
   const canonical = [...entries].sort((a, b) => a.name.localeCompare(b.name)).map(e =>
     [e.name, e.tier, e.category, [...e.expected_status].sort((a, b) => a - b), e.timeout_ms, e.auto_fix_policy]);
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(canonical))))]
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([PREFLIGHT_SOURCE_DIGEST, canonical]))))]
     .map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -63,6 +66,8 @@ function rateLimitDelay(error: unknown): number | null {
 export async function checkFunctionAvailability(
   entry: RegistryEntry, baseUrl: string, fetcher: typeof fetch = fetch,
 ): Promise<FunctionCheckResult> {
+  if (!PREFLIGHT_FUNCTIONS.has(entry.name)) return { ...deferred(entry), checked_at: new Date().toISOString(),
+    probe_skipped: true, error: "No versioned OPTIONS contract; no request sent" };
   const timeout = Math.max(100, Math.min(entry.timeout_ms || 8000, 8000));
   const base = deferred(entry);
   const controller = new AbortController();

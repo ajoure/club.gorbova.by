@@ -5,7 +5,7 @@ import { checkFunctionAvailability, deferred, registryDigest, runAvailabilityBat
 import { availabilityView } from "@/lib/system-health/availability";
 import { newestBusinessEvidence, retainMissingP0 } from "../../supabase/functions/system-health-full-check/critical-evidence";
 
-const entry: RegistryEntry = { name: "safe-fixture", tier: "P0", category: "browser",
+const entry: RegistryEntry = { name: "send-email", tier: "P0", category: "browser",
   expected_status: [200, 204], timeout_ms: 100, auto_fix_policy: "none" };
 const registry = Array.from({ length: 172 }, (_, n) => ({ ...entry, name: `fixture-${n}` }));
 const success = (e: RegistryEntry): FunctionCheckResult => ({ ...deferred(e), status: "OK", exists: true,
@@ -65,6 +65,13 @@ describe("bounded server-owned availability scan", () => {
 });
 
 describe("safe preflight semantics", () => {
+  it("never invokes a registry entry without a versioned OPTIONS contract, even with forged registry flags", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const r = await checkFunctionAvailability({ ...entry, name: "test-payment-direct" }, "https://fixture.test", fetcher);
+    expect(r).toMatchObject({ status: "UNKNOWN", exists: null, probe_skipped: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(summarizeAvailability([r])).toMatchObject({ healthy: 0, deployed: 0 });
+  });
   it.each([200, 204])("uses only OPTIONS and the normal public origin (%s)", async status => {
     const fetcher = vi.fn<typeof fetch>(async (_url, _init) => new Response(null, { status, headers }));
     const r = await checkFunctionAvailability(entry, "https://fixture.test", fetcher);
