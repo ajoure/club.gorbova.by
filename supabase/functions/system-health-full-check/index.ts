@@ -461,7 +461,7 @@ Deno.serve(async (req) => {
         });
       }
       const { data, error } = await supabase.from("system_health_reports")
-        .select("id,report_json,source").eq("id", continuationId).maybeSingle();
+        .select("id,status,report_json,source,created_at").eq("id", continuationId).maybeSingle();
       if (error || !data?.report_json?.availability_scan || data.source !== source) {
         return new Response(JSON.stringify({ error: "availability_predecessor_not_found" }), {
           status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
