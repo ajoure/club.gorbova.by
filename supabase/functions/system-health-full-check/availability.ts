@@ -5,7 +5,7 @@ import { PREFLIGHT_FUNCTIONS, PREFLIGHT_SOURCE_DIGEST } from "./preflight-manife
 export const PROBE_BUDGET = 20;
 export const PROBE_CONCURRENCY = 4;
 export const SCAN_TTL_MS = 15 * 60_000;
-export const AVAILABILITY_RELEASE = "health-bounded-preflight-2026-10-21-v1";
+export const AVAILABILITY_RELEASE = "health-bounded-preflight-2026-10-21-v2";
 
 export interface RegistryEntry {
   name: string;

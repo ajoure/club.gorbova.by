@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as availability from "../../supabase/functions/system-health-full-check/availability";
 import { PREFLIGHT_FUNCTIONS } from "../../supabase/functions/system-health-full-check/preflight-manifest.generated";
 import * as evidence from "../../supabase/functions/system-health-full-check/critical-evidence";
+import * as cron from "../../supabase/functions/system-health-full-check/cron-tick";
 import * as renewals from "../../supabase/functions/system-health-full-check/renewal-check";
 import * as paymentPolicy from "../../supabase/functions/_shared/payment-health-policy";
 import { authorizeSystemHealth } from "../../supabase/functions/system-health-full-check/authorization";
@@ -14,9 +15,12 @@ const source = ts.transpileModule(readFileSync("supabase/functions/system-health
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const safeNames = [...PREFLIGHT_FUNCTIONS].slice(0, 172);
-function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}) {
+function fixture(options: { savedCritical?: boolean; fetchError?: boolean; telegram?: boolean } = {}) {
   vi.stubGlobal("crypto", webcrypto);
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    if (options.telegram && String(_url).startsWith("https://api.telegram.org/")) {
+      expect(init?.method).toBe("POST"); return Response.json({ ok: true });
+    }
     expect(init?.method).toBe("OPTIONS");
     if (options.fetchError) throw Object.assign(new Error("fixture rate limit"), { name: "RateLimitError", retryAfterMs: 60000 });
     return new Response(null, { headers: { "Access-Control-Allow-Origin": "*",
@@ -33,11 +37,13 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
   const audits: any[] = [];
   const rpc = vi.fn(async () => ({ data: 100, error: null }));
   const db = { rpc, from(table: string) {
-    reads.push(table); let inserted: any = null; let limit = 1; const filters: Record<string, any> = {};
+    reads.push(table); let inserted: any = null; let updated: any = null; let limit = 1; const filters: Record<string, any> = {};
     const value = () => {
       if (table === "edge_functions_registry") return { data: registry, error: null };
+      if (table === "profiles" && options.telegram) return { data: { telegram_user_id: 101 }, error: null };
       if (table === "system_health_reports") {
         const matches = reports.filter(r => Object.entries(filters).every(([k, v]) => r[k] === v));
+        if (updated) for (const row of matches) Object.assign(row, updated);
         return { data: limit > 1 ? matches.slice(-limit).reverse() : matches.at(-1) || null, error: null };
       }
       return { data: [], count: 0, error: null };
@@ -49,18 +55,26 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
     q.maybeSingle = async () => value();
     q.single = async () => {
       if (table !== "system_health_reports" || !inserted) throw new Error("Unexpected single/write");
-      const id = uuid(reports.length + 1); reports.push({ ...inserted, id, created_at: new Date().toISOString() });
+      const id = inserted.id || uuid(reports.length + 1);
+      if (reports.some(r => r.id === id)) return { data: null, error: { code: "23505" } };
+      reports.push({ ...inserted, id, created_at: new Date().toISOString() });
       return { data: { id }, error: null };
     };
     q.insert = (row: any) => { if (table === "audit_logs") audits.push(row);
       else if (table === "system_health_reports") inserted = structuredClone(row);
       else throw new Error(`Unexpected business write: ${table}`); return q; };
-    q.update = q.delete = q.upsert = () => { throw new Error(`Unexpected mutation: ${table}`); };
+    q.update = (row: any) => {
+      if (table !== "system_health_reports" || !options.telegram || JSON.stringify(row) !== '{"telegram_notified":true}')
+        throw new Error(`Unexpected mutation: ${table}`);
+      updated = row; return q;
+    };
+    q.delete = q.upsert = () => { throw new Error(`Unexpected mutation: ${table}`); };
     return q;
   } };
   let handler!: (request: Request) => Promise<Response>;
-  runInNewContext(source, { exports: {}, Request, Response, Date, console: { log() {}, error() {}, warn() {} },
-    Deno: { env: { get: (k: string) => ({ SUPABASE_URL: "https://fixture.test", SUPABASE_SERVICE_ROLE_KEY: "fixture-service" })[k] },
+  runInNewContext(source, { exports: {}, Request, Response, Date, fetch: fetcher, console: { log() {}, error() {}, warn() {} },
+    Deno: { env: { get: (k: string) => ({ SUPABASE_URL: "https://fixture.test", SUPABASE_SERVICE_ROLE_KEY: "fixture-service",
+      PRIMARY_TELEGRAM_BOT_TOKEN: options.telegram ? "fixture-bot" : undefined })[k] },
       serve: (fn: typeof handler) => { handler = fn; } }, require(path: string) {
       if (path.includes("supabase-js")) return { createClient: () => db };
       if (path.endsWith("/cors.ts")) return { corsHeaders: {} };
@@ -70,6 +84,7 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
       if (path === "./authorization.ts") return { authorizeSystemHealth };
       if (path === "./availability.ts") return availability;
       if (path === "./critical-evidence.ts") return evidence;
+      if (path === "./cron-tick.ts") return cron;
       if (path === "./renewal-check.ts") return renewals;
       throw new Error(`Unknown import ${path}`);
     } });
@@ -77,9 +92,9 @@ function fixture(options: { savedCritical?: boolean; fetchError?: boolean } = {}
     const response = await handler(new Request("https://fixture.test", { method: "POST", headers: auth ? { apikey: "fixture-service" } : {}, body: JSON.stringify(body) }));
     return { status: response.status, body: await response.json() };
   };
-  return { call, reports, fetcher, reads, audits };
+  return { call, reports, fetcher, reads, audits, registry };
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("actual full-check handler", () => {
   it("completes a172-function scan via9 server-owned predecessors, business invariants once and zero sends", async () => {
@@ -146,5 +161,52 @@ describe("actual full-check handler", () => {
     expect((await h.call({ source: "manual", notify: false, continue_from: uuid(500) })).status).toBe(409);
     expect((await h.call({ source: "cron", mode: "continue" })).body).toMatchObject({ skipped: true, sent: false });
     expect(h.fetcher).not.toHaveBeenCalled(); expect(h.reports).toHaveLength(0); expect(h.audits).toHaveLength(0);
+  });
+  it("uses the existing cron body for nine minute ticks, then idles until the next daily window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-22T04:59:00Z"));
+    const h = fixture();
+    expect((await h.call({ source: "cron", notify: false })).body.skipped).toBe(true);
+    expect(h.reports).toHaveLength(0);
+    for (let minute = 0; minute < 9; minute++) {
+      vi.setSystemTime(new Date(Date.parse("2026-10-22T05:00:00Z") + minute * 60000));
+      const result = await h.call({ source: "cron", notify: false });
+      expect(result.status).toBe(200);
+      expect(result.body.availability_scan.checked).toBe(Math.min((minute + 1) * 20, 172));
+      const duplicate = await h.call({ source: "cron", notify: false });
+      expect(duplicate.body.skipped).toBe(true);
+    }
+    expect(h.fetcher).toHaveBeenCalledTimes(172); expect(h.reports).toHaveLength(9); expect(h.audits).toHaveLength(9);
+    vi.setSystemTime(new Date("2026-10-23T04:59:00Z"));
+    expect((await h.call({ source: "cron", notify: false })).body.skipped).toBe(true);
+    vi.setSystemTime(new Date("2026-10-23T05:00:00Z"));
+    expect((await h.call({ source: "cron", notify: false })).body.availability_scan.checked).toBe(20);
+    expect(h.reports).toHaveLength(10);
+  });
+  it("deduplicates racing cron roots, continuations and final notifications through the existing report PK", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-22T05:00:00Z"));
+    const h = fixture({ telegram: true });
+    for (let minute = 0; minute < 9; minute++) {
+      vi.setSystemTime(new Date(Date.parse("2026-10-22T05:00:00Z") + minute * 60000));
+      const before = h.reports.length;
+      const results = await Promise.all([h.call({ source: "cron" }), h.call({ source: "cron" })]);
+      expect(results.every(r => r.status === 200)).toBe(true);
+      expect(h.reports).toHaveLength(before + 1);
+      expect(h.audits).toHaveLength(before + 1);
+    }
+    expect(h.fetcher.mock.calls.filter(([url]) => String(url).startsWith("https://api.telegram.org/"))).toHaveLength(1);
+    expect(h.reports.at(-1).telegram_notified).toBe(true);
+    const before = h.fetcher.mock.calls.length;
+    expect((await h.call({ source: "cron" })).body.skipped).toBe(true);
+    expect(h.fetcher).toHaveBeenCalledTimes(before);
+  });
+  it("idles on changed registry before probes or writes, and never silently restarts an expired same-day cron chain", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-22T05:00:00Z"));
+    const h = fixture(); await h.call({ source: "cron", notify: false });
+    h.registry[0].timeout_ms += 1;
+    vi.setSystemTime(new Date("2026-10-22T05:01:00Z"));
+    expect((await h.call({ source: "cron", notify: false })).body).toMatchObject({ skipped: true, reason: "cron_scan_expired_or_registry_changed" });
+    vi.setSystemTime(new Date("2026-10-22T05:15:00.001Z"));
+    expect((await h.call({ source: "cron", notify: false })).body.skipped).toBe(true);
+    expect(h.fetcher).toHaveBeenCalledTimes(20); expect(h.reports).toHaveLength(1); expect(h.audits).toHaveLength(1);
   });
 });
