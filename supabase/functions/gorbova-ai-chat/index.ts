@@ -1,5 +1,6 @@
 import { hasCurrentMnsCorpus, mnsReplyFollowsLaw, mnsReplyNeedsClarification, mnsCurrentLawInstruction, mnsOutputIsCurrent, mnsCorpusFingerprint, mnsNumberedDecreeSources, mnsNumberedSourceInstruction, mnsCheckDecreeCitations, MNS_SCENARIO_CODE, MNS_LAW_BASELINE, MNS_UNAVAILABLE, MNS_REJECTED } from './mns-current-law.ts';
 import { persistAiChatExchange } from '../_shared/ai-chat-persistence.ts';
+import { writeAccessAudit } from './access-audit.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
   resolveAiAccess,
@@ -33,18 +34,6 @@ const MAX_TEXT_CHARS = 100000;
 // PATCH v2.2 (2026-05-26): cost optimization
 const MODEL_CHAT = 'google/gemini-2.5-flash-lite';   // было gemini-2.5-flash
 const MODEL_PROMPT = 'google/gemini-2.5-pro';
-
-async function writeAccessAudit(supabase: any, userId: string, action: string, details: Record<string, any>) {
-  try {
-    await supabase.from('audit_logs').insert({
-      actor_id: userId,
-      action,
-      entity_type: 'ai_chat',
-      details,
-    });
-  } catch (_e) { /* non-fatal */ }
-}
-
 
 const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
 Отвечай на русском языке. Будь полезным, точным и структурированным.
@@ -760,9 +749,12 @@ Deno.serve(async (req) => {
     const assistantContent = aiResult.choices?.[0]?.message?.content || 'Нет ответа от AI';
 
     if (scenarioCode === MNS_SCENARIO_CODE) {
-      if (!mnsOutputIsCurrent(aiResult.choices?.[0]?.message?.content) || !mnsReplyFollowsLaw(assistantContent)) {
+      const currentOutput = mnsOutputIsCurrent(aiResult.choices?.[0]?.message?.content);
+      const followsCurrentLaw = typeof assistantContent === 'string' && mnsReplyFollowsLaw(assistantContent);
+      if (!currentOutput || !followsCurrentLaw) {
         await writeAccessAudit(serviceClient, user.id, 'ai_chat.mns_law_rejected', {
           prompt_id: promptData.id, baseline: MNS_LAW_BASELINE, corpus_sha256: metadata.mns_corpus_sha256,
+          current_output: currentOutput, follows_current_law: followsCurrentLaw,
         });
         return new Response(JSON.stringify({ error: MNS_REJECTED, code: 'mns_law_validation_failed' }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
