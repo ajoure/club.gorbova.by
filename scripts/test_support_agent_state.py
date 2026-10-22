@@ -65,6 +65,16 @@ class SupportStateTest(unittest.TestCase):
     def test_expired_worker_cannot_write(self):
         self.assertFalse(state.run_command(self.db, 'reserve', token=self.token, now=2000, **self.scope)['ok'])
 
+    def test_reply_does_not_mark_ticket_resolved_and_uncertain_close_is_not_retried(self):
+        self.action('reserve')
+        self.action('record', outcome='verified')
+        close_scope = {**self.scope, 'operation': 'close_ticket'}
+        self.assertTrue(state.run_command(self.db, 'reserve', token=self.token, now=102, **close_scope)['ok'])
+        state.run_command(self.db, 'record', token=self.token, now=103, outcome='uncertain', **close_scope)
+        state.run_command(self.db, 'end', token=self.token, now=104)
+        token2 = state.run_command(self.db, 'begin', now=105)['run_token']
+        self.assertFalse(state.run_command(self.db, 'reserve', token=token2, now=106, **close_scope)['ok'])
+
     def test_end_does_not_drop_unverified_action(self):
         self.action('reserve')
         state.run_command(self.db, 'end', token=self.token, now=102)
