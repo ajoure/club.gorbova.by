@@ -4,6 +4,8 @@ import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 import { formatMinskDateTime } from '../_shared/formatMinsk.ts';
+import { requireAdminSectionAccess } from '../_shared/admin-section-auth.ts';
+import { resolveRenewalState, type RenewalState } from './renewal-state.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +39,7 @@ async function resolveProductAndTariff(
   supabase: any,
   userId: string,
   clubId: string,
+  activeUntil: string | null,
 ): Promise<
   | {
       productId: string;
@@ -45,40 +48,34 @@ async function resolveProductAndTariff(
       tariffId: string;
       amount: number;
       kind: 'recurring' | 'installment' | 'subscription_offer';
-      hasActivePM: boolean;
+      renewalState: RenewalState;
     }
   | { productId: string; productName: string; renewable: false; reason: string }
+  | { skip: true; reason: string }
   | null
 > {
-  const { data: product } = await supabase
+  const { data: product, error: productError } = await supabase
     .from('products_v2')
     .select('id, name')
     .eq('telegram_club_id', clubId)
     .eq('status', 'active')
     .maybeSingle();
 
+  if (productError) return { skip: true, reason: 'product_lookup_failed' };
   if (!product) {
     console.log(`[tg-reminders] No product mapped to club ${clubId}`);
     return null;
   }
 
-  // Try to find user's existing tariff for preference
-  const { data: sub } = await supabase
-    .from('subscriptions_v2')
-    .select('tariff_id, billing_type')
-    .eq('user_id', userId)
-    .eq('product_id', product.id)
-    .in('status', ['active', 'trial', 'past_due', 'canceled'])
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const preferredTariffId = sub?.tariff_id ?? null;
-  const hasActivePM = sub?.billing_type === 'provider_managed';
+  const renewalState = await resolveRenewalState(supabase, userId, product.id, activeUntil);
+  if (renewalState.mode === 'skip') return { skip: true, reason: renewalState.reason };
+  const preferredTariffId = renewalState.tariffId ?? null;
 
   const r = await resolveProductRenewability(supabase, product.id, preferredTariffId);
 
+  if (r.reason.includes('_error:')) return { skip: true, reason: 'offer_lookup_failed' };
   if (!r.renewable || !r.preferredOffer) {
+    if (renewalState.mode === 'automatic') return { skip: true, reason: 'provider_product_conflict' };
     return {
       productId: product.id,
       productName: product.name,
@@ -104,7 +101,7 @@ async function resolveProductAndTariff(
     tariffId: offer.tariff_id,
     amount: Number(offer.amount), // BYN
     kind: offer.kind as 'recurring' | 'installment' | 'subscription_offer',
-    hasActivePM,
+    renewalState,
   };
 }
 
@@ -117,6 +114,57 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await req.text();
+      if (raw) body = JSON.parse(raw);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
+    } catch {
+      return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400, headers: corsHeaders });
+    }
+    if (('dry_run' in body && typeof body.dry_run !== 'boolean') || ('order_id' in body && body.dry_run !== true)) {
+      return new Response(JSON.stringify({ error: 'invalid_dry_run' }), { status: 400, headers: corsHeaders });
+    }
+    if (body.dry_run === true) {
+      const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+      if (!bearer || bearer !== supabaseServiceKey) {
+        const auth = await requireAdminSectionAccess(req, supabase, 'payments', 'view');
+        if (!auth.ok) return new Response(JSON.stringify({ error: auth.error }), { status: auth.status, headers: corsHeaders });
+      }
+      let query = supabase.from('telegram_access').select('user_id,club_id,active_until')
+        .or('state_chat.eq.active,state_channel.eq.active');
+      if (body.order_id !== undefined) {
+        if (typeof body.order_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.order_id)) {
+          return new Response(JSON.stringify({ error: 'invalid_order_id' }), { status: 400, headers: corsHeaders });
+        }
+        const { data: order, error } = await supabase.from('orders_v2').select('user_id,product_id').eq('id', body.order_id).maybeSingle();
+        if (error || !order?.user_id || !order?.product_id) throw new Error('dry_run_order_lookup_failed');
+        const { data: product, error: productError } = await supabase.from('products_v2').select('telegram_club_id').eq('id', order.product_id).maybeSingle();
+        if (productError || !product?.telegram_club_id) throw new Error('dry_run_product_lookup_failed');
+        query = query.eq('user_id', order.user_id).eq('club_id', product.telegram_club_id);
+      } else {
+        query = query.gte('active_until', new Date(Date.now() + 2 * 86400000).toISOString())
+          .lte('active_until', new Date(Date.now() + 3 * 86400000).toISOString());
+      }
+      const { data: accesses, error } = await query.limit(101);
+      if (error || !accesses || accesses.length > 100) throw new Error('dry_run_cohort_unavailable_or_over_limit');
+      const counts = { automatic: 0, manual: 0, one_time: 0, skipped: 0 };
+      const reasons: Record<string, number> = {};
+      for (const access of accesses) {
+        const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id, access.active_until);
+        const reason = !resolved ? 'product_unmapped' : 'skip' in resolved ? resolved.reason :
+          resolved.renewable ? resolved.renewalState.reason : 'one_time_product';
+        reasons[reason] = (reasons[reason] || 0) + 1;
+        if (!resolved || 'skip' in resolved) counts.skipped++;
+        else if (!resolved.renewable) counts.one_time++;
+        else if (resolved.renewalState.mode === 'automatic') counts.automatic++;
+        else counts.manual++;
+      }
+      return new Response(JSON.stringify({ success: true, dry_run: true, version: 'tg-renewal-provider-state-v1',
+        processed: accesses.length, counts, reasons, sent: 0, writes: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     console.log('Starting subscription reminder check...');
 
@@ -242,45 +290,19 @@ Deno.serve(async (req) => {
       const expiryDate = new Date(access.active_until!);
       const formattedDate = formatMinskDateTime(expiryDate) || '';
 
-      // PATCH CHARGE-TIME-SOT v1 (2026-05-05): SOT = provider_subscriptions.next_charge_at.
-      // subscriptions_v2.next_charge_at не используется (часто = access_end_at, не реальное списание).
-      // Если provider next_charge_at нет ИЛИ |provider.next - access_end| <= 60s — строку не показываем.
-      let nextChargeLine = '';
-      try {
-        const { data: subRow } = await supabase
-          .from('subscriptions_v2')
-          .select('id, status, auto_renew, tariff_id')
-          .eq('user_id', access.user_id)
-          .in('status', ['active', 'trial'])
-          .order('access_end_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (subRow?.id && subRow.auto_renew) {
-          const { data: ps } = await supabase
-            .from('provider_subscriptions')
-            .select('next_charge_at')
-            .eq('subscription_v2_id', subRow.id)
-            .eq('state', 'active')
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (ps?.next_charge_at) {
-            const ncDate = new Date(ps.next_charge_at);
-            const diffSec = Math.abs((ncDate.getTime() - expiryDate.getTime()) / 1000);
-            if (diffSec > 60) {
-              const nc = formatMinskDateTime(ps.next_charge_at);
-              if (nc) nextChargeLine = `\n\n⚡ Списание: ${nc}`;
-            }
-          }
-        }
-      } catch (_e) { /* non-blocking */ }
+      const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id, access.active_until);
+      if (!resolved || 'skip' in resolved) {
+        results.push({ skipped: true, reason: resolved && 'skip' in resolved ? resolved.reason : 'product_unmapped' });
+        continue;
+      }
+      // The status and date come from the SAME exact provider/subscription relation.
+      const nextChargeAt = resolved.renewable ? resolved.renewalState.nextChargeAt : null;
+      const nextChargeLine = nextChargeAt ? `\n\n⚡ Следующее списание запланировано: ${formatMinskDateTime(nextChargeAt)}` : '';
 
-      // Resolve product/tariff for CTA generation (uses tariff_offers SOT)
-      const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id);
       const clubName = club.club_name || 'клубе';
 
       // hasSBS = у пользователя уже активна провайдерская подписка (автосписание)
-      const hasSBS = !!resolved && resolved.renewable === true && resolved.hasActivePM;
+      const hasSBS = !!resolved && resolved.renewable === true && resolved.renewalState.mode === 'automatic';
       // productRenewable = у продукта в принципе есть возможность продления (по tariff_offers)
       const productRenewable = !!resolved && resolved.renewable === true;
       const installmentMode = productRenewable && (resolved as any).kind === 'installment';
@@ -294,7 +316,7 @@ Deno.serve(async (req) => {
 
       if (hasSBS) {
         // Авто-продление активно
-        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.${nextChargeLine}\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
+        message = `⏰ Небольшое напоминание\n\n${namePrefix}автопродление подписки в ${clubName} включено.${nextChargeLine}\n\nДоступ оплачен до ${formattedDate}. Отключить автопродление можно в личном кабинете 💙`;
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
           inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
