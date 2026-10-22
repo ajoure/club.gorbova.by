@@ -35,13 +35,13 @@ export function classifyRenewalState(input: {
   const end = Date.parse(activeUntil ?? '');
   if (!Number.isFinite(end) || end <= now) return skip('invalid_access_period');
   const subs = input.subscriptions.filter(s => s.user_id === userId && s.product_id === productId);
-  const active = subs.filter(s => ['active', 'trial'].includes(s.status));
+  const active = subs.filter(s => ['active', 'trial'].includes(s.status) &&
+    orders.some(o => o.id === s.order_id && o.user_id === userId && o.product_id === productId &&
+      o.status === 'paid' && !o.is_deleted));
   if (active.some(s => s.access_end_at === null || Date.parse(s.access_end_at) > end + 60_000)) {
     return skip('access_extended');
   }
-  const paid = active.filter(s => Math.abs(Date.parse(s.access_end_at ?? '') - end) <= 60_000 &&
-    orders.some(o => o.id === s.order_id && o.user_id === userId && o.product_id === productId &&
-      o.status === 'paid' && !o.is_deleted));
+  const paid = active.filter(s => Math.abs(Date.parse(s.access_end_at ?? '') - end) <= 60_000);
   if (paid.length !== 1) return skip(paid.length ? 'ambiguous_paid_period' : 'no_paid_period');
   const sub = paid[0];
   const ids = new Set(subs.map(s => s.id));

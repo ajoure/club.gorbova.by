@@ -37,6 +37,13 @@ Deno.test('automatic status and schedule refer to the same paid provider relatio
   equal(result.mode, 'automatic');
   equal(result.nextChargeAt, '2030-01-04T10:00:00Z');
 });
+Deno.test('unpaid active draft with a longer period cannot suppress a paid one-time reminder', () => {
+  const f = fixture();
+  f.subscriptions.push({ ...f.subscriptions[0], id: 'draft-sub', order_id: 'draft-order',
+    access_end_at: '2031-01-01T00:00:00Z', billing_type: 'provider_managed' });
+  f.orders.push({ ...f.orders[0], id: 'draft-order', status: 'pending' });
+  equal(classifyRenewalState(f).mode, 'manual');
+});
 Deno.test('unrelated product provider never supplies a date or automatic claim', () => {
   const f = fixture();
   f.providers.push({ subscription_v2_id: 'other-product-sub', user_id: 'user-a', order_id: 'other-order', state: 'active', next_charge_at: end });
