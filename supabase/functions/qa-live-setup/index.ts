@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
     if (existing) {
       id = existing.id;
       await admin.from("live_events").update({
-        title: e.title, status: "scheduled", is_published: true,
+        title: e.title, status: "scheduled", is_published: false,
         scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
         event_type: "live_stream", source_kind: "kinescope",
         access_rule: { mode: "all", product_id: null, tariff_id: null },
@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
       }).eq("id", id);
     } else {
       const { data: ins, error: ierr } = await admin.from("live_events").insert({
-        slug: e.slug, title: e.title, status: "scheduled", is_published: true,
+        slug: e.slug, title: e.title, status: "scheduled", is_published: false,
         scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
         event_type: "live_stream", source_kind: "kinescope",
         access_rule: { mode: "all", product_id: null, tariff_id: null },
