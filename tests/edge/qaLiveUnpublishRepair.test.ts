@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 
-const migration = readFileSync('supabase/migrations/20261022160000_unpublish_stale_qa_live_events.sql', 'utf8');
+const repair = readFileSync('docs/operations/2026-10-22-qa-live-catalogue-data-repair.sql', 'utf8');
 const open = '6ea22dad-2c60-48a3-986f-aa04efd0eab6';
 const locked = '4ad98360-41d5-40c2-9d3c-946d314e5875';
 const other = '00000000-0000-4000-8000-000000000001';
@@ -30,13 +30,13 @@ describe('reviewed QA withdrawal runs atomically against its actual SQL guards',
     const db = await fixture();
     try {
       const before = await rows(db);
-      await db.exec(migration);
+      await db.exec(repair);
       const after = await rows(db);
       for (let i = 0; i < before.length; i++) {
         if (before[i].id === other) expect(after[i]).toEqual(before[i]);
         else expect(after[i]).toEqual({ ...before[i], is_published: false, updated_at: expect.any(Date) });
       }
-      await db.exec(migration);
+      await db.exec(repair);
       expect(await rows(db)).toEqual(after);
     } finally { await db.close(); }
   });
@@ -52,7 +52,7 @@ describe('reviewed QA withdrawal runs atomically against its actual SQL guards',
     try {
       await db.exec(change);
       const before = await rows(db);
-      await expect(db.exec(migration)).rejects.toThrow(error);
+      await expect(db.exec(repair)).rejects.toThrow(error);
       expect(await rows(db)).toEqual(before);
     } finally { await db.close(); }
   });
