@@ -21038,6 +21038,48 @@ export type Database = {
         }
         Relationships: []
       }
+      support_bot_send_claims: {
+        Row: {
+          actor_id: string
+          bot_id: string
+          created_at: string
+          finished_at: string | null
+          lease_until: string
+          observed_incoming_id: string
+          request_id: string
+          status: string
+          telegram_message_id: number | null
+          telegram_user_id: number
+          user_id: string
+        }
+        Insert: {
+          actor_id: string
+          bot_id: string
+          created_at?: string
+          finished_at?: string | null
+          lease_until: string
+          observed_incoming_id: string
+          request_id: string
+          status?: string
+          telegram_message_id?: number | null
+          telegram_user_id: number
+          user_id: string
+        }
+        Update: {
+          actor_id?: string
+          bot_id?: string
+          created_at?: string
+          finished_at?: string | null
+          lease_until?: string
+          observed_incoming_id?: string
+          request_id?: string
+          status?: string
+          telegram_message_id?: number | null
+          telegram_user_id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       support_ticket_counters: {
         Row: {
           seq: number
@@ -21074,6 +21116,8 @@ export type Database = {
           resolved_at: string | null
           status: string
           subject: string
+          support_resolved_at: string | null
+          support_resolved_incoming_id: string | null
           telegram_bridge_enabled: boolean | null
           telegram_user_id: number | null
           ticket_number: string
@@ -21100,6 +21144,8 @@ export type Database = {
           resolved_at?: string | null
           status?: string
           subject: string
+          support_resolved_at?: string | null
+          support_resolved_incoming_id?: string | null
           telegram_bridge_enabled?: boolean | null
           telegram_user_id?: number | null
           ticket_number?: string
@@ -21126,6 +21172,8 @@ export type Database = {
           resolved_at?: string | null
           status?: string
           subject?: string
+          support_resolved_at?: string | null
+          support_resolved_incoming_id?: string | null
           telegram_bridge_enabled?: boolean | null
           telegram_user_id?: number | null
           ticket_number?: string
@@ -22316,6 +22364,7 @@ export type Database = {
           is_primary: boolean | null
           last_check_at: string | null
           status: string
+          support_enabled: boolean
           updated_at: string
         }
         Insert: {
@@ -22329,6 +22378,7 @@ export type Database = {
           is_primary?: boolean | null
           last_check_at?: string | null
           status?: string
+          support_enabled?: boolean
           updated_at?: string
         }
         Update: {
@@ -22342,6 +22392,7 @@ export type Database = {
           is_primary?: boolean | null
           last_check_at?: string | null
           status?: string
+          support_enabled?: boolean
           updated_at?: string
         }
         Relationships: []
@@ -28398,6 +28449,17 @@ export type Database = {
         Args: { p_query: string }
         Returns: string[]
       }
+      send_support_web_message_v1: {
+        Args: {
+          p_attachments?: Json
+          p_display_user_id?: string
+          p_is_internal?: boolean
+          p_message: string
+          p_observed_incoming_id?: string
+          p_ticket_id: string
+        }
+        Returns: Json
+      }
       send_ticket_message_v2: {
         Args: {
           p_attachments?: Json
@@ -28522,6 +28584,121 @@ export type Database = {
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
         Returns: boolean
+      }
+      support_bot_allowed_v1: { Args: { p_bot_id: string }; Returns: boolean }
+      support_bot_assign_v1: {
+        Args: {
+          p_assignee_user_id: string
+          p_bot_id: string
+          p_note?: string
+          p_observed_incoming_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      support_bot_begin_send_v1: {
+        Args: {
+          p_actor: string
+          p_bot_id: string
+          p_observed_incoming_id: string
+          p_reply_to?: number
+          p_request_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      support_bot_channels_v1: { Args: never; Returns: Json[] }
+      support_bot_dialogs_v1: {
+        Args: {
+          p_bot_id: string
+          p_limit?: number
+          p_offset?: number
+          p_search?: string
+          p_unread_only?: boolean
+        }
+        Returns: Json[]
+      }
+      support_bot_finish_send_v1: {
+        Args: {
+          p_request_id: string
+          p_status: string
+          p_telegram_message_id?: number
+        }
+        Returns: undefined
+      }
+      support_bot_messages_v1: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_bot_id: string
+          p_limit?: number
+          p_text_limit?: number
+          p_unanswered_only?: boolean
+          p_user_id: string
+        }
+        Returns: Json[]
+      }
+      support_bot_reactions_v1: {
+        Args: { p_bot_id: string; p_message_ids: string[] }
+        Returns: {
+          emoji: string
+          message_id: string
+          user_id: string
+        }[]
+      }
+      support_bot_set_reaction_v1: {
+        Args: {
+          p_bot_id: string
+          p_emoji: string
+          p_message_id: string
+          p_present: boolean
+        }
+        Returns: Json
+      }
+      support_bot_set_state_v1: {
+        Args: {
+          p_action: string
+          p_bot_id: string
+          p_observed_incoming_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      support_bot_upload_v1: {
+        Args: { p_bot_id: string; p_path: string; p_user_id: string }
+        Returns: Json
+      }
+      support_web_messages_v1: {
+        Args: { p_ticket_id: string }
+        Returns: Json[]
+      }
+      support_web_reactions_v1: {
+        Args: { p_message_ids: string[]; p_ticket_id: string }
+        Returns: {
+          emoji: string
+          message_id: string
+          user_id: string
+        }[]
+      }
+      support_web_set_state_v1: {
+        Args: {
+          p_action: string
+          p_observed_incoming_id: string
+          p_ticket_id: string
+        }
+        Returns: Json
+      }
+      support_web_ticket_allowed_v1: {
+        Args: { p_ticket_id: string }
+        Returns: boolean
+      }
+      support_web_tickets_v1: {
+        Args: {
+          p_include_closed?: boolean
+          p_limit?: number
+          p_offset?: number
+        }
+        Returns: Json[]
       }
       sync_admin_menu_registry: {
         Args: { _payload: Json }
