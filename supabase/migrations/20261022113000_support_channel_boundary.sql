@@ -178,12 +178,13 @@ GRANT EXECUTE ON FUNCTION public.support_bot_channels_v1(),
 
 CREATE OR REPLACE FUNCTION public.support_bot_assignment_lock_v1()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-DECLARE m public.telegram_messages%ROWTYPE;
+DECLARE v_user uuid; v_bot uuid;
 BEGIN
-  SELECT * INTO m FROM public.telegram_messages WHERE id=NEW.source_message_id;
-  IF m.transport='bot' AND m.business_account_id IS NULL AND m.business_connection_id IS NULL
-    AND m.user_id IS NOT NULL AND public.support_bot_allowed_v1(m.bot_id) THEN
-    PERFORM pg_advisory_xact_lock(hashtextextended('support-bot:'||m.user_id::text||':'||m.bot_id::text,0));
+  SELECT user_id,bot_id INTO v_user,v_bot FROM public.telegram_messages
+    WHERE id=NEW.source_message_id AND transport='bot'
+      AND business_account_id IS NULL AND business_connection_id IS NULL;
+  IF v_user IS NOT NULL AND public.support_bot_allowed_v1(v_bot) THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('support-bot:'||v_user::text||':'||v_bot::text,0));
   END IF;
   RETURN NEW;
 END $$;
