@@ -46,9 +46,9 @@ jobs:
         # The AAC regression uses a real decoder, never a mocked PCM buffer.
         # Install explicitly: GitHub's Ubuntu runner does not bundle ffmpeg.
         run: |
-          # Azure mirror downloads exhausted the job's 20-minute budget.
-          # Use Ubuntu's primary archive; preserve suites, components and Signed-By.
-          sudo sed -i 's|://azure\.archive\.ubuntu\.com/ubuntu|://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          # Cover both direct sources and GitHub's priority-1 mirror+file list.
+          node --test scripts/ci/configure-ubuntu-archive.test.mjs
+          sudo -- "$(command -v node)" scripts/ci/configure-ubuntu-archive.mjs
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ffmpeg
           node --test scripts/sales-knowledge/*.test.mjs
