@@ -98,3 +98,14 @@ fresh history; parent state actions and child send block on mount/fetch/error.
 Actual web workspace regression covers cached initial data and failed refresh.
 Storage additionally rejects URL-ambiguous percent/query/fragment/backslash paths.
 These changes require bounded verification of the remaining findings only.
+
+## Narrow verification at HEAD 390f7391 (12:59 UTC)
+
+F1 voice/SQL try-lock, claims ACL/idempotent finish and F9 PASS. Two remaining
+facts: interactive psql stdin needed a trailing newline before awaiting marker;
+service bot disabled/unavailable with no hint could still enter legacy fallback.
+Corrected stdin framing and added a 20s process deadline. Notification routing
+now rejects ALL pure bot sources lacking active+support_enabled configuration,
+including missing bot, disabled bot and mislabeled Business metadata; only an
+explicit Business source can take the existing non-support operator path.
+Regression covers each refusal without hint. No production action performed.

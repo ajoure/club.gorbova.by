@@ -11,11 +11,12 @@ const auth=`SET test.uid='${actor}'; SET test.access='manage';`;
 const insert=id=>`INSERT INTO telegram_messages(id,user_id,telegram_user_id,bot_id,transport,direction,created_at,message_text) VALUES('${id}','${client}',123,'${bot}','bot','incoming',clock_timestamp(),'Synthetic');`;
 function run(sql, marker, keepOpen=false) {
   const child=spawn('psql',['-X','-qAt','-v','ON_ERROR_STOP=1'],{env}); let output='',error='';
+  const timeout=setTimeout(()=>child.kill('SIGTERM'),20_000);
   let signal; const ready=new Promise(resolve=>{signal=resolve;});
   child.stdout.on('data',chunk=>{output+=chunk; if (marker && output.includes(marker)) signal();});
   child.stderr.on('data',chunk=>{error+=chunk;});
-  const done=new Promise(resolve=>child.on('close',code=>{signal();resolve({code,output,error});}));
-  if(keepOpen) child.stdin.write(auth+sql); else child.stdin.end(auth+sql); return {ready,done,finish:(tail)=>child.stdin.end(tail)};
+  const done=new Promise(resolve=>child.on('close',code=>{clearTimeout(timeout);signal();resolve({code,output,error});}));
+  if(keepOpen) child.stdin.write(auth+sql+"\n"); else child.stdin.end(auth+sql); return {ready,done,finish:(tail)=>child.stdin.end(tail)};
 }
 assert.equal((await run(insert(old)).done).code,0);
 const resolve=`SELECT support_bot_set_state_v1('${client}','${bot}','${old}','resolve');`;

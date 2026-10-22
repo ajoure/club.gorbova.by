@@ -41,8 +41,14 @@ describe('service assignment notification',()=>{
  it('links to the exact service bot and excludes private metadata',()=>{
   const message={user_id:'user',bot_id:'bot',transport:'bot',business_account_id:null,business_connection_id:null};
   expect(supportNotificationScope(message,'bot')).toBe(true);
-  expect(deriveSupportNotificationBot(message,{id:'bot'})).toBe('bot');
-  expect(()=>deriveSupportNotificationBot(message,{id:'bot'},'other')).toThrow('scope_mismatch');
+  expect(deriveSupportNotificationBot(message,{id:'bot',status:'active',support_enabled:true})).toBe('bot');
+  expect(()=>deriveSupportNotificationBot(message,{id:'bot',status:'active',support_enabled:true},'other')).toThrow('scope_mismatch');
+  for(const sourceBot of [null,{id:'bot',status:'inactive',support_enabled:true},{id:'bot',status:'active',support_enabled:false}]) {
+    expect(()=>deriveSupportNotificationBot(message,sourceBot)).toThrow('channel_unavailable');
+  }
+  expect(()=>deriveSupportNotificationBot({...message,business_connection_id:'private'},{id:'bot',status:'active',support_enabled:true})).toThrow('channel_unavailable');
+  expect(deriveSupportNotificationBot({...message,transport:'business'},null)).toBeNull();
+
   expect(supportNotificationScope({...message,business_connection_id:'private'},'bot')).toBe(false);
   expect(supportNotificationScope(message,'other')).toBe(false);
   const link=new URL(supportNotificationLink('user','bot'));

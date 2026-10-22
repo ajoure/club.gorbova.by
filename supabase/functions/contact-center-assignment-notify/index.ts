@@ -57,7 +57,7 @@ Deno.serve(async (request) => {
       .select('user_id,bot_id,transport,business_account_id,business_connection_id').eq('id',assignment.source_message_id).maybeSingle();
     if (sourceError || !source) throw new Error('source_scope_unavailable');
     const {data: allowedBot, error: botError} = source.bot_id ? await supabase.from('telegram_bots')
-      .select('id,bot_token_encrypted').eq('id',source.bot_id).eq('status','active').eq('support_enabled',true).maybeSingle() : {data:null,error:null};
+      .select('id,status,support_enabled,bot_token_encrypted').eq('id',source.bot_id).maybeSingle() : {data:null,error:null};
     if (botError) throw new Error('source_scope_unavailable');
     const support_bot_id = deriveSupportNotificationBot(source,allowedBot,requestedSupportBotId);
     const scopedBot = support_bot_id ? allowedBot : null;

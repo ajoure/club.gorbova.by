@@ -7,8 +7,15 @@ export function supportNotificationLink(userId: string, botId: string): string {
   return `https://gorbova.by/admin/communication?${params}`;
 }
 // The server configuration, never an optional browser hint, chooses routing.
-export function deriveSupportNotificationBot(source: any, allowedBot: any, requested?: string): string | null {
-  const botId = allowedBot && supportNotificationScope(source,allowedBot.id) ? allowedBot.id : null;
-  if (requested && requested !== botId) throw new Error('support_notification_scope_mismatch');
-  return botId;
+export function deriveSupportNotificationBot(source: any, sourceBot: any, requested?: string): string | null {
+  if (source?.transport === 'bot') {
+    // An unavailable or unapproved bot remains a bot source. Never downgrade it
+    // into the legacy Business/primary-bot path when configuration is missing.
+    if (!sourceBot || sourceBot.status !== 'active' || sourceBot.support_enabled !== true
+      || !supportNotificationScope(source,sourceBot.id)) throw new Error('support_notification_channel_unavailable');
+    if (requested && requested !== sourceBot.id) throw new Error('support_notification_scope_mismatch');
+    return sourceBot.id;
+  }
+  if (requested || source?.transport !== 'business') throw new Error('support_notification_scope_mismatch');
+  return null; // Existing explicit Business operator path, never support.
 }
