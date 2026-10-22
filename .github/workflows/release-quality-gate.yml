@@ -163,6 +163,7 @@ jobs:
           SUPPORT_BOUNDARY_SQL_FIXTURE: /tmp/support-channel-boundary-fixture.sql
         run: |
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE support_channel_boundary_test'
+          node --test scripts/tests/support-runtime-version.test.mjs
           node scripts/tests/support-channel-boundary.test.mjs
           node scripts/tests/support-channel-concurrency.test.mjs
       - name: Browser application types

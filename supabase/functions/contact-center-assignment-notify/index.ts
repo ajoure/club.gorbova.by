@@ -5,6 +5,8 @@ import { deriveSupportNotificationBot, supportNotificationLink } from "./support
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
+  "X-Support-Boundary-Version": "support-boundary-20261022-r1",
+  "Access-Control-Expose-Headers": "X-Support-Boundary-Version",
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
