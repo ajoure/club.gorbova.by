@@ -3,6 +3,7 @@
 export interface SupportAction {
   action: string;
   support_bot_id?: string;
+  support_request_id?: string;
   support_observed_incoming_id?: string | null;
   bot_id?: string;
   sender_type?: string;
@@ -33,7 +34,7 @@ export function supportActionMessageIds(payload: SupportAction): string[] {
 export function supportActionAllowed(payload: SupportAction): boolean {
   if (!payload.support_bot_id || payload.business_account_id || payload.sender_type === 'business') return false;
   if (payload.action === 'send_message') {
-    return payload.bot_id === payload.support_bot_id && payload.sender_type === 'bot' && !!payload.user_id && !!payload.support_observed_incoming_id;
+    return payload.bot_id === payload.support_bot_id && payload.sender_type === 'bot' && !!payload.user_id && !!payload.support_observed_incoming_id && !!payload.support_request_id;
   }
   return ['get_media_urls', 'sync_telegram_reaction'].includes(payload.action)
     && supportActionMessageIds(payload).length > 0 && supportActionMessageIds(payload).length <= 200;

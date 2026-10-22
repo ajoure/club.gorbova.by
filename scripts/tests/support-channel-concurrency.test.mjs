@@ -44,3 +44,24 @@ const webWriter=run(`BEGIN;${webInsert(webLast)}SELECT 'WEB_INSERT_HELD';SELECT 
 await webWriter.ready;const webWaiting=run(`SELECT support_web_set_state_v1('${web}','${webNew}','resolve');`);
 assert.equal((await webWriter.done).code,0);const webRejected=await webWaiting.done;assert.notEqual(webRejected.code,0);assert.match(webRejected.error,/support_new_incoming/);
 console.log('PASS real PostgreSQL: bot and web insert-after-resolution remain unanswered; resolution-after-new-incoming rejects stale boundary. No production access.');
+// CAS vs profile binding: a completed rebind must be seen before authorization.
+const nonce='00000000-0000-0000-0000-000000000300';
+const begin=(request=nonce)=>`SELECT support_bot_begin_send_v1('${actor}','${client}','${bot}','${latest}','${request}',null);`;
+const rebind=run(`BEGIN;UPDATE profiles SET telegram_user_id=456 WHERE user_id='${client}';SELECT 'BINDING_HELD';SELECT pg_sleep(1);COMMIT;`,'BINDING_HELD');
+await rebind.ready;const sendAfterBinding=run(begin());
+assert.equal((await rebind.done).code,0);const bindingRejected=await sendAfterBinding.done;assert.notEqual(bindingRejected.code,0);assert.match(bindingRejected.error,/support_recipient_not_verified/);
+assert.equal((await run(`UPDATE profiles SET telegram_user_id=123 WHERE user_id='${client}';`).done).code,0);
+// Send claim owns binding/dialog locks first. Profile writer fails rather than
+// waiting with row locks; assignment writer waits then sees the committed lease.
+const claimWriter=run(`BEGIN;${begin()}SELECT 'SEND_CLAIM_HELD';SELECT pg_sleep(1);COMMIT;`,'SEND_CLAIM_HELD');
+await claimWriter.ready;
+const profileDuringSend=run(`UPDATE profiles SET telegram_user_id=456 WHERE user_id='${client}';`);
+const assignmentDuringSend=run(`SELECT support_bot_assign_v1('${client}','${bot}','${latest}','${actor}');`);
+const profileRejected=await profileDuringSend.done;assert.notEqual(profileRejected.code,0);assert.match(profileRejected.error,/support_binding_busy_retry|support_send_in_progress_retry/);
+assert.equal((await claimWriter.done).code,0);const assignmentRejected=await assignmentDuringSend.done;assert.notEqual(assignmentRejected.code,0);assert.match(assignmentRejected.error,/support_send_in_progress_retry/);
+assert.equal((await run(`SELECT support_bot_finish_send_v1('${nonce}','sent',700);`).done).code,0);
+// Existing assignment wins before CAS: authorization must reject another owner.
+const assigned=run(`BEGIN;SELECT support_bot_assign_v1('${client}','${bot}','${latest}','${client}');SELECT 'ASSIGNMENT_HELD';SELECT pg_sleep(1);COMMIT;`,'ASSIGNMENT_HELD');
+await assigned.ready;const sendAfterAssignment=run(begin('00000000-0000-0000-0000-000000000301'));
+assert.equal((await assigned.done).code,0);const ownerRejected=await sendAfterAssignment.done;assert.notEqual(ownerRejected.code,0);assert.match(ownerRejected.error,/support_assigned_to_another_employee/);
+console.log('PASS real PostgreSQL: binding/assignment before CAS reject stale authorization; CAS first excludes profile/assignment changes without row/advisory deadlock.');

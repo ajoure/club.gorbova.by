@@ -1,5 +1,5 @@
 import SupportWebWorkspace from "./SupportWebWorkspace";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -34,6 +34,7 @@ function SupportBotWorkspace() {
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [assignee, setAssignee] = useState('');
+  const [historyScope, setHistoryScope] = useState<string | null>(null);
   useEffect(() => {
     // Do not retain a combined history from a previous operator-workspace visit.
     const roots = ['telegram-messages', 'telegram-messages-lean', 'telegram-messages-full-at', 'contact-center-unanswered'];
@@ -58,7 +59,9 @@ function SupportBotWorkspace() {
     refetchInterval: 15_000,
   });
   const dialog = detail.data;
-  const blocked = !access.canAccessSection('communication', 'manage') || channels.isError || detail.isError || !!(dialog?.assignee_user_id && dialog.assignee_user_id !== user?.id);
+  const currentScope = bot && dialog ? `${bot.id}:${dialog.user_id}` : null;
+  const onHistoryReadyChange = useCallback((ready: boolean) => setHistoryScope(ready ? currentScope : null), [currentScope]);
+  const blocked = !currentScope || historyScope !== currentScope || !access.canAccessSection('communication', 'manage') || channels.isError || detail.isError || !!(dialog?.assignee_user_id && dialog.assignee_user_id !== user?.id);
   const updateRoute = (botId?: string, userId?: string) => setParams({ tab: 'inbox', support_mode: '1', ...(botId ? { bot: botId } : {}), ...(userId ? { chat: userId } : {}) });
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: ['support-bot-dialogs'] }),
@@ -77,7 +80,7 @@ function SupportBotWorkspace() {
       });
       await refresh();
       if (!result.created) { toast.info('Назначение уже существует. Повторное уведомление не отправлено'); return; }
-      const { data, error } = await supabase.functions.invoke('contact-center-assignment-notify', { body: { assignment_id: result.assignment_id } });
+      const { data, error } = await supabase.functions.invoke('contact-center-assignment-notify', { body: { assignment_id: result.assignment_id, support_bot_id: bot.id } });
       if (error || data?.success !== true) toast.warning('Назначение сохранено, доставка уведомления не подтверждена');
       else toast.success('Менеджер назначен, уведомление доставлено');
     } catch { toast.error('Результат назначения не подтверждён. Обновите историю перед повтором'); }
@@ -141,7 +144,7 @@ function SupportBotWorkspace() {
             <Button size="sm" variant="outline" disabled={busy || blocked} onClick={() => void setState('reopen')}>Оставить нерешённым</Button>
             <Button size="sm" disabled={busy || blocked} onClick={() => void setState('resolve')}>Все вопросы решены</Button>
           </div>
-          <div className="flex-1 min-h-0"><ContactTelegramChat userId={dialog.user_id} telegramUserId={dialog.telegram_user_id} telegramUsername={dialog.telegram_username} clientName={dialog.display_name} hidePhotoButton onMessageSent={() => { void refresh(); }}
+          <div className="flex-1 min-h-0"><ContactTelegramChat userId={dialog.user_id} telegramUserId={dialog.telegram_user_id} telegramUsername={dialog.telegram_username} clientName={dialog.display_name} hidePhotoButton onHistoryReadyChange={onHistoryReadyChange} onMessageSent={() => { void refresh(); }}
             supportChannel={{ transport:'bot', channel_ref:bot.id, channel_key:`bot:${bot.id}`, bot_id:bot.id, label:bot.label, username:bot.username,
               first_name:null,last_name:null,business_connection_id:null,is_primary:true,can_reply:dialog.can_reply && !blocked && !channels.isError && !detail.isError,
               message_count:0,incoming_count:0,unanswered_count:dialog.unread_count }} /></div>

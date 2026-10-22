@@ -1,3 +1,4 @@
+import { collectTelegramMediaUrls } from "@/lib/telegramMediaBatch";
 import { telegramMessageCacheKey, latestObservedIncomingBoundary } from "@/lib/telegramChatCache";
 import { SalesRuntimeControls } from './chat/SalesRuntimeControls';
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
@@ -132,6 +133,7 @@ interface ContactTelegramChatProps {
   isActive?: boolean;
   /** Explicit server-allowlisted service bot; never loads the combined timeline. */
   supportChannel?: ContactTelegramChannel;
+  onHistoryReadyChange?: (ready: boolean) => void;
 }
 
 interface TelegramMessage {
@@ -238,6 +240,7 @@ function TelegramChannelChat({
   isActive = true,
   channels,
   supportChannel,
+  onHistoryReadyChange,
 }: ContactTelegramChatProps & ChannelChatProps) {
   const supportBotId = supportChannel?.bot_id;
   const cacheScope = supportBotId ? `support-bot:${supportBotId}` : "combined-senders-v1";
@@ -334,6 +337,12 @@ function TelegramChannelChat({
   const stickyScrollUntilRef = useRef(0);
   const shouldStickToBottomRef = useRef(true);
   const mediaUrlRequestsRef = useRef<Set<string>>(new Set());
+  const failedMediaUrlIdsRef = useRef<Set<string>>(new Set());
+  const mediaUrlWorkerRef = useRef(false);
+  const mediaViewActiveRef = useRef(true);
+  const [mediaRetryEpoch, setMediaRetryEpoch] = useState(0);
+  const [mediaUrlsFailed, setMediaUrlsFailed] = useState(false);
+  useEffect(() => { mediaViewActiveRef.current = true; return () => { mediaViewActiveRef.current = false; }; }, []);
   const STICKY_THRESHOLD = 260;
 
   // === AUTO-REFRESH FOR PENDING MEDIA ===
@@ -480,7 +489,7 @@ function TelegramChannelChat({
   //   2) `refetchOnMount: false` on both — warm reopens must NOT round-trip
   //      to the server when data is still fresh. Realtime + background
   //      refresh (see fullEnabled effect below) keep the cache honest.
-  const { data: leanData, isLoading: leanLoading, isError: leanError, refetch: refetchLean } = useQuery({
+  const { data: leanData, isLoading: leanLoading, isError: leanError, isFetching: leanFetching, isFetchedAfterMount: leanFetched, refetch: refetchLean } = useQuery({
     queryKey: ["telegram-messages-lean", userId, cacheScope],
     queryFn: async () => {
       const data = await readHistory({ p_limit: 20, p_text_limit: 4096 });
@@ -535,7 +544,7 @@ function TelegramChannelChat({
     return () => cancel(handle);
   }, [userId, leanData, supportBotId]);
 
-  const { data: fullData, isError: fullError, refetch: refetchMessages } = useQuery({
+  const { data: fullData, isError: fullError, isFetching: fullFetching, isFetchedAfterMount: fullFetched, refetch: refetchMessages } = useQuery({
     queryKey: chatCacheKey,
     queryFn: async () => {
       const data = await readHistory({ p_limit: 200 });
@@ -570,6 +579,12 @@ function TelegramChannelChat({
   // Rendered messages: prefer full (enriched) if available, otherwise lean.
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
   const messages = fullData ?? leanData;
+  const scopedHistoryReady = !!messages && (leanFetched || fullFetched) && !leanError && !fullError && !leanFetching && !fullFetching;
+  useEffect(() => {
+    if (!supportBotId) return;
+    onHistoryReadyChange?.(scopedHistoryReady);
+    return () => onHistoryReadyChange?.(false);
+  }, [supportBotId, scopedHistoryReady, onHistoryReadyChange]);
   useEffect(() => {
     if (selectedSenderKey !== null || !leanData) return;
     setSelectedSenderKey((message || selectedFile ? channel : defaultTelegramSender(channels, leanData))?.channel_key ?? channel.channel_key);
@@ -678,7 +693,7 @@ function TelegramChannelChat({
     () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
     [messages]
   );
-  const { data: telegramReactionsMap } = useTelegramReactions(telegramMessageIds, !!supportBotId);
+  const { data: telegramReactionsMap } = useTelegramReactions(telegramMessageIds, supportBotId);
   const toggleTelegramReaction = useToggleTelegramReaction(supportBotId);
 
   // V1.3: chatItemsWithMeta emits fully-flat bubble data for each row.
@@ -1183,25 +1198,33 @@ function TelegramChannelChat({
   }, [messages]);
 
   useEffect(() => {
-    const ids = mediaIdsNeedingUrls.filter((id) => !mediaUrlRequestsRef.current.has(id)).slice(0, 200);
+    if (mediaUrlWorkerRef.current) return;
+    const ids = mediaIdsNeedingUrls.filter(id => !mediaUrlRequestsRef.current.has(id) && !failedMediaUrlIdsRef.current.has(id));
     if (!ids.length) return;
-    ids.forEach((id) => mediaUrlRequestsRef.current.add(id));
-
-    supabase.functions.invoke("telegram-admin-chat", {
-      body: { action: "get_media_urls", message_ids: ids, support_bot_id: supportBotId },
-    }).then(({ data, error }) => {
-      if (error || !data?.urls) return;
-      queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) => {
-        if (!old) return old;
-        return old.map((m) => {
-          const url = data.urls[m.id];
-          if (!url) return m;
-          return { ...m, meta: { ...(m.meta || {}), file_url: url } } as TelegramMessage;
-        });
+    mediaUrlWorkerRef.current = true;
+    void collectTelegramMediaUrls(ids, async batch => {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "get_media_urls", message_ids: batch, support_bot_id: supportBotId },
       });
-      if (isNearBottom()) startStickyScroll(2600);
+      if (error || !data?.urls) throw error || new Error("media_urls_unavailable");
+      return data.urls;
+    }, {
+      cancelled: () => !mediaViewActiveRef.current,
+      onUrls: urls => {
+        Object.keys(urls).forEach(id => mediaUrlRequestsRef.current.add(id));
+        queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) => old?.map(m =>
+          urls[m.id] ? { ...m, meta: { ...(m.meta || {}), file_url: urls[m.id] } } as TelegramMessage : m));
+        if (isNearBottom()) startStickyScroll(2600);
+      },
+    }).then(result => {
+      if (!mediaViewActiveRef.current) return;
+      result.pending.forEach(id => failedMediaUrlIdsRef.current.add(id));
+      setMediaUrlsFailed(failedMediaUrlIdsRef.current.size > 0);
+    }).finally(() => {
+      mediaUrlWorkerRef.current = false;
+      if (mediaViewActiveRef.current) setMediaRetryEpoch(value => value + 1);
     });
-  }, [mediaIdsNeedingUrls, queryClient, userId, isNearBottom, startStickyScroll]);
+  }, [mediaIdsNeedingUrls, mediaRetryEpoch, queryClient, chatCacheKey, supportBotId, isNearBottom, startStickyScroll]);
 
   // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
   // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
@@ -1354,6 +1377,7 @@ function TelegramChannelChat({
 
   // Send message mutation
   const sendMutation = useMutation({
+    retry: false,
     mutationFn: async ({
       text,
       file,
@@ -1394,6 +1418,7 @@ function TelegramChannelChat({
         body: {
           action: "send_message",
           support_bot_id: supportBotId,
+          support_request_id: supportBotId ? crypto.randomUUID() : undefined,
           support_observed_incoming_id: supportBotId ? pendingSupportIncomingRef.current : undefined,
           user_id: userId,
           message: text || "",
@@ -1776,7 +1801,7 @@ function TelegramChannelChat({
     if (
       sendMutation.isPending ||
       isUploading ||
-      !channel.can_reply ||
+      !channel.can_reply || (supportBotId && !scopedHistoryReady) ||
       (!selectedBotId && !selectedBusinessAccountId)
     ) return;
     const trimmed = renderContactCenterMessagePlaceholders(message, {
@@ -1878,9 +1903,9 @@ function TelegramChannelChat({
   }, [deleteMutation]);
 
   const handleReact = useCallback((id: string, emoji: string) => {
-    if (supportBotId && !channel.can_reply) return;
+    if (supportBotId && (!channel.can_reply || !scopedHistoryReady)) return;
     toggleReactionRef.current.mutate({ messageId: id, emoji });
-  }, [supportBotId, channel.can_reply]);
+  }, [supportBotId, channel.can_reply, scopedHistoryReady]);
 
   const handleQuoteClick = useCallback((dbId: string) => {
     scrollToMessage(dbId);
@@ -2059,6 +2084,11 @@ function TelegramChannelChat({
             </button>
           )}
         </div>
+
+        {mediaUrlsFailed && <div role="status" className="shrink-0 p-2 text-xs">
+          Часть готовых вложений не загрузилась.
+          <Button size="sm" variant="link" onClick={() => { failedMediaUrlIdsRef.current.clear(); setMediaUrlsFailed(false); setMediaRetryEpoch(value => value + 1); }}>Повторить загрузку вложений</Button>
+        </div>}
 
         {/* Selected file preview - shrink-0 to stay visible */}
         {selectedFile && (
@@ -2302,7 +2332,7 @@ function TelegramChannelChat({
             <Button
               onClick={handleSend}
               aria-label="Отправить сообщение"
-              disabled={!channel.can_reply || (!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
+              disabled={!channel.can_reply || (supportBotId && !scopedHistoryReady) || (!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="contact-chat-send h-11 w-11 p-0 shrink-0"
               title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >

@@ -27,19 +27,25 @@ export function useTicketReactions(ticketId: string, messageIds: string[], scope
   const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
 
   const query = useQuery({
-    queryKey: ["ticket-reactions", stableIdsCsv, viewerId],
+    queryKey: ["ticket-reactions", stableIdsCsv, viewerId, ...(scopedPolling ? ["web-only"] : [])],
     queryFn: async () => {
       if (!stableIds.length) return {} as MessageReactions;
 
-      const { data, error } = await supabase
-        .from("ticket_message_reactions")
-        .select("message_id, emoji, user_id")
-        .in("message_id", stableIds);
-
-      if (error) throw error;
+      const rows: Array<{message_id:string;emoji:string;user_id:string}> = [];
+      if (scopedPolling) {
+        for (let offset = 0; offset < stableIds.length; offset += 200) {
+          const { data, error } = await supabase.rpc("support_web_reactions_v1" as any, { p_ticket_id:ticketId, p_message_ids:stableIds.slice(offset,offset+200) } as any);
+          if (error) throw error;
+          rows.push(...((data || []) as unknown as typeof rows));
+        }
+      } else {
+        const { data, error } = await supabase.from("ticket_message_reactions").select("message_id, emoji, user_id").in("message_id", stableIds);
+        if (error) throw error;
+        rows.push(...(data || []));
+      }
 
       const result: MessageReactions = {};
-      for (const row of data || []) {
+      for (const row of rows) {
         if (!result[row.message_id]) result[row.message_id] = [];
 
         const existing = result[row.message_id].find((r) => r.emoji === row.emoji);

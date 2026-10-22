@@ -1,6 +1,7 @@
 // Sends one operational Telegram notification when a contact-center question
 // is assigned. The database assignment remains canonical; notification failure
 // never rolls back or duplicates the assignment.
+import { supportNotificationLink, supportNotificationScope } from "./supportNotification.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -37,7 +38,7 @@ Deno.serve(async (request) => {
       return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const { assignment_id } = await request.json();
+    const { assignment_id, support_bot_id } = await request.json();
     if (!assignment_id) {
       return new Response(JSON.stringify({ error: "assignment_id_required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -48,6 +49,19 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (assignmentError || !assignment || assignment.resolved_at) {
       return new Response(JSON.stringify({ error: "assignment_not_found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Check service metadata before reading source text or reserving a notification.
+    let scopedBot: {bot_token_encrypted:string} | null = null;
+    if (support_bot_id) {
+      const [{data: source, error: sourceError},{data: allowedBot, error: botError}] = await Promise.all([
+        supabase.from('telegram_messages').select('user_id,bot_id,transport,business_account_id,business_connection_id').eq('id',assignment.source_message_id).maybeSingle(),
+        supabase.from('telegram_bots').select('bot_token_encrypted').eq('id',support_bot_id).eq('status','active').eq('support_enabled',true).maybeSingle(),
+      ]);
+      if (sourceError || botError || !allowedBot || !supportNotificationScope(source,support_bot_id)) {
+        return new Response(JSON.stringify({success:false,error:'support_notification_scope_mismatch'}), {status:403,headers:{...corsHeaders,'Content-Type':'application/json'}});
+      }
+      scopedBot = allowedBot;
     }
 
     const idempotencyKey = `contact-center-assignment:${assignment.id}:${assignment.assignee_user_id}:${assignment.assigned_at}`;
@@ -82,7 +96,7 @@ Deno.serve(async (request) => {
     const [{ data: recipient }, { data: message }, { data: bot }] = await Promise.all([
       supabase.from("profiles").select("telegram_user_id, full_name").eq("user_id", assignment.assignee_user_id).maybeSingle(),
       supabase.from("telegram_messages").select("message_text, user_id").eq("id", assignment.source_message_id).maybeSingle(),
-      supabase.from("telegram_bots").select("bot_token_encrypted").eq("status", "active").order("is_primary", { ascending: false }).limit(1).maybeSingle(),
+      scopedBot ? Promise.resolve({data:scopedBot}) : supabase.from("telegram_bots").select("bot_token_encrypted").eq("status", "active").order("is_primary", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (!recipient?.telegram_user_id || !bot?.bot_token_encrypted) {
       await supabase.from("notification_outbox").update({ status: "failed", blocked_reason: "recipient_or_bot_unavailable" }).eq("idempotency_key", idempotencyKey);
@@ -116,9 +130,9 @@ Deno.serve(async (request) => {
       contact?.phone ? `📞 ${String(contact.phone).trim()}` : null,
     ].filter(Boolean);
     const siteUrl = (Deno.env.get("CONTACT_CENTER_SITE_URL") || "https://club.gorbova.by").replace(/\/+$/, "");
-    const dialogUrl = `${siteUrl}/admin/communication?tab=inbox&chat=${encodeURIComponent(message.user_id)}`;
+    const dialogUrl = support_bot_id ? supportNotificationLink(message.user_id,support_bot_id) : `${siteUrl}/admin/communication?tab=inbox&chat=${encodeURIComponent(message.user_id)}`;
     const inlineKeyboard = [[{ text: "Посмотреть вопрос", url: dialogUrl }]];
-    if (safeTelegramUsername) {
+    if (safeTelegramUsername && !support_bot_id) {
       inlineKeyboard.push([{ text: "Открыть в Telegram", url: `https://t.me/${safeTelegramUsername}` }]);
     }
     const sent = await telegramRequest(bot.bot_token_encrypted, "sendMessage", {

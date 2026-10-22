@@ -43,8 +43,9 @@ Telegram recipient и истории синхронизации. Неясные/
 
 ## Проверки
 
-- Полный Vitest: 356 файлов / 2303 теста PASS до финальных узких правок;
-  после них выполняются профильные проверки и обязательный CI.
+- Полный Vitest после исправлений ревизии: 358 файлов / 2313 тестов PASS.
+  TypeScript/production build/Edge references/PGlite также проверены локально;
+  real PostgreSQL concurrency остаётся обязательным gate CI.
 - TypeScript и production build локально PASS; результат сборки не равен Publish.
 - PGlite: смешанные bot/Business, неверно помеченный transport, два бота,
   microseconds/UUID boundary, stale CAS, идемпотентные assignment/reaction,
@@ -62,7 +63,15 @@ Telegram recipient и истории синхронизации. Неясные/
 3. Managed migration только `20261022113000_support_channel_boundary.sql`:
    preflight ровно 4 заданных активных служебных бота; bool default false;
    проверить DDL, grants, функции/триггеры, allowlist и ожидаемый rowcount.
-4. Развернуть только `telegram-admin-chat` вместе с `supportScope.ts`.
+   Ожидается 4 разрешённых бота / 0 остальных. Installation не меняет клиентские
+   сообщения, реакции, назначения, unread, платежи или доступы. Новая таблица
+   send claims пуста; новые web resolution markers NULL.
+4. Развернуть ровно две существующие функции: `telegram-admin-chat` (включая
+   `supportScope.ts` и `supportSend.ts`) и `contact-center-assignment-notify`
+   (включая `supportNotification.ts`). Вторая функция явно добавлена по F6:
+   exact allowlisted bot, служебная ссылка, без кнопки личного Telegram.
+   Generated preflight manifest меняет только source digest при неизменном
+   списке 320 функций; `system-health-full-check` в deploy не входит.
    Никаких других functions, кода или коммитов из Lovable.
 5. Read-only runtime: роли/allowlist, scoped metadata и отсутствующие Business
    rows в выдаче. Ни реальных сообщений, ни реакций, платежей, consent,
@@ -81,3 +90,28 @@ uncertain mark-read и уже сохранённую реакцию.
 support-режим. Additive DDL можно оставить неиспользуемым; не откатывать массово
 флаги клиентов. Изменения конфигурации/триггеров — только через отдельный
 reviewed Lovable plan, с точными ожидаемыми счётчиками и read-back.
+
+## Устранение замечаний ревизии
+
+F1: service-only begin RPC под binding/dialog advisory фиксирует actor, incoming
+UUID, получателя и request nonce. Профильная привязка использует отдельный
+try-advisory guard без ожидания row/dialog цикла; assignment trigger исключает
+изменение/удаление во время lease. После подготовки файла и выбора токена
+выполняется только Telegram fetch с timeout 25s внутри 90s lease. Новое входящее
+после точки авторизации остаётся unanswered. Нет транзакции вокруг сети.
+Неясная/истёкшая sending claim блокирует последующие отправки этого диалога
+до отдельной проверки доставки; expiry не запускает автоматический retry.
+Finish RPC доступен только service_role для read-back reconciliation.
+
+F2: quote проверяется в begin RPC по exact user/bot/recipient и Business NULL.
+Исходящий файл — только telegram-media/outbound/<user>/..., owner_id текущего
+actor; сравниваются object id/version/updated_at до и после download. Байты
+готовятся до begin; приватный произвольный Storage path не читается.
+
+F3–F9: scoped reaction-read RPC без расширения legacy RLS; медиа batches 20 с
+ограниченными retries; resolve завершает свои назначения; web bridge строго
+IS FALSE; close требует отдельного свежего resolution marker; ошибки/загрузка
+истории блокируют действия, даже когда в кэше остались старые сообщения.
+
+Консолидированная ревизия HEAD 6581aed дала F1–F9. Исправления ещё требуют
+точной повторной сверки этих замечаний, обязательных checks и managed применения.

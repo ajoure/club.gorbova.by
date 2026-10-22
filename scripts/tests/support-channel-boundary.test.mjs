@@ -12,15 +12,18 @@ DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
 END $$;
 CREATE SCHEMA auth;
+CREATE SCHEMA storage;
+CREATE TABLE storage.objects(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),bucket_id text,name text,owner_id text,version text,updated_at timestamptz DEFAULT now(),archived_at timestamptz,is_delete_marker boolean DEFAULT false,is_versioned boolean DEFAULT false);
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('test.uid',true),'')::uuid $$;
 CREATE FUNCTION public.has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$ SELECT current_setting('test.access',true)='manage' OR ($3='view' AND current_setting('test.access',true)='view') $$;
 CREATE TABLE telegram_bots(id uuid PRIMARY KEY, status text,bot_name text,bot_username text);
 CREATE TABLE profiles(user_id uuid PRIMARY KEY,telegram_user_id bigint,full_name text,telegram_username text,avatar_url text);
-CREATE TABLE telegram_messages(id uuid PRIMARY KEY,user_id uuid,telegram_user_id bigint,bot_id uuid,transport text,business_account_id uuid,business_connection_id text,direction text,created_at timestamptz,message_text text,is_read boolean DEFAULT false,requires_reply boolean DEFAULT true,meta jsonb,sent_by_admin uuid);
-CREATE TABLE contact_center_message_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),source text,source_message_id uuid,assignee_user_id uuid,assigned_by_user_id uuid,note text,resolved_at timestamptz,assigned_at timestamptz DEFAULT now());
+CREATE TABLE telegram_messages(id uuid PRIMARY KEY,user_id uuid,telegram_user_id bigint,bot_id uuid,transport text,business_account_id uuid,business_connection_id text,direction text,created_at timestamptz,message_text text,is_read boolean DEFAULT false,requires_reply boolean DEFAULT true,meta jsonb,sent_by_admin uuid,message_id bigint);
+CREATE TABLE contact_center_message_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),source text,source_message_id uuid,assignee_user_id uuid,assigned_by_user_id uuid,note text,resolved_at timestamptz,resolved_by_user_id uuid,updated_at timestamptz,assigned_at timestamptz DEFAULT now());
 CREATE TABLE telegram_message_reactions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),message_id uuid,user_id uuid,emoji text,UNIQUE(message_id,user_id,emoji));
 CREATE TABLE support_tickets(id uuid PRIMARY KEY, ticket_number text,subject text,status text DEFAULT 'open',telegram_bridge_enabled boolean DEFAULT false,telegram_user_id bigint,merged_into_ticket_id uuid,assigned_to uuid,has_unread_admin boolean DEFAULT true,updated_at timestamptz DEFAULT now(),closed_at timestamptz,resolved_at timestamptz);
 CREATE TABLE ticket_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),ticket_id uuid,author_type text,message text,created_at timestamptz DEFAULT now());
+CREATE TABLE ticket_message_reactions(message_id uuid,emoji text,user_id uuid);
 CREATE TABLE ticket_telegram_sync(ticket_id uuid,ticket_message_id uuid,direction text);
 CREATE FUNCTION send_ticket_message_v2(uuid,text,jsonb,boolean,uuid) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE m ticket_messages%ROWTYPE; BEGIN
@@ -29,7 +32,7 @@ DECLARE m ticket_messages%ROWTYPE; BEGIN
  UPDATE support_tickets SET has_unread_admin=false WHERE id=$1;
  RETURN jsonb_build_object('success',true,'message',to_jsonb(m));
 END $$;
-CREATE TABLE audit_logs(action text,actor_type text CHECK(actor_type IN('user','system','service')),actor_user_id uuid,entity_type text,entity_id uuid,meta jsonb);
+CREATE TABLE audit_logs(action text,actor_type text CHECK(actor_type IN('user','system','service')),actor_user_id uuid,entity_type text,entity_id text,meta jsonb);
 INSERT INTO telegram_bots SELECT unnest(ARRAY[${bots.map(x=>`'${x}'::uuid`).join(',')}]),'active','Service','service';
 INSERT INTO profiles VALUES('${client}',123,'Synthetic client',null,null);
 SELECT set_config('test.uid','${actor}',false),set_config('test.access','manage',false);
@@ -63,6 +66,41 @@ await assert.rejects(db.query('SELECT support_bot_assign_v1($1,$2,$3,$4)',[clien
 await db.query("SELECT support_bot_set_reaction_v1($1,$2,'❤️',true)",[bots[0],fresh]);
 assert.equal((await db.query("SELECT support_bot_set_reaction_v1($1,$2,'❤️',true) AS row",[bots[0],fresh])).rows[0].row.changed,0);
 await assert.rejects(db.query("SELECT support_bot_set_reaction_v1($1,$2,'❤️',true)",[bots[0],msgC]),/support_message_scope/);
+await db.exec('ALTER TABLE telegram_message_reactions ENABLE ROW LEVEL SECURITY; GRANT SELECT ON telegram_message_reactions TO authenticated; CREATE POLICY legacy_admin_only ON telegram_message_reactions FOR SELECT TO authenticated USING(false); SET ROLE authenticated;');
+assert.equal((await db.query('SELECT count(*)::int AS n FROM telegram_message_reactions')).rows[0].n,0);
+assert.equal((await db.query('SELECT * FROM support_bot_reactions_v1($1,$2::uuid[])',[bots[0],[fresh]])).rows.length,1,'section-based staff read through scoped function under authenticated role');
+await assert.rejects(db.query('SELECT * FROM support_bot_reactions_v1($1,$2::uuid[])',[bots[0],[msgC]]),/support_message_scope/);
+await db.exec('RESET ROLE');
+await db.query("SELECT support_bot_set_state_v1($1,$2,$3,'resolve')",[client,bots[0],fresh]);
+assert.equal((await db.query('SELECT count(*)::int AS n FROM contact_center_message_assignments WHERE resolved_at IS NULL')).rows[0].n,0,'resolution ends only the scoped assignment');
+// Atomic send claims pin incoming, actor and recipient; no external call in SQL.
+const nonce='00000000-0000-0000-0000-000000000030';
+const begin=(id=nonce,quote=null)=>db.query('SELECT support_bot_begin_send_v1($1,$2,$3,$4,$5,$6) AS row',[actor,client,bots[0],fresh,id,quote]);
+await assert.rejects(begin(nonce,999),/support_quote_scope/);
+await db.query('UPDATE telegram_messages SET message_id=123 WHERE id=$1',[fresh]);
+const claim=await begin(nonce,123);assert.equal(claim.rows[0].row.telegram_user_id,'123');
+await assert.rejects(db.query('UPDATE profiles SET telegram_user_id=456 WHERE user_id=$1',[client]),/support_send_in_progress/);
+await assert.rejects(db.query('SELECT support_bot_assign_v1($1,$2,$3,$4)',[client,bots[0],fresh,actor]),/support_send_in_progress/);
+await assert.rejects(begin(),/support_send_already_attempted/);
+await db.query("SELECT support_bot_finish_send_v1($1,'uncertain',null)",[nonce]);
+await assert.rejects(begin('00000000-0000-0000-0000-000000000031'),/support_previous_send_delivery_unknown/);
+await db.query("SELECT support_bot_finish_send_v1($1,'sent',777)",[nonce]);
+assert.equal((await db.query("SELECT has_function_privilege('authenticated','support_bot_begin_send_v1(uuid,uuid,uuid,uuid,uuid,bigint)','EXECUTE') AS allowed")).rows[0].allowed,false);
+const nonce2='00000000-0000-0000-0000-000000000032';await begin(nonce2);
+await db.query("UPDATE support_bot_send_claims SET lease_until=now()-interval '1 minute' WHERE request_id=$1",[nonce2]);
+await assert.rejects(begin('00000000-0000-0000-0000-000000000033'),/support_previous_send_delivery_unknown/);
+await db.query("SELECT support_bot_finish_send_v1($1,'rejected',null)",[nonce2]);
+await db.query('UPDATE profiles SET telegram_user_id=456 WHERE user_id=$1',[client]);
+await assert.rejects(begin('00000000-0000-0000-0000-000000000034'),/support_recipient_not_verified/);
+await db.query('UPDATE profiles SET telegram_user_id=123 WHERE user_id=$1',[client]);
+// Upload readability alone is insufficient. Missing/other owner, wrong path and
+// non-active object fail before the privileged Storage download.
+const uploadPath=`outbound/${client}/synthetic.txt`;
+await db.query("INSERT INTO storage.objects(bucket_id,name,owner_id,version) VALUES('telegram-media',$1,$2,'v1')",[uploadPath,actor]);
+assert.equal((await db.query('SELECT support_bot_upload_v1($1,$2,$3) AS row',[client,bots[0],uploadPath])).rows[0].row.version,'v1');
+await db.query('UPDATE storage.objects SET owner_id=$1',[client]);
+await assert.rejects(db.query('SELECT support_bot_upload_v1($1,$2,$3)',[client,bots[0],uploadPath]),/support_upload_owner/);
+await assert.rejects(db.query('SELECT support_bot_upload_v1($1,$2,$3)',[client,bots[0],'inbound/private.txt']),/support_upload_scope/);
 await db.exec("SELECT set_config('test.access','view',false)");
 assert.equal((await db.query('SELECT support_bot_messages_v1($1,$2)',[client,bots[0]])).rows.length,3);
 await assert.rejects(db.query('SELECT support_bot_set_state_v1($1,$2,$3,\'resolve\')',[client,bots[0],fresh]),/forbidden/);
@@ -80,11 +118,17 @@ await assert.rejects(db.query('SELECT support_web_messages_v1($1)',[mirrored]),/
 await db.query("SELECT send_support_web_message_v1($1,$2,'[]'::jsonb,false,null,$3)",[web,'Still investigating',webMsg]);
 assert.equal((await db.query('SELECT has_unread_admin FROM support_tickets WHERE id=$1',[web])).rows[0].has_unread_admin,true);
 await assert.rejects(db.query("SELECT support_web_set_state_v1($1,$2,'close')",[web,webMsg]),/resolve_all_questions/);
+await db.query('UPDATE support_tickets SET has_unread_admin=false WHERE id=$1',[web]);
+await assert.rejects(db.query("SELECT support_web_set_state_v1($1,$2,'close')",[web,webMsg]),/resolve_all_questions/,'legacy read is not proof of resolution');
 await db.query("SELECT support_web_set_state_v1($1,$2,'resolve')",[web,webMsg]);
+await db.query("SELECT send_support_web_message_v1($1,$2,'[]'::jsonb,false,null,$3)",[web,'Confirmation after explicit resolution',webMsg]);
+assert.equal((await db.query('SELECT has_unread_admin FROM support_tickets WHERE id=$1',[web])).rows[0].has_unread_admin,false,'reply preserves explicit resolution');
 await db.query("SELECT support_web_set_state_v1($1,$2,'close')",[web,webMsg]);
 assert.equal((await db.query('SELECT status FROM support_tickets WHERE id=$1',[web])).rows[0].status,'closed');
 await db.query("INSERT INTO ticket_messages(ticket_id,author_type,message) VALUES($1,'user','A new question')",[web]);
 assert.equal((await db.query('SELECT status,has_unread_admin FROM support_tickets WHERE id=$1',[web])).rows[0].status,'open');
 await assert.rejects(db.query("SELECT support_web_set_state_v1($1,$2,'close')",[web,webMsg]),/resolve_all_questions|support_new_incoming/);
+await db.query('UPDATE support_tickets SET telegram_bridge_enabled=NULL WHERE id=$1',[web]);
+await assert.rejects(db.query('SELECT support_web_messages_v1($1)',[web]),/web_ticket_scope_not_verified/,'unknown bridge config is excluded');
 await db.close();
 console.log('PASS: bot isolation, Business exclusion, UUID/microsecond CAS, assignment/reaction idempotency, permissions, disabled channels, web bridge exclusion, intermediate reply preserves unread and new incoming reopens closed ticket. Synthetic local DB only.');

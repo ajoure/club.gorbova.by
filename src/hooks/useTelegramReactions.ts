@@ -36,7 +36,8 @@ function buildReactionsMap(
   return result;
 }
 
-export function useTelegramReactions(messageIds: string[], scopedPolling = false) {
+export function useTelegramReactions(messageIds: string[], supportBotId?: string) {
+  const scopedPolling = !!supportBotId;
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const viewerId = user?.id ?? "anon";
@@ -50,9 +51,19 @@ export function useTelegramReactions(messageIds: string[], scopedPolling = false
   const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
 
   const query = useQuery({
-    queryKey: ["telegram-reactions", stableIdsCsv, viewerId],
+    queryKey: ["telegram-reactions", stableIdsCsv, viewerId, ...(supportBotId ? [supportBotId] : [])],
     queryFn: async () => {
       if (!stableIds.length) return {} as MessageReactionsMap;
+
+      if (supportBotId) {
+        const rows: Array<{ message_id: string; emoji: string; user_id: string }> = [];
+        for (let offset = 0; offset < stableIds.length; offset += 200) {
+          const { data, error } = await supabase.rpc("support_bot_reactions_v1" as any, { p_bot_id: supportBotId, p_message_ids: stableIds.slice(offset, offset + 200) } as any);
+          if (error) throw error;
+          rows.push(...((data || []) as unknown as typeof rows));
+        }
+        return buildReactionsMap(rows, user?.id);
+      }
 
       const { data, error } = await supabase
         .from("telegram_message_reactions")
@@ -109,6 +120,19 @@ export function useToggleTelegramReaction(supportBotId?: string) {
     mutationFn: async ({ messageId, emoji }: { messageId: string; emoji: string }) => {
       if (!user?.id) throw new Error("Not authenticated");
 
+      if (supportBotId) {
+        const { data: rows, error: readError } = await supabase.rpc("support_bot_reactions_v1" as any, {
+          p_bot_id: supportBotId, p_message_ids: [messageId],
+        } as any);
+        if (readError) throw readError;
+        const wasRemoved = ((rows || []) as unknown as Array<{user_id:string;emoji:string}>).some(r => r.user_id === user.id && r.emoji === emoji);
+        const { error } = await supabase.rpc("support_bot_set_reaction_v1" as any, {
+          p_bot_id: supportBotId, p_message_id: messageId, p_emoji: emoji, p_present: !wasRemoved,
+        } as any);
+        if (error) throw error;
+        return { messageId, emoji, wasRemoved };
+      }
+
       const { data: existing, error: existingError } = await supabase
         .from("telegram_message_reactions")
         .select("id")
@@ -120,14 +144,6 @@ export function useToggleTelegramReaction(supportBotId?: string) {
       if (existingError) throw existingError;
 
       const wasRemoved = !!existing?.id;
-
-      if (supportBotId) {
-        const { error } = await supabase.rpc("support_bot_set_reaction_v1" as any, {
-          p_bot_id: supportBotId, p_message_id: messageId, p_emoji: emoji, p_present: !wasRemoved,
-        } as any);
-        if (error) throw error;
-        return { messageId, emoji, wasRemoved };
-      }
 
       if (existing?.id) {
         const { error } = await supabase

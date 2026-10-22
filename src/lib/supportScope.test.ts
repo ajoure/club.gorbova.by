@@ -10,9 +10,9 @@ describe('support isolation before external effects', () => {
     }
   });
   it('requires explicit bot and recipient; rejects fallback and unsupported actions', () => {
-    const action = {action:'send_message', support_bot_id:bot, support_observed_incoming_id:'incoming', bot_id:bot, sender_type:'bot', user_id:'client'};
+    const action = {action:'send_message', support_bot_id:bot, support_observed_incoming_id:'incoming', support_request_id:'request', bot_id:bot, sender_type:'bot', user_id:'client'};
     expect(supportActionAllowed(action)).toBe(true);
-    for (const patch of [{support_observed_incoming_id:undefined}, {bot_id:undefined}, {sender_type:'business'}, {business_account_id:'personal'}, {user_id:undefined}, {action:'process_media_jobs'}, {action:'bridge_ticket_message'}, {action:'get_messages'}]) {
+    for (const patch of [{support_request_id:undefined}, {support_observed_incoming_id:undefined}, {bot_id:undefined}, {sender_type:'business'}, {business_account_id:'personal'}, {user_id:undefined}, {action:'process_media_jobs'}, {action:'bridge_ticket_message'}, {action:'get_messages'}]) {
       expect(supportActionAllowed({...action,...patch})).toBe(false);
     }
   });
