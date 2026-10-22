@@ -5,10 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import * as law from '../../supabase/functions/gorbova-ai-chat/mns-current-law';
 import * as access from '../../supabase/functions/_shared/ai-access';
 import { persistAiChatExchange } from '../../supabase/functions/_shared/ai-chat-persistence';
+import { AI_CHAT_AUDIT_VERSION, writeAccessAudit } from '../../supabase/functions/gorbova-ai-chat/access-audit';
 
 const prompt = { id: 'current', code: '107NK', title: 'MNS', type: 'file_analysis', is_active: true, is_archived: false, is_visible_in_chat: true, prompt_text: 'Применять Указ №227. Не ссылаться на старый указ.', response_format: null };
 const attachment = { id: 'law', prompt_id: 'current', file_name: 'Указ №227', extracted_text: 'Указ №227 от 06.06.2025', extraction_status: 'ready' };
-function harness(options: { adapter?: boolean; output?: unknown; authenticated?: boolean; allowed?: boolean; corpusError?: boolean; attachments?: any[]; prompts?: any[]; saved?: any[]; upstreamStatus?: number; upstreamBody?: any; scenario?: string } = {}) {
+function harness(options: { adapter?: boolean; output?: unknown; authenticated?: boolean; allowed?: boolean; corpusError?: boolean; auditFailure?: boolean; attachments?: any[]; prompts?: any[]; saved?: any[]; upstreamStatus?: number; upstreamBody?: any; scenario?: string } = {}) {
   let handler!: (req: Request) => Promise<Response>;
   const saved = options.saved || [];
   const writes: any[] = [];
@@ -21,7 +22,17 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
         : table === 'ai_chat_messages' ? saved : [];
       const run = (single = false) => {
         if (options.corpusError && table === 'ai_prompt_attachments') return { data: null, error: new Error('DB unavailable') };
-        if (insert) { writes.push({ table, insert }); if (table === 'ai_chat_messages') { const items = insert.map((r: any) => ({ id: crypto.randomUUID(), ...r })); saved.push(...items); return { data: items, error: null }; } return { data: null, error: null }; }
+        if (insert) {
+          writes.push({ table, insert });
+          if (table === 'audit_logs') {
+            const unknown = Object.keys(insert).filter(k => !['actor_user_id', 'actor_type', 'action', 'entity_type', 'meta'].includes(k));
+            return options.auditFailure || unknown.length
+              ? { data: null, error: { code: 'PGRST204', message: 'schema error must not reach logs' } }
+              : { data: { id: crypto.randomUUID() }, error: null };
+          }
+          if (table === 'ai_chat_messages') { const items = insert.map((r: any) => ({ id: crypto.randomUUID(), ...r })); saved.push(...items); return { data: items, error: null }; }
+          return { data: null, error: null };
+        }
         const data = rows.filter(row => filters.every(([key, value]) => {
           const actual = key.startsWith('metadata->>') ? row.metadata?.[key.slice(11)] : row[key];
           return key.startsWith('metadata->>') ? String(actual) === String(value) : actual === value;
@@ -43,7 +54,7 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
   const fetch = vi.fn(async (_url: string, _init: any) => options.adapter
     ? Response.json((options.upstreamStatus || 200) >= 400 ? options.upstreamBody : canonicalReply, { status: options.upstreamStatus || 200 })
     : Response.json({ choices: [{ message: { content: options.output === undefined ? 'Согласно Указу №227 сообщаем...' : options.output } }] }));
-  const injected: Record<string, any> = { ...access, ...(options.adapter ? {} : law), persistAiChatExchange, createClient: () => db, fetch,
+  const injected: Record<string, any> = { ...access, ...(options.adapter ? {} : law), persistAiChatExchange, writeAccessAudit, createClient: () => db, fetch,
     resolveAiAccess: async () => ({ tier: 'full', is_admin: true }), isModeAllowed: () => ({ allowed: options.allowed !== false, reason: '107NK_not_in_tier' }) };
   const source = readFileSync(`supabase/functions/${options.adapter ? 'mns-response-generator' : 'gorbova-ai-chat'}/index.ts`, 'utf8').replace(/^import[^;]+;\s*/gm, '');
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
@@ -53,6 +64,46 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
 }
 
 describe('canonical 107NK handler', () => {
+  it('can verify the deployed audit writer with one unsupported-upload refusal and no model/history effects', async () => {
+    const h = harness({ scenario: 'no_upload' });
+    const response = await h.call({ unsupported_files: [{ name: 'probe.bin', reason: 'unsupported_format' }] });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: 'upload_not_allowed_for_mode' });
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.saved).toHaveLength(0);
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0].insert).toMatchObject({ actor_user_id: 'own', action: 'ai_chat.upload_not_allowed_for_mode', meta: { scenario_code: 'no_upload', audit_schema_version: AI_CHAT_AUDIT_VERSION } });
+    expect(JSON.stringify(h.writes)).not.toContain('probe.bin');
+  });
+  it.each([
+    ['Согласно Указам №227 и №510 сообщаем...', false, true],
+    ['Документы получены.', true, false],
+  ])('records which law predicate rejected the result, without saving its content: %s', async (output, current_output, follows_current_law) => {
+    const h = harness({ output });
+    const response = await h.call();
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: 'mns_law_validation_failed' });
+    expect(h.saved).toHaveLength(0);
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0].insert).toMatchObject({ actor_user_id: 'own', actor_type: 'user', action: 'ai_chat.mns_law_rejected', meta: { current_output, follows_current_law, baseline: law.MNS_LAW_BASELINE, audit_schema_version: AI_CHAT_AUDIT_VERSION } });
+    expect(JSON.stringify(h.writes)).not.toContain(output);
+  });
+  it('keeps a rejected model answer blocked even when audit insertion fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const h = harness({ output: 'Документы получены.', auditFailure: true });
+      expect((await h.call()).status).toBe(422);
+      expect(h.saved).toHaveLength(0);
+      expect(h.writes).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith('[gorbova-ai-chat] audit_write_failed', { action: 'ai_chat.mns_law_rejected', kind: 'schema' });
+    } finally { warn.mockRestore(); }
+  });
+  it.each([{ output: {} }, { output: [] }, { output: 42 }])('keeps non-text model results as a law refusal rather than a diagnostic error: $output', async ({ output }) => {
+    const h = harness({ output });
+    expect((await h.call()).status).toBe(422);
+    expect(h.saved).toHaveLength(0);
+    expect(h.writes[0].insert.meta).toMatchObject({ current_output: false, follows_current_law: false });
+  });
   it('rejects the observed unverified paragraph numbers before history/quota', async () => {
     const h = harness({ output: 'Согласно пункту 11 Положения, утвержденного Указом №227, право возникает при проверке. Пункт 31 Положения требует предписания.' });
     const response = await h.call();
