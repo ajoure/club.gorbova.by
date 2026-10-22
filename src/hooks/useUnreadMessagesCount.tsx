@@ -1,3 +1,5 @@
+import { useLocation } from "react-router-dom";
+import { isSupportWorkspaceRoute } from "@/lib/supportWorkspaceRoute";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useVisibilityPolling } from "./useVisibilityPolling";
@@ -17,11 +19,14 @@ import { UNREAD_MESSAGES_COUNT_QK } from "@/constants/inboxQueryKeys";
  * realtime-канала.
  */
 export function useUnreadMessagesCount() {
+  const location = useLocation();
+  const enabled = !isSupportWorkspaceRoute(location.pathname, location.search);
   // 5 минут — safety net. Основная сигнализация идёт через realtime-bus.
   const visibilityInterval = useVisibilityPolling(5 * 60 * 1000);
 
   const { data: count = 0 } = useQuery({
     queryKey: UNREAD_MESSAGES_COUNT_QK,
+    enabled,
     queryFn: async () => {
       const { data, error } = await supabase.rpc(
         "get_contact_center_unanswered_total_v1" as any,
@@ -37,5 +42,5 @@ export function useUnreadMessagesCount() {
     retry: 3,
   });
 
-  return count;
+  return enabled ? count : 0;
 }

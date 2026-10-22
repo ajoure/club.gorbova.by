@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
  * across Telegram / Instagram / Support ticket channels. Should be mounted once
  * in AdminLayout so it works on any admin page.
  */
-export function useIncomingMessageAlert() {
+export function useIncomingMessageAlert(enabled = true) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const hasPushSubscriptionRef = useRef(true);
 
@@ -51,6 +51,7 @@ export function useIncomingMessageAlert() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     // Единый канал: Telegram + Instagram incoming + клиентские сообщения в тикетах.
     // Гейт unifiedEnabled убран — звук приходит всем админам, не задваивается
     // (у моно-лент IG/Support своего звука нет).
@@ -117,7 +118,7 @@ export function useIncomingMessageAlert() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [enabled]);
 
   function getMessagePreview(row: unknown): string {
     const message = row as Record<string, unknown> | null;

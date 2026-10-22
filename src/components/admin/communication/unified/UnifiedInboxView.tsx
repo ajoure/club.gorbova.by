@@ -1,3 +1,4 @@
+import { latestObservedIncomingBoundary, telegramMessageCacheKey } from "@/lib/telegramChatCache";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -452,15 +453,8 @@ export function UnifiedInboxView({
     try {
       if (ch.source === "telegram") {
         const userId = sr.meta.telegramUserId!;
-        let boundary: string | null = null;
-        const msgs = queryClient.getQueryData<any[]>(["telegram-messages", userId]);
-        if (Array.isArray(msgs)) {
-          for (const m of msgs) {
-            if (m?.direction === "incoming" && typeof m?.created_at === "string") {
-              if (!boundary || m.created_at > boundary) boundary = m.created_at;
-            }
-          }
-        }
+        const msgs = queryClient.getQueryData(telegramMessageCacheKey(userId));
+        let boundary = latestObservedIncomingBoundary(msgs);
         if (!boundary) boundary = sr.lastMessageAt || null;
         if (!boundary) throw new Error("нет observed boundary");
         const { registerSelfMark, clearSelfMark } = await import(

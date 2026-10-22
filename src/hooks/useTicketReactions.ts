@@ -13,7 +13,7 @@ export interface MessageReactions {
   [messageId: string]: ReactionGroup[];
 }
 
-export function useTicketReactions(ticketId: string, messageIds: string[]) {
+export function useTicketReactions(ticketId: string, messageIds: string[], scopedPolling = false) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const viewerId = user?.id ?? "anon";
@@ -57,11 +57,12 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
       return result;
     },
     enabled: stableIds.length > 0 && !!user?.id,
+    refetchInterval: scopedPolling ? 15_000 : false,
   });
 
   // Realtime subscription scoped to ticketId
   useEffect(() => {
-    if (!ticketId) return;
+    if (!ticketId || scopedPolling) return;
 
     const channel = supabase
       .channel(`ticket-reactions-rt-${ticketId}`)
@@ -90,7 +91,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, stableIdsCsv, viewerId, queryClient]);
+  }, [ticketId, stableIdsCsv, viewerId, queryClient, scopedPolling]);
 
   return query;
 }

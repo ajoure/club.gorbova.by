@@ -58,7 +58,18 @@ const tabs = [
   { id: "settings", label: "Настройки", icon: Settings },
 ];
 
+const SupportWorkspace = lazy(() => import("@/components/admin/communication/SupportWorkspace"));
+
 export default function AdminCommunication() {
+  const [params] = useSearchParams();
+  // Separate mount boundary: none of the combined inbox hooks run in this mode.
+  if (params.get("support_mode") === "1") return <AdminLayout fullHeight>
+    <Suspense fallback={<ContactCenterPanelFallback />}><SupportWorkspace /></Suspense>
+  </AdminLayout>;
+  return <CombinedAdminCommunication />;
+}
+
+function CombinedAdminCommunication() {
   const queryClient = useQueryClient();
   const access = useAdminAccess();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -182,6 +193,9 @@ export default function AdminCommunication() {
                       align="start"
                       className="min-w-[160px] bg-background/80 backdrop-blur-xl border border-border/30 shadow-lg rounded-lg"
                     >
+                      <DropdownMenuItem onClick={() => setSearchParams({ tab: "inbox", support_mode: "1" })}>
+                        <LifeBuoy className="mr-2 h-3.5 w-3.5" />Служебная поддержка
+                      </DropdownMenuItem>
                       {unifiedEnabled && (
                         <DropdownMenuItem 
                           onClick={() => { handleTabChange("inbox"); setInboxChannel("all"); }}

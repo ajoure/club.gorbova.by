@@ -36,6 +36,8 @@ type MediaFileType = "photo" | "video" | "audio" | "video_note" | "voice" | "doc
 
 interface TicketChatProps {
   ticketId: string;
+  isolatedWeb?: boolean;
+  readOnly?: boolean;
   isAdmin?: boolean;
   isClosed?: boolean;
   telegramUserId?: number | null;
@@ -47,7 +49,7 @@ interface TicketChatProps {
 // match storage bucket limit for ticket-attachments
 const MAX_TICKET_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
-export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, telegramMode = "bridge", onBridgeMessage }: TicketChatProps) {
+export function TicketChat({ isolatedWeb = false, readOnly = false, ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, telegramMode = "bridge", onBridgeMessage }: TicketChatProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [message, setMessage] = useState("");
@@ -94,7 +96,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: messages, isLoading } = useTicketMessages(ticketId, isAdmin);
+  const { data: messages, isLoading, isError: historyError } = useTicketMessages(ticketId, isAdmin, isolatedWeb);
 
   // Defense-in-depth: redundant render-level filter for non-admin views
   const visibleMessages = isAdmin ? messages : messages?.filter(m => !m.is_internal);
@@ -115,7 +117,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     () => visibleMessages?.map((m) => m.id) || [],
     [visibleMessages]
   );
-  const { data: reactionsMap } = useTicketReactions(ticketId, messageIds);
+  const { data: reactionsMap } = useTicketReactions(ticketId, messageIds, isolatedWeb);
   const toggleReaction = useToggleReaction(ticketId);
 
   const sendMessageMutation = useSendMessage();
@@ -125,10 +127,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   // Mark ticket as read when opened
   useEffect(() => {
-    if (ticketId) {
+    if (ticketId && !isolatedWeb) {
       markRead.mutate({ ticketId, isAdmin: !!isAdmin });
     }
-  }, [ticketId, isAdmin]);
+  }, [ticketId, isAdmin, isolatedWeb]);
 
   // Scroll to bottom on new messages only while the operator stays at the
   // live tail. The flag is captured before React changes scrollHeight.
@@ -169,7 +171,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   }, [ticketId]);
 
   // Show TG checkbox only for admin when user has telegram and bridge is on
-  const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
+  const canBridgeToTelegram = !isolatedWeb && isAdmin && telegramBridgeEnabled && telegramUserId;
 
   // Telegram delivery is always an explicit per-message choice.
   useEffect(() => {
@@ -275,7 +277,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   };
 
   const handleSend = async () => {
-    if (sendingRef.current || sendMessageMutation.isPending || isUploading || isClosed || (!message.trim() && !attachedFile)) return;
+    if (readOnly || (isolatedWeb && historyError) || sendingRef.current || sendMessageMutation.isPending || isUploading || isClosed || (!message.trim() && !attachedFile)) return;
     sendingRef.current = true;
     try {
 
@@ -324,6 +326,8 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
       const result = await sendMessageMutation.mutateAsync({
         ticket_id: ticketId,
+        isolated_web: isolatedWeb,
+        observed_incoming_id: visibleMessages?.filter(m => m.author_type === "user").at(-1)?.id ?? null,
         message: message.trim(),
         author_type: isAdmin ? "support" : "user",
         is_internal: isAdmin ? isInternal : false,
@@ -376,11 +380,11 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             isCurrentUser={msg.author_id === user?.id && !isAdmin}
             isAdmin={isAdmin}
             reactions={reactionsMap?.[msg.id]}
-            onToggleReaction={(emoji) =>
+            onToggleReaction={isolatedWeb || readOnly ? undefined : (emoji) =>
               toggleReaction.mutate({ messageId: msg.id, emoji })
             }
-            onEditMessage={isAdmin ? (messageId, newText) => editMessage.mutate({ messageId, ticketId, newText }) : undefined}
-            onDeleteMessage={isAdmin ? (messageId) => deleteMessage.mutate({ messageId, ticketId }) : undefined}
+            onEditMessage={isAdmin && !isolatedWeb && !readOnly ? (messageId, newText) => editMessage.mutate({ messageId, ticketId, newText }) : undefined}
+            onDeleteMessage={isAdmin && !isolatedWeb && !readOnly ? (messageId) => deleteMessage.mutate({ messageId, ticketId }) : undefined}
             displayAvatarUrl={
               msg.display_user_id
                 ? displayProfilesMap?.get(msg.display_user_id)?.avatar_url ?? null
@@ -396,7 +400,8 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
         <div ref={scrollEndRef} />
       </ScrollArea>
 
-      {!isClosed && (
+      {isolatedWeb && historyError && <p role="alert" className="p-3 text-sm text-destructive">История не проверена. Отправка недоступна до повторной проверки канала.</p>}
+      {!isClosed && !readOnly && !(isolatedWeb && historyError) && (
         <div className="contact-center-safe-bottom border-t p-4 shrink-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           {isAdmin && (
             <div className="flex items-center gap-4 mb-2 flex-wrap">

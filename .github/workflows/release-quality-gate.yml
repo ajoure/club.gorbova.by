@@ -153,6 +153,18 @@ jobs:
           deno test --no-lock --no-config --node-modules-dir=none --allow-env --allow-net scripts/sales-knowledge/runtime-checkout.test.ts scripts/sales-knowledge/runtime-media.test.ts
       - name: MNS current-law Edge types
         run: node scripts/verify-mns-function-bundles.mjs
+      - name: Support channel isolation and real PostgreSQL concurrency
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: referral-test-only
+          PGDATABASE: support_channel_boundary_test
+          SUPPORT_BOUNDARY_SQL_FIXTURE: /tmp/support-channel-boundary-fixture.sql
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE support_channel_boundary_test'
+          node scripts/tests/support-channel-boundary.test.mjs
+          node scripts/tests/support-channel-concurrency.test.mjs
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build

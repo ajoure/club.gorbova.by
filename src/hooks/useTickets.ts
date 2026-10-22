@@ -65,6 +65,8 @@ export interface CreateTicketData {
 }
 
 export interface CreateMessageData {
+  isolated_web?: boolean;
+  observed_incoming_id?: string | null;
   ticket_id: string;
   message: string;
   attachments?: TicketAttachment[];
@@ -211,12 +213,17 @@ export function useTicket(ticketId: string | undefined) {
 }
 
 // Hook for ticket messages
-export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean = false) {
+export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean = false, isolatedWeb = false) {
   const queryClient = useQueryClient();
 
   const query = useQuery({
-    queryKey: ["ticket-messages", ticketId, isAdmin],
+    queryKey: ["ticket-messages", ticketId, isAdmin, ...(isolatedWeb ? ["web-only"] : [])],
     queryFn: async () => {
+      if (isolatedWeb) {
+        const { data, error } = await supabase.rpc("support_web_messages_v1" as any, { p_ticket_id: ticketId } as any);
+        if (error) throw error;
+        return (data || []) as unknown as TicketMessage[];
+      }
       let q = supabase
         .from("ticket_messages")
         .select("*")
@@ -234,11 +241,12 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
       return data as TicketMessage[];
     },
     enabled: !!ticketId,
+    refetchInterval: isolatedWeb ? 15_000 : false,
   });
 
   // Realtime subscription for live message updates
   useEffect(() => {
-    if (!ticketId) return;
+    if (!ticketId || isolatedWeb) return;
 
     const channelName = `ticket-messages-rt:${ticketId}:${isAdmin ? "admin" : "user"}`;
     const channel = supabase
@@ -252,7 +260,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
           filter: `ticket_id=eq.${ticketId}`,
         },
         () => {
-          const key = ["ticket-messages", ticketId, isAdmin];
+          const key = ["ticket-messages", ticketId, isAdmin, ...(isolatedWeb ? ["web-only"] : [])];
           queryClient.invalidateQueries({ queryKey: key });
           queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
@@ -266,7 +274,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
           filter: `ticket_id=eq.${ticketId}`,
         },
         () => {
-          const key = ["ticket-messages", ticketId, isAdmin];
+          const key = ["ticket-messages", ticketId, isAdmin, ...(isolatedWeb ? ["web-only"] : [])];
           queryClient.invalidateQueries({ queryKey: key });
           queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
@@ -276,7 +284,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, isAdmin, queryClient]);
+  }, [ticketId, isAdmin, queryClient, isolatedWeb]);
 
   return query;
 }
@@ -424,13 +432,17 @@ export function useSendMessage() {
   return useMutation({
     mutationFn: async (data: CreateMessageData) => {
       if (!user) throw new Error("Необходимо войти в систему");
-      const { data: result, error } = await supabase.rpc("send_ticket_message_v2" as any, {
+      const args = {
+        ...(data.isolated_web ? { p_observed_incoming_id: data.observed_incoming_id ?? null } : {}),
         p_ticket_id: data.ticket_id,
         p_message: data.message,
         p_attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
         p_is_internal: data.is_internal || false,
         p_display_user_id: data.display_user_id || null,
-      } as any);
+      };
+      const { data: result, error } = data.isolated_web
+        ? await supabase.rpc("send_support_web_message_v1" as any, args as any)
+        : await supabase.rpc("send_ticket_message_v2" as any, args as any);
       if (error) throw error;
       const response = result as unknown as { success?: boolean; message?: TicketMessage };
       if (!response?.success || !response.message) {
@@ -443,6 +455,7 @@ export function useSendMessage() {
       queryClient.invalidateQueries({ queryKey: ["ticket", variables.ticket_id] });
       queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
       queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+      if (variables.isolated_web) queryClient.invalidateQueries({ queryKey: ["support-web-tickets"] });
     },
     onError: (error: any, variables) => {
       console.error("[useSendMessage] Error:", {

@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,7 +36,7 @@ function buildReactionsMap(
   return result;
 }
 
-export function useTelegramReactions(messageIds: string[]) {
+export function useTelegramReactions(messageIds: string[], scopedPolling = false) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const viewerId = user?.id ?? "anon";
@@ -62,10 +63,11 @@ export function useTelegramReactions(messageIds: string[]) {
       return buildReactionsMap(data || [], user?.id);
     },
     enabled: stableIds.length > 0 && !!user?.id,
+    refetchInterval: scopedPolling ? 15_000 : false,
   });
 
   useEffect(() => {
-    if (!stableIdsCsv) return;
+    if (!stableIdsCsv || scopedPolling) return;
 
     const channel = supabase
       .channel(`telegram-reactions-rt-${viewerId}-${Math.random().toString(36).slice(2, 10)}`)
@@ -94,12 +96,12 @@ export function useTelegramReactions(messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [stableIdsCsv, viewerId, queryClient]);
+  }, [stableIdsCsv, viewerId, queryClient, scopedPolling]);
 
   return query;
 }
 
-export function useToggleTelegramReaction() {
+export function useToggleTelegramReaction(supportBotId?: string) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -118,6 +120,14 @@ export function useToggleTelegramReaction() {
       if (existingError) throw existingError;
 
       const wasRemoved = !!existing?.id;
+
+      if (supportBotId) {
+        const { error } = await supabase.rpc("support_bot_set_reaction_v1" as any, {
+          p_bot_id: supportBotId, p_message_id: messageId, p_emoji: emoji, p_present: !wasRemoved,
+        } as any);
+        if (error) throw error;
+        return { messageId, emoji, wasRemoved };
+      }
 
       if (existing?.id) {
         const { error } = await supabase
@@ -138,9 +148,22 @@ export function useToggleTelegramReaction() {
 
       return { messageId, emoji, wasRemoved };
     },
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ["telegram-reactions"] });
 
+      if (supportBotId && result) {
+        try {
+          const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+            body: { action: "sync_telegram_reaction", support_bot_id: supportBotId,
+              telegram_message_db_id: result.messageId, emoji: result.emoji, remove: result.wasRemoved },
+          });
+          if (error || !data?.ok) throw new Error(data?.reason || "delivery_unknown");
+          toast.success("Реакция доставлена в Telegram");
+        } catch {
+          toast.error("Реакция сохранена, но доставка в Telegram не подтверждена. Не повторяйте её без проверки.");
+        }
+        return;
+      }
       // Fire-and-forget: sync reaction to Telegram
       if (result) {
         supabase.functions.invoke("telegram-admin-chat", {

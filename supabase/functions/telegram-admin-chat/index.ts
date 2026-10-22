@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { assertSupportAction } from "./supportScope.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -32,6 +33,8 @@ function resolveTelegramMediaTransport(type: FileData["type"]): { method: string
 }
 
 interface ChatAction {
+  support_bot_id?: string;
+  support_observed_incoming_id?: string | null;
   action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification" | "sync_telegram_reaction";
   user_id?: string;
   message?: string;
@@ -462,6 +465,14 @@ Deno.serve(async (req) => {
 
 
 
+    try {
+      await assertSupportAction(supabase, payload, user.id);
+    } catch (error) {
+      return new Response(JSON.stringify({ success: false, error: error instanceof Error ? error.message : "support_scope_denied" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     switch (action) {
       case "send_message": {
         const { user_id, message, file, bot_id, sender_type, business_account_id } = payload;
@@ -520,7 +531,7 @@ Deno.serve(async (req) => {
         // connection row id, but never supplies a raw Telegram connection id or
         // token. We additionally require this exact dialog to have been seen
         // through the selected Business account.
-        const { data: lastBusinessMessage } = await supabase
+        const { data: lastBusinessMessage } = payload.support_bot_id ? { data: null } : await supabase
           .from("telegram_messages")
           .select("bot_id, business_connection_id, business_account_id")
           .eq("user_id", user_id)
@@ -2414,6 +2425,11 @@ Deno.serve(async (req) => {
             .eq("status", "active")
             .single();
           syncBotToken = bot?.bot_token_encrypted ?? null;
+        }
+        if (!syncBotToken && payload.support_bot_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "support_bot_unavailable" }), {
+            status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
         if (!syncBotToken) {
           const { data: prof } = await supabase
