@@ -43,6 +43,10 @@ export function createSupportSendGate(service: any, payload: any, actorId: strin
       p_telegram_message_id: sent ? result.result.message_id : null,
     });
     if (finish.error || (!sent && !rejected)) throw new Error('support_send_delivery_unknown_do_not_retry');
+    if (sent && payload.file?.type === 'voice' && !result.result.voice) {
+      // Delivery is known. Preserve it and warn; no support delete/second call.
+      return {...result,support_warning:'Сообщение доставлено вложением: Telegram изменил формат голосового. Повторно отправлять его не нужно.'};
+    }
     return result;
   };
 }

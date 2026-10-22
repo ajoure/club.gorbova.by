@@ -38,6 +38,7 @@ interface TicketChatProps {
   ticketId: string;
   isolatedWeb?: boolean;
   readOnly?: boolean;
+  onHistoryReadyChange?: (ready: boolean) => void;
   isAdmin?: boolean;
   isClosed?: boolean;
   telegramUserId?: number | null;
@@ -49,7 +50,7 @@ interface TicketChatProps {
 // match storage bucket limit for ticket-attachments
 const MAX_TICKET_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
-export function TicketChat({ isolatedWeb = false, readOnly = false, ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, telegramMode = "bridge", onBridgeMessage }: TicketChatProps) {
+export function TicketChat({ isolatedWeb = false, readOnly = false, onHistoryReadyChange, ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, telegramMode = "bridge", onBridgeMessage }: TicketChatProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [message, setMessage] = useState("");
@@ -96,7 +97,14 @@ export function TicketChat({ isolatedWeb = false, readOnly = false, ticketId, is
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: messages, isLoading, isError: historyError } = useTicketMessages(ticketId, isAdmin, isolatedWeb);
+  const { data: messages, isLoading, isError: historyError, isFetching: historyFetching, isFetchedAfterMount: historyFetched } = useTicketMessages(ticketId, isAdmin, isolatedWeb);
+
+  const historyReady = !!messages && historyFetched && !historyError && !historyFetching;
+  useEffect(() => {
+    if (!isolatedWeb) return;
+    onHistoryReadyChange?.(historyReady);
+    return () => onHistoryReadyChange?.(false);
+  }, [isolatedWeb, historyReady, onHistoryReadyChange]);
 
   // Defense-in-depth: redundant render-level filter for non-admin views
   const visibleMessages = isAdmin ? messages : messages?.filter(m => !m.is_internal);
@@ -277,7 +285,7 @@ export function TicketChat({ isolatedWeb = false, readOnly = false, ticketId, is
   };
 
   const handleSend = async () => {
-    if (readOnly || (isolatedWeb && historyError) || sendingRef.current || sendMessageMutation.isPending || isUploading || isClosed || (!message.trim() && !attachedFile)) return;
+    if (readOnly || (isolatedWeb && !historyReady) || sendingRef.current || sendMessageMutation.isPending || isUploading || isClosed || (!message.trim() && !attachedFile)) return;
     sendingRef.current = true;
     try {
 
@@ -401,7 +409,7 @@ export function TicketChat({ isolatedWeb = false, readOnly = false, ticketId, is
       </ScrollArea>
 
       {isolatedWeb && historyError && <p role="alert" className="p-3 text-sm text-destructive">История не проверена. Отправка недоступна до повторной проверки канала.</p>}
-      {!isClosed && !readOnly && !(isolatedWeb && historyError) && (
+      {!isClosed && !readOnly && !(isolatedWeb && !historyReady) && (
         <div className="contact-center-safe-bottom border-t p-4 shrink-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           {isAdmin && (
             <div className="flex items-center gap-4 mb-2 flex-wrap">

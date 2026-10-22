@@ -43,7 +43,7 @@ Telegram recipient и истории синхронизации. Неясные/
 
 ## Проверки
 
-- Полный Vitest после исправлений ревизии: 358 файлов / 2313 тестов PASS.
+- Полный Vitest после исправлений ревизии: 359 файлов / 2315 тестов PASS.
   TypeScript/production build/Edge references/PGlite также проверены локально;
   real PostgreSQL concurrency остаётся обязательным gate CI.
 - TypeScript и production build локально PASS; результат сборки не равен Publish.
@@ -115,3 +115,12 @@ IS FALSE; close требует отдельного свежего resolution ma
 
 Консолидированная ревизия HEAD 6581aed дала F1–F9. Исправления ещё требуют
 точной повторной сверки этих замечаний, обязательных checks и managed применения.
+
+Оставшиеся зависимости ограниченной сверки исправлены: support voice не удаляется
+вторым Telegram-вызовом, подтверждённая доставка с другим форматом показывает
+предупреждение. Assignment BEFORE UPDATE/DELETE не ждёт dialog advisory с уже
+захваченной строкой, а возвращает retry, устраняя инверсию с resolve. Служебный
+notifier выбирает support-ветку из конфигурации source даже без клиентского hint.
+Web send/resolve/reopen/close требуют успешной свежей истории и блокируются
+при fetch/error. Claims доступны service для SELECT; прямые записи запрещены,
+finish RPC идемпотентно подтверждает идентичный уже сохранённый результат.

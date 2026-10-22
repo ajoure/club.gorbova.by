@@ -814,7 +814,7 @@ Deno.serve(async (req) => {
         // result.message_id + result.voice. If Telegram returned audio/document
         // or an empty result, do NOT silently accept it: delete the orphan
         // Telegram message and report a clear error to the admin.
-        if (file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
+        if (!payload.support_bot_id && file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
           const orphanMid = sendResult?.result?.message_id;
           const classified =
             sendResult?.result?.audio ? "audio"
@@ -1023,6 +1023,7 @@ Deno.serve(async (req) => {
 
         return new Response(JSON.stringify({
           success: sendResult.ok,
+          warning: sendResult.support_warning || null,
           message_id: sendResult.result?.message_id,
           error: sendResult.ok ? null : sendResult.description,
         }), {

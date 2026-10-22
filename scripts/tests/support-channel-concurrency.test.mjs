@@ -9,13 +9,13 @@ const bot='1a560e98-574e-4fd9-82ab-4b7bbdc300b4', actor='00000000-0000-0000-0000
 const old='00000000-0000-0000-0000-000000000100', fresh='00000000-0000-0000-0000-000000000101';
 const auth=`SET test.uid='${actor}'; SET test.access='manage';`;
 const insert=id=>`INSERT INTO telegram_messages(id,user_id,telegram_user_id,bot_id,transport,direction,created_at,message_text) VALUES('${id}','${client}',123,'${bot}','bot','incoming',clock_timestamp(),'Synthetic');`;
-function run(sql, marker) {
+function run(sql, marker, keepOpen=false) {
   const child=spawn('psql',['-X','-qAt','-v','ON_ERROR_STOP=1'],{env}); let output='',error='';
   let signal; const ready=new Promise(resolve=>{signal=resolve;});
   child.stdout.on('data',chunk=>{output+=chunk; if (marker && output.includes(marker)) signal();});
   child.stderr.on('data',chunk=>{error+=chunk;});
   const done=new Promise(resolve=>child.on('close',code=>{signal();resolve({code,output,error});}));
-  child.stdin.end(auth+sql); return {ready,done};
+  if(keepOpen) child.stdin.write(auth+sql); else child.stdin.end(auth+sql); return {ready,done,finish:(tail)=>child.stdin.end(tail)};
 }
 assert.equal((await run(insert(old)).done).code,0);
 const resolve=`SELECT support_bot_set_state_v1('${client}','${bot}','${old}','resolve');`;
@@ -65,3 +65,18 @@ const assigned=run(`BEGIN;SELECT support_bot_assign_v1('${client}','${bot}','${l
 await assigned.ready;const sendAfterAssignment=run(begin('00000000-0000-0000-0000-000000000301'));
 assert.equal((await assigned.done).code,0);const ownerRejected=await sendAfterAssignment.done;assert.notEqual(ownerRejected.code,0);assert.match(ownerRejected.error,/support_assigned_to_another_employee/);
 console.log('PASS real PostgreSQL: binding/assignment before CAS reject stale authorization; CAS first excludes profile/assignment changes without row/advisory deadlock.');
+
+// A legacy direct writer holds the row first; resolve holds advisory first.
+// The BEFORE trigger must fail fast instead of waiting in the opposite order.
+for (const operation of ['UPDATE','DELETE']) {
+  const clean=await run(`DELETE FROM contact_center_message_assignments;SELECT support_bot_assign_v1('${client}','${bot}','${latest}','${actor}');`).done;
+  assert.equal(clean.code,0,clean.error);
+  const direct=run(`BEGIN;SELECT id FROM contact_center_message_assignments WHERE resolved_at IS NULL FOR UPDATE;SELECT 'DIRECT_ROW_HELD';`,'DIRECT_ROW_HELD',true);
+  await direct.ready;
+  const resolving=run(`BEGIN;SELECT pg_advisory_xact_lock(hashtextextended('support-bot:${client}:${bot}',0));SELECT 'RESOLVE_ADVISORY_HELD';SELECT support_bot_set_state_v1('${client}','${bot}','${latest}','resolve');COMMIT;`,'RESOLVE_ADVISORY_HELD');
+  await resolving.ready;
+  direct.finish(operation==='UPDATE' ? "UPDATE contact_center_message_assignments SET note='Synthetic concurrent change';COMMIT;" : 'DELETE FROM contact_center_message_assignments;COMMIT;');
+  const directResult=await direct.done;assert.notEqual(directResult.code,0);assert.match(directResult.error,/support_assignment_busy_retry/);
+  const resolvedResult=await resolving.done;assert.equal(resolvedResult.code,0,resolvedResult.error);
+}
+console.log('PASS real PostgreSQL: direct assignment UPDATE/DELETE vs resolve fail fast, without deadlock.');

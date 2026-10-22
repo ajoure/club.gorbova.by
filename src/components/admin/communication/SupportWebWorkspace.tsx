@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -19,6 +19,8 @@ export default function SupportWebWorkspace() {
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const selectedId = params.get('ticket');
+  const [historyTicket,setHistoryTicket] = useState<string|null>(null);
+  const onHistoryReadyChange = useCallback((ready:boolean)=>setHistoryTicket(ready ? selectedId : null),[selectedId]);
   const tickets = useQuery({ queryKey: ['support-web-tickets', includeClosed, offset], queryFn: async () => {
     const { data, error } = await supabase.rpc('support_web_tickets_v1' as any, { p_include_closed: includeClosed, p_limit:50, p_offset:offset } as any);
     if (error) throw error;
@@ -26,7 +28,7 @@ export default function SupportWebWorkspace() {
   }, refetchInterval: 15_000 });
   const ticket = tickets.data?.find(t => t.id === selectedId);
   const select = (id?: string) => setParams({ tab:'inbox', support_mode:'1', channel:'web', ...(id ? { ticket:id } : {}) });
-  const blocked = tickets.isError || !access.canAccessSection('communication', 'manage') || !!(ticket?.assigned_to && ticket.assigned_to !== user?.id);
+  const blocked = !selectedId || historyTicket !== selectedId || tickets.isError || tickets.isFetching || !access.canAccessSection('communication', 'manage') || !!(ticket?.assigned_to && ticket.assigned_to !== user?.id);
   const setState = async (action: 'resolve' | 'reopen' | 'close') => {
     if (!ticket || busy || blocked) return;
     const messages = cache.getQueryData<TicketMessage[]>(['ticket-messages',ticket.id,true,'web-only']);
@@ -61,7 +63,7 @@ export default function SupportWebWorkspace() {
           <Button size="sm" variant="outline" disabled={busy || blocked} onClick={() => void setState('reopen')}>Оставить нерешённым</Button>
           <Button size="sm" variant="outline" disabled={busy || blocked} onClick={() => void setState('resolve')}>Все вопросы решены</Button>
           <Button size="sm" disabled={busy || blocked || ticket.has_unread_admin || ticket.status === 'closed'} onClick={() => void setState('close')}>Закрыть тикет</Button>
-        </div><div className="min-h-0 flex-1"><TicketChat key={ticket.id} ticketId={ticket.id} isAdmin isolatedWeb readOnly={blocked} isClosed={ticket.status === 'closed' || ticket.status === 'resolved'} /></div></>
+        </div><div className="min-h-0 flex-1"><TicketChat key={ticket.id} ticketId={ticket.id} isAdmin isolatedWeb onHistoryReadyChange={onHistoryReadyChange} readOnly={blocked} isClosed={ticket.status === 'closed' || ticket.status === 'resolved'} /></div></>
         : <p className="p-4 text-sm text-muted-foreground">Выберите доступный тикет из списка</p>}
       </section>
     </div>

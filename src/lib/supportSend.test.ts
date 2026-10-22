@@ -1,6 +1,6 @@
 import {describe,it,expect,vi} from 'vitest';
 import {createSupportSendGate,loadSupportUpload} from '../../supabase/functions/telegram-admin-chat/supportSend';
-import {supportNotificationLink,supportNotificationScope} from '../../supabase/functions/contact-center-assignment-notify/supportNotification';
+import {deriveSupportNotificationBot,supportNotificationLink,supportNotificationScope} from '../../supabase/functions/contact-center-assignment-notify/supportNotification';
 const payload={user_id:'user',support_bot_id:'bot',support_observed_incoming_id:'incoming',support_request_id:'nonce'};
 const claim={telegram_user_id:'123',lease_until:new Date(Date.now()+90_000).toISOString()};
 describe('support send authorization',()=>{
@@ -21,6 +21,13 @@ describe('support send authorization',()=>{
     await expect(createSupportSendGate({rpc},payload,'actor')(send)).rejects.toThrow('delivery_unknown');
     expect(send).toHaveBeenCalledTimes(1);expect(rpc.mock.calls[1][1].p_status).toBe('uncertain');
   });
+  it('preserves a known voice delivery with one request and a format warning',async()=>{
+    const rpc=vi.fn().mockResolvedValueOnce({data:claim}).mockResolvedValue({error:null});
+    const send=vi.fn(async()=>({ok:true,result:{message_id:78,audio:{file_id:'synthetic'}}}));
+    const result=await createSupportSendGate({rpc},{...payload,file:{type:'voice'}},'actor')(send);
+    expect(result.ok).toBe(true);expect(result.support_warning).toContain('Повторно отправлять');
+    expect(send).toHaveBeenCalledTimes(1);expect(rpc.mock.calls[1][1].p_status).toBe('sent');
+  });
   it('does not download an unowned file, and rejects an object changed during download',async()=>{
     const download=vi.fn(async()=>({data:new Blob(['synthetic'])}));
     const service={storage:{from:()=>({download})}};
@@ -34,6 +41,8 @@ describe('service assignment notification',()=>{
  it('links to the exact service bot and excludes private metadata',()=>{
   const message={user_id:'user',bot_id:'bot',transport:'bot',business_account_id:null,business_connection_id:null};
   expect(supportNotificationScope(message,'bot')).toBe(true);
+  expect(deriveSupportNotificationBot(message,{id:'bot'})).toBe('bot');
+  expect(()=>deriveSupportNotificationBot(message,{id:'bot'},'other')).toThrow('scope_mismatch');
   expect(supportNotificationScope({...message,business_connection_id:'private'},'bot')).toBe(false);
   expect(supportNotificationScope(message,'other')).toBe(false);
   const link=new URL(supportNotificationLink('user','bot'));

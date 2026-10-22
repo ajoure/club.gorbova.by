@@ -199,7 +199,11 @@ BEGIN
     WHERE id=v_source AND transport='bot'
       AND business_account_id IS NULL AND business_connection_id IS NULL;
   IF v_user IS NOT NULL AND public.support_bot_allowed_v1(v_bot) THEN
-    PERFORM pg_advisory_xact_lock(hashtextextended('support-bot:'||v_user::text||':'||v_bot::text,0));
+    -- Direct UPDATE/DELETE already owns an assignment row. Never wait on the
+    -- advisory lock here: resolve owns advisory first and may need that row.
+    IF NOT pg_try_advisory_xact_lock(hashtextextended('support-bot:'||v_user::text||':'||v_bot::text,0)) THEN
+      RAISE EXCEPTION 'support_assignment_busy_retry' USING ERRCODE='40001';
+    END IF;
     IF EXISTS(SELECT 1 FROM public.support_bot_send_claims WHERE user_id=v_user AND bot_id=v_bot AND status='sending' AND lease_until>clock_timestamp()) THEN
       RAISE EXCEPTION 'support_send_in_progress_retry' USING ERRCODE='40001';
     END IF;
@@ -427,7 +431,9 @@ CREATE TABLE public.support_bot_send_claims (
   finished_at timestamptz, telegram_message_id bigint
 );
 ALTER TABLE public.support_bot_send_claims ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.support_bot_send_claims FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.support_bot_send_claims FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT ON public.support_bot_send_claims TO service_role;
+CREATE POLICY support_claim_service_read ON public.support_bot_send_claims FOR SELECT TO service_role USING(true);
 CREATE INDEX support_bot_send_claims_pending ON public.support_bot_send_claims(user_id,bot_id)
   WHERE status IN ('sending','uncertain');
 
@@ -482,7 +488,11 @@ BEGIN
   IF p_status NOT IN ('sent','rejected','uncertain') OR (p_status='sent' AND p_telegram_message_id IS NULL) THEN RAISE EXCEPTION 'invalid_send_result'; END IF;
   UPDATE public.support_bot_send_claims SET status=p_status,telegram_message_id=p_telegram_message_id,finished_at=clock_timestamp()
     WHERE request_id=p_request_id AND status IN ('sending','uncertain');
-  IF NOT FOUND THEN RAISE EXCEPTION 'support_send_claim_not_pending'; END IF;
+  IF NOT FOUND THEN
+    IF EXISTS(SELECT 1 FROM public.support_bot_send_claims WHERE request_id=p_request_id AND status=p_status
+      AND telegram_message_id IS NOT DISTINCT FROM p_telegram_message_id) THEN RETURN; END IF;
+    RAISE EXCEPTION 'support_send_claim_not_pending';
+  END IF;
 END $$;
 REVOKE ALL ON FUNCTION public.support_bot_begin_send_v1(uuid,uuid,uuid,uuid,uuid,bigint),public.support_bot_finish_send_v1(uuid,text,bigint) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.support_bot_begin_send_v1(uuid,uuid,uuid,uuid,uuid,bigint),public.support_bot_finish_send_v1(uuid,text,bigint) TO service_role;
@@ -513,7 +523,7 @@ DECLARE v_object storage.objects%ROWTYPE;
 BEGIN
   IF auth.uid() IS NULL OR NOT COALESCE(public.has_admin_section_access(auth.uid(),'communication','manage'),false) THEN RAISE EXCEPTION 'forbidden' USING ERRCODE='42501'; END IF;
   IF p_user_id IS NULL OR NOT public.support_bot_allowed_v1(p_bot_id) OR p_path IS NULL OR p_path NOT LIKE 'outbound/'||p_user_id::text||'/%'
-    OR p_path ~ '(^|/)\.\.?(/|$)' THEN RAISE EXCEPTION 'support_upload_scope_mismatch'; END IF;
+    OR p_path ~ '(^|/)\.\.?(/|$)' OR p_path ~ '[%?#]' OR position(chr(92) in p_path)>0 OR position('//' in p_path)>0 THEN RAISE EXCEPTION 'support_upload_scope_mismatch'; END IF;
   SELECT * INTO v_object FROM storage.objects WHERE bucket_id='telegram-media' AND name=p_path AND archived_at IS NULL;
   IF v_object.id IS NULL OR v_object.owner_id IS DISTINCT FROM auth.uid()::text OR v_object.is_delete_marker THEN RAISE EXCEPTION 'support_upload_owner_not_verified'; END IF;
   RETURN jsonb_build_object('id',v_object.id,'bucket_id',v_object.bucket_id,'name',v_object.name,

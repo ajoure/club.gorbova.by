@@ -1496,6 +1496,7 @@ function TelegramChannelChat({
       startStickyScroll(2200);
     },
     onSuccess: async (result) => {
+      if (result?.warning) toast.warning(result.warning);
       // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
       queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) =>
         (old || []).filter(m => !m.id.startsWith('temp-'))

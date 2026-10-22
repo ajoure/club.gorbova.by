@@ -77,3 +77,24 @@ Known operational limit: unknown sending claim requires delivery reconciliation
 before any later send for the same dialog; timeout does not prove non-delivery.
 Only service_role can finish/reconcile, after external/history evidence. No
 customer body/file is stored in claims. Additive installation alone sends nothing.
+
+## Bounded follow-up at HEAD 7dd16e9d (12:47 UTC)
+
+Diff completeness confirmed (33 blobs, 189509 bytes); F2/F3/F4/F5/F7/F8 PASS.
+Remaining F1/F6/F9 dependencies: legacy voice cleanup outside send gate; direct
+assignment row -> advisory inversion vs resolve; service claims read-back ACL
+and idempotent finish; notifier must derive support routing if hint omitted;
+web history freshness must protect send/state actions too. No production writes.
+
+Remediation: support voice delivery preserved with explicit format warning,
+no support cleanup/delete; assignment BEFORE trigger uses try-advisory fail/retry
+rather than waiting with a row lock. Deterministic real PG regression holds row
+and advisory in opposite sessions then exercises direct UPDATE and DELETE.
+Service gets SELECT + RLS policy for claims; writes only via service finish RPC,
+which accepts identical confirmed result idempotently (lost response read-back).
+Notifier derives exact support bot from server metadata, regardless of omitted
+hint, and content query repeats scope filters. Web child reports successful
+fresh history; parent state actions and child send block on mount/fetch/error.
+Actual web workspace regression covers cached initial data and failed refresh.
+Storage additionally rejects URL-ambiguous percent/query/fragment/backslash paths.
+These changes require bounded verification of the remaining findings only.

@@ -81,10 +81,15 @@ await db.query('UPDATE telegram_messages SET message_id=123 WHERE id=$1',[fresh]
 const claim=await begin(nonce,123);assert.equal(claim.rows[0].row.telegram_user_id,'123');
 await assert.rejects(db.query('UPDATE profiles SET telegram_user_id=456 WHERE user_id=$1',[client]),/support_send_in_progress/);
 await assert.rejects(db.query('SELECT support_bot_assign_v1($1,$2,$3,$4)',[client,bots[0],fresh,actor]),/support_send_in_progress/);
+await assert.rejects(db.query('DELETE FROM contact_center_message_assignments WHERE source_message_id=$1',[fresh]),/support_send_in_progress/);
 await assert.rejects(begin(),/support_send_already_attempted/);
 await db.query("SELECT support_bot_finish_send_v1($1,'uncertain',null)",[nonce]);
 await assert.rejects(begin('00000000-0000-0000-0000-000000000031'),/support_previous_send_delivery_unknown/);
 await db.query("SELECT support_bot_finish_send_v1($1,'sent',777)",[nonce]);
+await db.query("SELECT support_bot_finish_send_v1($1,'sent',777)",[nonce]);
+await db.exec('SET ROLE service_role');
+assert.equal((await db.query('SELECT status FROM support_bot_send_claims WHERE request_id=$1',[nonce])).rows[0].status,'sent');
+await db.exec('RESET ROLE');
 assert.equal((await db.query("SELECT has_function_privilege('authenticated','support_bot_begin_send_v1(uuid,uuid,uuid,uuid,uuid,bigint)','EXECUTE') AS allowed")).rows[0].allowed,false);
 const nonce2='00000000-0000-0000-0000-000000000032';await begin(nonce2);
 await db.query("UPDATE support_bot_send_claims SET lease_until=now()-interval '1 minute' WHERE request_id=$1",[nonce2]);
@@ -101,6 +106,7 @@ assert.equal((await db.query('SELECT support_bot_upload_v1($1,$2,$3) AS row',[cl
 await db.query('UPDATE storage.objects SET owner_id=$1',[client]);
 await assert.rejects(db.query('SELECT support_bot_upload_v1($1,$2,$3)',[client,bots[0],uploadPath]),/support_upload_owner/);
 await assert.rejects(db.query('SELECT support_bot_upload_v1($1,$2,$3)',[client,bots[0],'inbound/private.txt']),/support_upload_scope/);
+await assert.rejects(db.query('SELECT support_bot_upload_v1($1,$2,$3)',[client,bots[0],`outbound/${client}/file%2fsecret`]),/support_upload_scope/);
 await db.exec("SELECT set_config('test.access','view',false)");
 assert.equal((await db.query('SELECT support_bot_messages_v1($1,$2)',[client,bots[0]])).rows.length,3);
 await assert.rejects(db.query('SELECT support_bot_set_state_v1($1,$2,$3,\'resolve\')',[client,bots[0],fresh]),/forbidden/);

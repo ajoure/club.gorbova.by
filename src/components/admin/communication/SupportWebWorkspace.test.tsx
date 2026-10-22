@@ -1,0 +1,42 @@
+import {afterEach,describe,it,expect,vi} from 'vitest';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import {MemoryRouter} from 'react-router-dom';
+import SupportWebWorkspace from './SupportWebWorkspace';
+const mocks=vi.hoisted(()=>({rpc:vi.fn(),send:vi.fn(),mutate:vi.fn()}));
+vi.mock('@/contexts/AuthContext',()=>({useAuth:()=>({user:{id:'operator'}})}));
+vi.mock('@/hooks/useAdminAccess',()=>({useAdminAccess:()=>({canAccessSection:()=>true})}));
+vi.mock('@/hooks/useDisplayProfiles',()=>({useDisplayProfiles:()=>({data:new Map()})}));
+vi.mock('@/hooks/useTicketReactions',()=>({useTicketReactions:()=>({data:{}}),useToggleReaction:()=>({mutate:mocks.mutate})}));
+vi.mock('@/hooks/useTickets',async()=>({...await vi.importActual<typeof import('@/hooks/useTickets')>('@/hooks/useTickets'),useSendMessage:()=>({mutateAsync:mocks.send,isPending:false}),useMarkTicketRead:()=>({mutate:mocks.mutate}),useEditTicketMessage:()=>({mutate:mocks.mutate}),useDeleteTicketMessage:()=>({mutate:mocks.mutate})}));
+vi.mock('@/integrations/supabase/client',()=>({supabase:{rpc:mocks.rpc,from:()=>({select:()=>({in:async()=>({data:[],error:null})})})}}));
+vi.mock('@/components/admin/VideoNoteRecorder',()=>({VideoNoteRecorder:()=>null}));
+vi.mock('@/components/support/TicketMessage',()=>({TicketMessage:()=>null}));
+vi.mock('@/components/admin/chat/PdfViewer',()=>({PdfViewer:()=>null}));
+afterEach(()=>{cleanup();vi.clearAllMocks();});
+describe('web support fresh-history boundary',()=>{
+ it('blocks send and state actions during initial fetch with cached history and after refresh failure',async()=>{
+  const history=[{id:'incoming',ticket_id:'ticket',author_type:'user',message:'Synthetic web question',created_at:'2026-10-22T10:00:00Z'}];
+  let release:(value:unknown)=>void=()=>{};let fail=false;
+  mocks.rpc.mockImplementation(async(name:string)=>{
+    if(name==='support_web_tickets_v1') return {data:[{id:'ticket',ticket_number:'TEST',subject:'Synthetic',status:'open',has_unread_admin:false,assigned_to:null}],error:null};
+    if(name==='support_web_messages_v1') return fail ? {data:null,error:new Error('Synthetic history error')} : await new Promise(resolve=>{release=resolve;});
+    throw new Error('Unexpected mutation');
+  });
+  const cache=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  cache.setQueryData(['ticket-messages','ticket',true,'web-only'],history);
+  const view=render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/admin/communication?tab=inbox&support_mode=1&channel=web&ticket=ticket']}><SupportWebWorkspace /></MemoryRouter></QueryClientProvider>);
+  const resolveButton=await screen.findByRole('button',{name:'Все вопросы решены'});
+  expect(resolveButton).toBeDisabled();expect(screen.getByRole('button',{name:'Закрыть тикет'})).toBeDisabled();
+  expect(screen.queryByPlaceholderText('Введите сообщение...')).not.toBeInTheDocument();
+  await act(async()=>release({data:history,error:null}));
+  await waitFor(()=>expect(resolveButton).toBeEnabled());
+  expect(screen.getByRole('button',{name:'Закрыть тикет'})).toBeEnabled();
+  const editor=screen.getByPlaceholderText('Введите сообщение...');fireEvent.change(editor,{target:{value:'Synthetic answer'}});
+  fail=true;await act(async()=>{await cache.invalidateQueries({queryKey:['ticket-messages']});});
+  await waitFor(()=>expect(resolveButton).toBeDisabled());expect(screen.getByRole('button',{name:'Закрыть тикет'})).toBeDisabled();
+  expect(screen.queryByPlaceholderText('Введите сообщение...')).not.toBeInTheDocument();
+  fireEvent.click(resolveButton);expect(mocks.rpc.mock.calls.every(([name])=>['support_web_tickets_v1','support_web_messages_v1'].includes(name))).toBe(true);
+  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.mutate).not.toHaveBeenCalled();view.unmount();cache.clear();
+ });
+});
