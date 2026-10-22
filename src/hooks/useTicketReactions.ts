@@ -13,7 +13,7 @@ export interface MessageReactions {
   [messageId: string]: ReactionGroup[];
 }
 
-export function useTicketReactions(ticketId: string, messageIds: string[]) {
+export function useTicketReactions(ticketId: string, messageIds: string[], scopedPolling = false) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const viewerId = user?.id ?? "anon";
@@ -27,19 +27,25 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
   const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
 
   const query = useQuery({
-    queryKey: ["ticket-reactions", stableIdsCsv, viewerId],
+    queryKey: ["ticket-reactions", stableIdsCsv, viewerId, ...(scopedPolling ? ["web-only"] : [])],
     queryFn: async () => {
       if (!stableIds.length) return {} as MessageReactions;
 
-      const { data, error } = await supabase
-        .from("ticket_message_reactions")
-        .select("message_id, emoji, user_id")
-        .in("message_id", stableIds);
-
-      if (error) throw error;
+      const rows: Array<{message_id:string;emoji:string;user_id:string}> = [];
+      if (scopedPolling) {
+        for (let offset = 0; offset < stableIds.length; offset += 200) {
+          const { data, error } = await supabase.rpc("support_web_reactions_v1" as any, { p_ticket_id:ticketId, p_message_ids:stableIds.slice(offset,offset+200) } as any);
+          if (error) throw error;
+          rows.push(...((data || []) as unknown as typeof rows));
+        }
+      } else {
+        const { data, error } = await supabase.from("ticket_message_reactions").select("message_id, emoji, user_id").in("message_id", stableIds);
+        if (error) throw error;
+        rows.push(...(data || []));
+      }
 
       const result: MessageReactions = {};
-      for (const row of data || []) {
+      for (const row of rows) {
         if (!result[row.message_id]) result[row.message_id] = [];
 
         const existing = result[row.message_id].find((r) => r.emoji === row.emoji);
@@ -57,11 +63,12 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
       return result;
     },
     enabled: stableIds.length > 0 && !!user?.id,
+    refetchInterval: scopedPolling ? 15_000 : false,
   });
 
   // Realtime subscription scoped to ticketId
   useEffect(() => {
-    if (!ticketId) return;
+    if (!ticketId || scopedPolling) return;
 
     const channel = supabase
       .channel(`ticket-reactions-rt-${ticketId}`)
@@ -90,7 +97,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, stableIdsCsv, viewerId, queryClient]);
+  }, [ticketId, stableIdsCsv, viewerId, queryClient, scopedPolling]);
 
   return query;
 }

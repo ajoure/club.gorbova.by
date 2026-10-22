@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { assertSupportAction } from "./supportScope.ts";
+import { createSupportSendGate, loadSupportUpload } from "./supportSend.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -32,6 +34,9 @@ function resolveTelegramMediaTransport(type: FileData["type"]): { method: string
 }
 
 interface ChatAction {
+  support_bot_id?: string;
+  support_request_id?: string;
+  support_observed_incoming_id?: string | null;
   action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification" | "sync_telegram_reaction";
   user_id?: string;
   message?: string;
@@ -251,9 +256,11 @@ async function telegramSendFile(
   caption?: string,
   replyToMessageId?: number | null,
   businessConnectionId?: string | null,
+  supportSend?: (form: FormData) => Promise<any>,
+  preparedBytes?: Uint8Array,
 ) {
   // Load bytes from base64 (small files) or storage (large files)
-  const bytes = await loadFileBytes(supabase, file);
+  const bytes = preparedBytes ?? await loadFileBytes(supabase, file);
 
   let contentType = guessMimeType(file.name, file.type);
   let fileName = file.name;
@@ -306,6 +313,7 @@ async function telegramSendFile(
 
   formData.append(fieldName, blob, fileName);
 
+  if (supportSend) return await supportSend(formData);
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
     method: "POST",
     body: formData,
@@ -462,6 +470,14 @@ Deno.serve(async (req) => {
 
 
 
+    try {
+      await assertSupportAction(supabase, payload, user.id);
+    } catch (error) {
+      return new Response(JSON.stringify({ success: false, error: error instanceof Error ? error.message : "support_scope_denied" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     switch (action) {
       case "send_message": {
         const { user_id, message, file, bot_id, sender_type, business_account_id } = payload;
@@ -520,7 +536,7 @@ Deno.serve(async (req) => {
         // connection row id, but never supplies a raw Telegram connection id or
         // token. We additionally require this exact dialog to have been seen
         // through the selected Business account.
-        const { data: lastBusinessMessage } = await supabase
+        const { data: lastBusinessMessage } = payload.support_bot_id ? { data: null } : await supabase
           .from("telegram_messages")
           .select("bot_id, business_connection_id, business_account_id")
           .eq("user_id", user_id)
@@ -718,6 +734,8 @@ Deno.serve(async (req) => {
           });
         }
 
+        const preparedSupportBytes = payload.support_bot_id ? await loadSupportUpload(supabase, anonClient, payload) : undefined;
+        const supportGate = payload.support_bot_id ? createSupportSendGate(supabase, payload, user.id) : null;
         let sendResult: any;
         
         if (file) {
@@ -731,6 +749,14 @@ Deno.serve(async (req) => {
               message || undefined,
               replyToMessageId ?? null,
               businessConnectionId,
+              supportGate ? (form) => supportGate(async (recipient, signal) => {
+                profile.telegram_user_id = Number(recipient);
+                form.set('chat_id', recipient);
+                const transport = resolveTelegramMediaTransport(file.type);
+                const response = await fetch(`https://api.telegram.org/bot${botToken}/${transport.method}`, {method:'POST',body:form,signal});
+                return await response.json();
+              }) : undefined,
+              preparedSupportBytes,
             );
           } catch (fileErr) {
             const fileErrorMessage = fileErr instanceof Error ? fileErr.message : String(fileErr);
@@ -756,7 +782,7 @@ Deno.serve(async (req) => {
             });
             return new Response(JSON.stringify({
               success: false,
-              error: "Не удалось обработать файл. Попробуйте выбрать файл заново.",
+              error: payload.support_bot_id ? fileErrorMessage : "Не удалось обработать файл. Попробуйте выбрать файл заново.",
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
@@ -775,7 +801,12 @@ Deno.serve(async (req) => {
               allow_sending_without_reply: true,
             };
           }
-          sendResult = await telegramRequest(botToken, "sendMessage", sendBody);
+          sendResult = supportGate ? await supportGate(async (recipient, signal) => {
+            profile.telegram_user_id = Number(recipient);
+            sendBody.chat_id = recipient;
+            const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sendBody),signal});
+            return await response.json();
+          }) : await telegramRequest(botToken, "sendMessage", sendBody);
         }
 
         // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: voice STOP-guard.
@@ -783,7 +814,7 @@ Deno.serve(async (req) => {
         // result.message_id + result.voice. If Telegram returned audio/document
         // or an empty result, do NOT silently accept it: delete the orphan
         // Telegram message and report a clear error to the admin.
-        if (file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
+        if (!payload.support_bot_id && file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
           const orphanMid = sendResult?.result?.message_id;
           const classified =
             sendResult?.result?.audio ? "audio"
@@ -865,7 +896,7 @@ Deno.serve(async (req) => {
               if (file.storage_path) {
                 storageBucket = file.storage_bucket || 'telegram-media';
                 storagePath = file.storage_path;
-                console.log(`[OUTBOUND] Reusing storage path: bucket=${storageBucket} path=${storagePath}`);
+                if (!payload.support_bot_id) console.log(`[OUTBOUND] Reusing storage path: bucket=${storageBucket} path=${storagePath}`);
               } else {
                 // Small files came via base64: upload them now for UI preview.
                 const localBytes = await loadFileBytes(supabase, file);
@@ -992,6 +1023,7 @@ Deno.serve(async (req) => {
 
         return new Response(JSON.stringify({
           success: sendResult.ok,
+          warning: sendResult.support_warning || null,
           message_id: sendResult.result?.message_id,
           error: sendResult.ok ? null : sendResult.description,
         }), {
@@ -2414,6 +2446,11 @@ Deno.serve(async (req) => {
             .eq("status", "active")
             .single();
           syncBotToken = bot?.bot_token_encrypted ?? null;
+        }
+        if (!syncBotToken && payload.support_bot_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "support_bot_unavailable" }), {
+            status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
         if (!syncBotToken) {
           const { data: prof } = await supabase

@@ -1,6 +1,7 @@
 // Sends one operational Telegram notification when a contact-center question
 // is assigned. The database assignment remains canonical; notification failure
 // never rolls back or duplicates the assignment.
+import { deriveSupportNotificationBot, supportNotificationLink } from "./supportNotification.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -37,7 +38,7 @@ Deno.serve(async (request) => {
       return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const { assignment_id } = await request.json();
+    const { assignment_id, support_bot_id: requestedSupportBotId } = await request.json();
     if (!assignment_id) {
       return new Response(JSON.stringify({ error: "assignment_id_required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -49,6 +50,17 @@ Deno.serve(async (request) => {
     if (assignmentError || !assignment || assignment.resolved_at) {
       return new Response(JSON.stringify({ error: "assignment_not_found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
+    // Derive service routing from server metadata; omitting a client hint must
+    // never turn a service assignment into a combined/personal Telegram link.
+    const {data: source, error: sourceError} = await supabase.from('telegram_messages')
+      .select('user_id,bot_id,transport,business_account_id,business_connection_id').eq('id',assignment.source_message_id).maybeSingle();
+    if (sourceError || !source) throw new Error('source_scope_unavailable');
+    const {data: allowedBot, error: botError} = source.bot_id ? await supabase.from('telegram_bots')
+      .select('id,status,support_enabled,bot_token_encrypted').eq('id',source.bot_id).maybeSingle() : {data:null,error:null};
+    if (botError) throw new Error('source_scope_unavailable');
+    const support_bot_id = deriveSupportNotificationBot(source,allowedBot,requestedSupportBotId);
+    const scopedBot = support_bot_id ? allowedBot : null;
 
     const idempotencyKey = `contact-center-assignment:${assignment.id}:${assignment.assignee_user_id}:${assignment.assigned_at}`;
     const { error: outboxError } = await supabase.from("notification_outbox").insert({
@@ -81,8 +93,10 @@ Deno.serve(async (request) => {
 
     const [{ data: recipient }, { data: message }, { data: bot }] = await Promise.all([
       supabase.from("profiles").select("telegram_user_id, full_name").eq("user_id", assignment.assignee_user_id).maybeSingle(),
-      supabase.from("telegram_messages").select("message_text, user_id").eq("id", assignment.source_message_id).maybeSingle(),
-      supabase.from("telegram_bots").select("bot_token_encrypted").eq("status", "active").order("is_primary", { ascending: false }).limit(1).maybeSingle(),
+      support_bot_id ? supabase.from('telegram_messages').select('message_text,user_id').eq('id',assignment.source_message_id)
+        .eq('bot_id',support_bot_id).eq('transport','bot').is('business_account_id',null).is('business_connection_id',null).maybeSingle()
+        : supabase.from("telegram_messages").select("message_text, user_id").eq("id", assignment.source_message_id).maybeSingle(),
+      scopedBot ? Promise.resolve({data:scopedBot}) : supabase.from("telegram_bots").select("bot_token_encrypted").eq("status", "active").order("is_primary", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (!recipient?.telegram_user_id || !bot?.bot_token_encrypted) {
       await supabase.from("notification_outbox").update({ status: "failed", blocked_reason: "recipient_or_bot_unavailable" }).eq("idempotency_key", idempotencyKey);
@@ -116,9 +130,9 @@ Deno.serve(async (request) => {
       contact?.phone ? `📞 ${String(contact.phone).trim()}` : null,
     ].filter(Boolean);
     const siteUrl = (Deno.env.get("CONTACT_CENTER_SITE_URL") || "https://club.gorbova.by").replace(/\/+$/, "");
-    const dialogUrl = `${siteUrl}/admin/communication?tab=inbox&chat=${encodeURIComponent(message.user_id)}`;
+    const dialogUrl = support_bot_id ? supportNotificationLink(message.user_id,support_bot_id) : `${siteUrl}/admin/communication?tab=inbox&chat=${encodeURIComponent(message.user_id)}`;
     const inlineKeyboard = [[{ text: "Посмотреть вопрос", url: dialogUrl }]];
-    if (safeTelegramUsername) {
+    if (safeTelegramUsername && !support_bot_id) {
       inlineKeyboard.push([{ text: "Открыть в Telegram", url: `https://t.me/${safeTelegramUsername}` }]);
     }
     const sent = await telegramRequest(bot.bot_token_encrypted, "sendMessage", {

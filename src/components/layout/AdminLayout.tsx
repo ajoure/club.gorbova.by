@@ -1,3 +1,4 @@
+import { isSupportWorkspaceRoute } from "@/lib/supportWorkspaceRoute";
 import { ReactNode, useEffect, useMemo } from "react";
 import { Navigate, Link, useLocation } from "react-router-dom";
 import { useRbac } from "@/hooks/useRbac";
@@ -176,10 +177,11 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   ]);
   
   // Global sound alert for incoming messages on any admin page
-  useIncomingMessageAlert();
+  const supportOnly = isSupportWorkspaceRoute(location.pathname, location.search);
+  useIncomingMessageAlert(!supportOnly);
   // SINGLE OWNER realtime bus → invalidate inbox-dialogs / unread-count
   // (заменяет локальную подписку в InboxTabContent и в useUnreadMessagesCount)
-  useInboxRealtimeInvalidation();
+  useInboxRealtimeInvalidation(!supportOnly);
 
   // Get the page title for the current route
   const pageTitle = useMemo(() => {

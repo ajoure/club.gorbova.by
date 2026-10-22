@@ -45,7 +45,7 @@ import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
  * React Query: при двух последовательных invalidate в пределах одного
  * batch'а реальный HTTP-запрос делается один раз благодаря in-flight dedup.
  */
-export function useInboxRealtimeInvalidation(): void {
+export function useInboxRealtimeInvalidation(enabled = true): void {
   const queryClient = useQueryClient();
   const [unifiedEnabled] = useUnifiedInboxFlag();
   // refs не вызывают re-render и сохраняются между батчами событий
@@ -56,6 +56,7 @@ export function useInboxRealtimeInvalidation(): void {
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     const flush = () => {
       timerRef.current = null;
       const flushInbox = inboxPendingRef.current;
@@ -232,5 +233,5 @@ export function useInboxRealtimeInvalidation(): void {
       supabase.removeChannel(channel);
       if (unifiedChannel) supabase.removeChannel(unifiedChannel);
     };
-  }, [queryClient, unifiedEnabled]);
+  }, [queryClient, unifiedEnabled, enabled]);
 }
