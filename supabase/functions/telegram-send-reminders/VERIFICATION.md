@@ -25,7 +25,7 @@ deno check --no-lock --node-modules-dir=none supabase/functions/telegram-send-re
 git diff --check
 ```
 
-25 tests pass, including execution of the real HTTP handler with injected
+26 tests pass, including legacy provider rows linked only by order and execution of the real HTTP handler with injected
 read-only boundaries: preview cannot read bot tokens, create checkout, write,
 send, expose recipient identifiers or bypass payments-view authorization.
 The same suite/type check runs in the full release quality gate.

@@ -83,7 +83,7 @@ export async function resolveRenewalState(db: any, userId: string, productId: st
     if (orderError || !orders) return skip('order_lookup_failed');
     const { data: providers, error: providerError } = await db.from('provider_subscriptions')
       .select('subscription_v2_id,user_id,order_id,state,next_charge_at')
-      .or(`user_id.eq.${userId},subscription_v2_id.in.(${subscriptions.map((s: Subscription) => s.id).join(',')})`).limit(101);
+      .or(`user_id.eq.${userId},subscription_v2_id.in.(${subscriptions.map((s: Subscription) => s.id).join(',')}),order_id.in.(${orderIds.join(',')})`).limit(101);
     if (providerError || !providers) return skip('provider_lookup_failed');
     if (providers.length > 100) return skip('provider_limit');
     return classifyRenewalState({ userId, productId, activeUntil, now, subscriptions, providers, orders });

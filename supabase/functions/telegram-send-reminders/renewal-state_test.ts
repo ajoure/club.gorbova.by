@@ -119,6 +119,24 @@ Deno.test('database failures never become a positive automatic or manual decisio
   }
 });
 
+Deno.test('legacy provider linked only by order prevents duplicate manual checkout', async () => {
+  const f = fixture();
+  const provider = { user_id: null, subscription_v2_id: null, order_id: 'paid-order',
+    state: 'active', next_charge_at: end };
+  const db = { from(table: string) {
+    let filter = '';
+    const q = { select() { return q; }, eq() { return q; }, in() { return q; }, limit() { return q; },
+      or(value: string) { filter = value; return q; },
+      then(resolve: (r: unknown) => unknown) {
+        const data = table === 'subscriptions_v2' ? f.subscriptions : table === 'orders_v2' ? f.orders :
+          filter.split(',').includes(`order_id.in.(${provider.order_id})`) ? [provider] : [];
+        return Promise.resolve(resolve({ data, error: null }));
+      } };
+    return q;
+  } };
+  equal((await resolveRenewalState(db, 'user-a', 'product-a', end, now)).reason, 'local_provider_conflict');
+});
+
 // Execute the real HTTP handler with injected boundaries; no SDK/network or Telegram.
 // Reading the handler source avoids starting a listener via Deno.serve in a unit test.
 async function handlerHarness(allowed = true) {
