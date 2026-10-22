@@ -1,0 +1,29 @@
+name: Support automation safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/support-agent-state.py'
+      - 'scripts/test_support_agent_state.py'
+      - '.github/workflows/support-automation-safety.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/support-agent-state.py'
+      - 'scripts/test_support_agent_state.py'
+      - '.github/workflows/support-automation-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  idempotency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify local support journal without external effects
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest scripts/test_support_agent_state.py -v
