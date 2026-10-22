@@ -81,6 +81,24 @@ class SupportStateTest(unittest.TestCase):
         self.token = state.run_command(self.db, 'begin', now=103)['run_token']
         self.assertFalse(state.run_command(self.db, 'reserve', token=self.token, now=104, **self.scope)['ok'])
 
+    def test_reply_reaction_and_read_state_are_independent_across_restart(self):
+        self.assertTrue(self.action('reserve')['ok'])
+        self.action('record', outcome='verified')
+        for operation in ('react_heart', 'mark_read', 'mark_unread'):
+            scope = {**self.scope, 'operation': operation}
+            self.assertTrue(state.run_command(self.db, 'reserve', token=self.token, now=102, **scope)['ok'])
+            state.run_command(self.db, 'record', token=self.token, now=103, outcome='uncertain', **scope)
+        self.db.close()
+        self.db = state.connect(self.tmp.name)
+        for operation in ('react_heart', 'mark_read', 'mark_unread'):
+            scope = {**self.scope, 'operation': operation}
+            self.assertFalse(state.run_command(self.db, 'reserve', token=self.token, now=104, **scope)['ok'])
+            scope['message_id'] = '22222222-2222-4222-8222-222222222222'
+            self.assertTrue(state.run_command(self.db, 'reserve', token=self.token, now=104, **scope)['ok'])
+        dump = '\n'.join(self.db.iterdump())
+        self.assertNotIn(self.scope['message_id'], dump)
+        self.assertNotIn(scope['message_id'], dump)
+
 
 if __name__ == '__main__':
     unittest.main()

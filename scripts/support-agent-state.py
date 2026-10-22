@@ -14,7 +14,8 @@ import time
 import uuid
 
 DEFAULT_STATE = Path('/Users/fs/CodexWorkspace/State/gorbova-auto-support')
-OPERATIONS = ('reply', 'handoff', 'restore_access', 'resend_invite', 'close_ticket')
+OPERATIONS = ('reply', 'handoff', 'restore_access', 'resend_invite', 'close_ticket',
+              'react_heart', 'mark_read', 'mark_unread')
 OUTCOMES = ('verified', 'uncertain', 'not_executed')
 
 
