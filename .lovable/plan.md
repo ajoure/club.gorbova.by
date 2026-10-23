@@ -1,73 +1,59 @@
-План: аудит автотехподдержки контакт-центра (PLAN-ONLY, без исполнения)
+План: минимальное переназначение в Служебной поддержке (PLAN-ONLY, production только чтение)
 
-Scope: contact-center-auto-support. Точный SHA рабочей копии: `f3928ce8c0bf9de3f11e01a14301686000303190`, дерево чистое. Ветку `codex/contact-center-auto-support` создаёт Codex в GitHub — здесь ничего не менялось. Данные ниже — только агрегаты и метаданные.
+## 1. Состояние среды (прочитано)
 
-## 1. Источники, идентичность клиента, защита от двойного ответа
+- Source в Cloud: HEAD `adc4a5c3` (merge PR655), рабочее дерево чистое; совпадает с известным merged SHA. PR657 не трогался.
+- Managed journal: последние версии `20261007081532`, `20261006121448`, `20261005123053`. Версии `20261022113000_support_channel_boundary` в журнале нет, но функции `support_bot_assign_v1`, `support_bot_assignment_lock_v1`, `support_bot_begin_send_v1`, `assign_contact_center_dialog_v2` в базе есть. `support_bot_reassign_v1` нет. Перед execute надо сверить, как установлен boundary-пакет (тела функций против файла), — это стоп-условие, а не повод исправлять журнал.
+- «Build unsuccessful / Preview out of date / unpublished changes» в UI: в этой задаче не исправляется и не публикуется. Чужие незавершённые изменения в рабочем дереве Cloud не найдены (дерево чистое), но статус UI-очереди Lovable до execute надо перепроверить.
 
-- `support_tickets`: profile_id, user_id, telegram_user_id, telegram_bridge_enabled, status, has_unread_admin/user, first_response_at, merged_into_ticket_id.
-- `ticket_messages`: ticket_id, author_type, is_internal, attachments, is_read.
-- `telegram_messages`: зеркало бота и Business (`transport` = bot/business). Дедупликация webhook по update_id выполняется индексом `telegram_messages_bot_update_dedupe_idx`, это закреплено тестом.
-- `ai_handoffs`: telegram_user_id, user_id, status, assigned_to, last_message_id. `ai_admin_notifications`: handoff_id, status.
-- `contact_center_message_assignments` (source, source_message_id, assignee) — это действующая функция «поручить ответ».
-- Идентичность: Telegram ID связывается с профилем по `telegram_user_id`; для неизвестного ID создаётся гостевой контакт.
-- Защита от двойного ответа:
-  - `telegram-webhook` вызывает `telegram-ai-support` только при `bot_enabled` и пропускает вызов, если открыт handoff (`hold_ai_when_handoff_open`).
-  - `telegram-admin-chat` отменяет отложенные ответы продаж перед ручной отправкой.
-- Gap: нет единого курсора «последнее обработанное сообщение» для внешнего агента. Нет блокировки, которая сработала бы при одновременном ответе ИИ, cb21-sales и оператора в Business-канале. Это не проверено end-to-end.
+## 2. Можно ли обойтись существующими RPC
 
-## 2. Каналы, настройки, задания, агрегаты
+- `assign_contact_center_dialog_v2` — нет. Не фильтрует бот, transport, Business-поля, нет проверки support_enabled, нет CAS по последнему входящему, берёт самое старое непрочитанное входящее по всем каналам пользователя (может зацепить Business). Использовать для support-режима нельзя.
+- `support_bot_assign_v1` — подходит как основа, но не для смены владельца: при существующем активном назначении другого сотрудника возвращает `support_already_assigned`. Менять его семантику опасно (UI и тесты ждут этой ошибки как защиты).
+- Вывод: нужен один новый узкий RPC `support_bot_reassign_v1` рядом с `support_bot_assign_v1`, в той же блокировочной модели. Новой системы, бота или агента нет.
 
-- Каналы: бот @gorbovabybot (transport bot); Telegram Business — одно подключение, активно и может отвечать; веб-тикеты; email (отдельный ящик).
-- `ai_bot_settings`, одна строка:
-  - bot_enabled = **false** — ИИ-поддержка сейчас выключена;
-  - handoff_enabled = true, admin_notify_enabled = true, mode = inbox, hold_ai_when_handoff_open = true;
-  - admin_notify_targets — пустой массив, то есть **получатель не настроен**.
-- Задания, связанные с поддержкой: `cb21-sales-runtime` (каждые 10 с), `telegram-access-queue-processor`, `telegram-media-worker-cron`, `crm-tasks-notify-tick`. Задания, которое разбирало бы нерешённые обращения, **нет**.
-- Агрегаты: незакрытых тикетов — 21 (все open); открытых handoff — 2; ai_admin_notifications — 0 записей.
+## 3. Контракт `support_bot_reassign_v1`
 
-## 3. Штатные API для проверки и восстановления
+Аргументы: `p_user_id`, `p_bot_id`, `p_observed_incoming_id`, `p_observed_assignment_id`, `p_observed_assignee_user_id`, `p_new_assignee_user_id`, `p_request_id uuid`, `p_note`.
 
-- Проверка оплаты и доступа: только чтение `orders_v2` / `payments_v2` / `entitlements` / `subscriptions_v2` под ролью admin (RLS) либо `ai-access-status`. Готового read-only API «проверь клиента X» нет.
-- Восстановление оплаченного доступа: `grant-access-for-order` (идемпотентный, replay-merge, dedupe extended_by_orders). Авторизация: service_role или admin; ветка adminManualAccessEdit — только admin.
-  - Риск: ветка standard может **продлить срок**, если заказ ещё не учтён. Нужен guard «только при отсутствии entitlement по оплаченному заказу».
-- Telegram-доступ: `admin-regrant-wrongly-revoked` (admin/super_admin через has_role_v2, пропускает in_chat) и `telegram-grant-access` по каноническому пути. В очередь писать только с `meta.source` ∈ reinvite/manual_bulk/repair/admin_backfill.
-- Повторная отправка ссылки для входа или ссылки на курс: **отдельного штатного API нет**. Есть только `_shared/invite-link-helper.ts`, `telegram-link-manage` и одноразовые функции. Это gap.
-- Отправлять сообщения клиенту при проверке нельзя (стоп-правило).
+Порядок внутри одной транзакции:
+1. `auth.uid()` + `has_admin_section_access(...,'communication','manage')`; новый владелец имеет `view`; `support_bot_allowed_v1(p_bot_id)`; новый владелец ≠ текущий.
+2. Блокировки в том же порядке, что у `support_bot_begin_send_v1`: `support-binding:<user>`, затем `support-bot:<user>:<bot>` (без инверсии с триггерами, которые используют try-lock).
+3. Отказ при активном send-claim (`support_send_in_progress_retry`).
+4. CAS последнего входящего: только `transport='bot'`, оба Business NULL, этот бот → иначе `support_new_incoming_refresh_required`.
+5. CAS назначения: активное назначение в этом scope должно иметь ровно `p_observed_assignment_id` и `p_observed_assignee_user_id`, иначе `support_assignment_changed_refresh_required`. Обработка ровно одной строки, без массовых обновлений.
+6. Идемпотентность: если по `p_request_id` уже есть завершённое переназначение с теми же параметрами — вернуть `{assignment_id, created:false}` без изменений; при других параметрах — `support_request_conflict`.
+7. Действие: старое назначение закрыть (`resolved_at`, причина reassigned), новое вставить с тем же `source_message_id` = последнее входящее; запись в `audit_logs` (actor, old/new assignee, ids — без текстов).
+8. Возврат `{assignment_id, created:true}`; уведомление отправляет UI только при `created=true` через существующий `contact-center-assignment-notify`, как сейчас.
 
-## 4. Передача владельцу (handoff)
+Права: REVOKE от PUBLIC/anon, EXECUTE только authenticated (проверка manage внутри).
 
-- Путь: `telegram-ai-support` создаёт `ai_handoffs`, затем `ai_admin_notifications` (mode inbox), затем назначение через `assign_contact_center_message_v1` / `assign_contact_center_dialog_v2`, затем уведомление `contact-center-assignment-notify`.
-- Ключ получателя: `ai_bot_settings.admin_notify_targets` — **false (пусто)**. Назначен ли Сергей Федорчук исполнителем по умолчанию, не проверено: для этого нужно читать профиль/роль, а это ПДн. Предлагаю сверить только boolean.
+Хранение request_id: одна колонка `reassign_request_id uuid UNIQUE NULL` в `contact_center_message_assignments` (аддитивно) — без новой таблицы.
 
-## 5. Доступ для Codex
+## 4. UI (`SupportWorkspace.tsx`, самый узкий diff)
 
-- Сейчас нет MCP или узкого admin API для внешнего агента. Есть только `.lovable/mcp/manifest.json` (не проверялся), а функции требуют JWT админа.
-- Минимум изменений:
-  - read-only RPC `support_queue_snapshot_v1` (агрегаты, id, курсор, без текстов);
-  - RPC `support_case_verify_v1(ticket_id)` → флаги paid / entitled / tg_in_chat / missing_access, без сумм и карт;
-  - действие `support_restore_access_v1(order_id, dry_run)` — обёртка над grant-access-for-order с запретом продления;
-  - `support_escalate_v1(ticket_id, reason)` → штатное назначение.
-- Всё это — под отдельной сервисной ролью с аудитом в `audit_logs` и rate limit на стороне вызывающей стороны.
+- Разделить `blocked` на `notReady` (scope/история/права/ошибки) и `foreignAssigned`.
+- Отправка, реакции, unread, resolve/reopen по-прежнему блокируются при `notReady || foreignAssigned` — guard не ослабляется.
+- Если `foreignAssigned && !notReady`: показать отдельную кнопку «Переназначить», которая открывает подтверждение с текущим и выбранным новым владельцем. По подтверждению — `support_bot_reassign_v1` с наблюдаемыми id и новым `request_id` (генерируется при открытии диалога, повторно используется при повторе).
+- После успеха — обновить диалог; форма ответа активна только если новый владелец = текущий пользователь.
+- При неясном результате — тот же `request_id` при повторе, без повторного уведомления.
 
-## 6. Минимальный план (для отдельного execute)
+## 5. Тесты (Codex, локально, без production)
 
-1. Миграция: таблица курсора/лока `support_agent_cursor` (source, last_seen_id, lease_until) и четыре RPC выше: SECURITY DEFINER, REVOKE от anon/authenticated, GRANT только сервисной роли.
-2. Функция `support-agent-gateway`: аутентификация отдельным ключом, только перечисленные действия; по умолчанию dry_run=true.
-3. UI: в настройках ИИ задать получателя и показать журнал действий агента.
-4. Расписание проверок каждые 30 минут — на стороне Codex. Cron в БД не нужен.
-5. Dry-run → ожидаемые счётчики → действие по одному кейсу → read-back (entitlement, audit, отсутствие новых заказов и платежей).
-- Риски:
-  - продление срока при повторной выдаче;
-  - двойной ответ в Business-канале;
-  - запуск cb21-sales поверх поддержки;
-  - утечка ПДн в ответах RPC;
-  - включение bot_enabled без настроенного получателя.
+- PGlite: права (без manage → forbidden), бот вне allowlist, Business-сообщения игнорируются, CAS assignment/incoming, идемпотентный повтор, конфликт request_id, одна строка закрыта/одна создана.
+- Реальный PG (по образцу `scripts/tests/support-channel-concurrency.test.mjs`): новое входящее во время переназначения; параллельное assign/reassign; смена привязки профиля; активный send-claim; прямые UPDATE/DELETE назначения против reassign — без deadlock.
+- React: кнопка видна только при чужом назначении и готовности; отправка остаётся заблокирована до успеха; уведомление только при `created=true`.
 
-## Отдельно: gaps
+## 6. Managed migrations
 
-- Фото и скриншоты: медиа сохраняются через media-worker, но ИИ их не анализирует и не запрашивает скриншот целенаправленно.
-- Веб-тикеты: `telegram-ai-support` их не обрабатывает. В тикетах нет handoff/AI-слоя, есть только уведомление `ticket-message-notify`.
-- Business, окно 24 ч: ответ через Business возможен только при can_reply. Ограничение 24 ч на стороне Telegram в коде явно не обрабатывается — не проверено.
+Одна новая аддитивная миграция: колонка + уникальный индекс, функция `support_bot_reassign_v1`, grants. Без изменения существующих функций и без backfill. Применение — только отдельной командой Lovable execute после merge PR и сверки SHA.
 
-## Не проверено
-Фактические версии развёрнутых функций в сравнении с исходником; содержимое MCP manifest; кто исполнитель по умолчанию; поведение cb21-sales в отношении поддержки.
+## 7. Стоп-условия
+
+- Тела установленных support-функций не совпадают с файлом boundary-миграции или журнал не объясним.
+- В Cloud есть чужая незавершённая работа или неопубликованные изменения другой ветки.
+- Любой тест конкурентности падает или даёт deadlock/timeout.
+- Rowcount переназначения ≠ 1 закрытой + 1 новой строки.
+- Обнаружена необходимость трогать Business/личные каналы, оплаты, пользователей или массовые назначения.
+
+Ничего не исполнялось: код, данные, sync, deploy и Publish не затронуты; переписки, файлы и платежи не читались.
