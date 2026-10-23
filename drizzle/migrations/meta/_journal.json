@@ -134,6 +134,13 @@
       "when": 1792676941737,
       "tag": "0018_support_channel_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792738647836,
+      "tag": "0019_support_assignment_cas",
+      "breakpoints": true
     }
   ]
 }

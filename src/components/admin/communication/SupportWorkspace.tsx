@@ -1,11 +1,13 @@
 import SupportWebWorkspace from "./SupportWebWorkspace";
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { ContactTelegramChat } from '@/components/admin/ContactTelegramChat';
 import { Button } from '@/components/ui/button';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { useAdminAccess } from '@/hooks/useAdminAccess';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,7 +16,14 @@ import { latestObservedIncomingBoundary, telegramMessageCacheKey } from '@/lib/t
 type Bot = { id: string; label: string; username: string | null };
 type Dialog = { user_id: string; display_name: string; telegram_user_id: number | null; telegram_username: string | null;
   can_reply: boolean; last_message_preview: string | null; unread_count: number; latest_incoming_id: string;
+  assignment_id: string | null; assignment_version: string | null;
   assignee_user_id: string | null; assignee_name: string | null };
+type AssignmentRequest = {
+  scope: string; previousName: string; nextName: string; attempted: boolean;
+  args: { p_user_id: string; p_bot_id: string; p_observed_incoming_id: string; p_assignee_user_id: string;
+    p_observed_assignment_id: string | null; p_observed_assignment_version: string | null;
+    p_observed_telegram_user_id: number; p_request_id: string };
+};
 async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.rpc(name as any, args as any);
   if (error) throw error;
@@ -35,6 +44,10 @@ function SupportBotWorkspace() {
   const [busy, setBusy] = useState(false);
   const [assignee, setAssignee] = useState('');
   const [historyScope, setHistoryScope] = useState<string | null>(null);
+  const [assignmentToConfirm, setAssignmentToConfirm] = useState<AssignmentRequest | null>(null);
+  // Retain a request after an unknown result; a retry reconciles that same
+  // request instead of inventing another assignment/notification.
+  const assignmentRequests = useRef(new Map<string, AssignmentRequest>());
   useEffect(() => {
     // Do not retain a combined history from a previous operator-workspace visit.
     const roots = ['telegram-messages', 'telegram-messages-lean', 'telegram-messages-full-at', 'contact-center-unanswered'];
@@ -61,29 +74,68 @@ function SupportBotWorkspace() {
   const dialog = detail.data;
   const currentScope = bot && dialog ? `${bot.id}:${dialog.user_id}` : null;
   const onHistoryReadyChange = useCallback((ready: boolean) => setHistoryScope(ready ? currentScope : null), [currentScope]);
-  const blocked = !currentScope || historyScope !== currentScope || !access.canAccessSection('communication', 'manage') || channels.isError || detail.isError || !!(dialog?.assignee_user_id && dialog.assignee_user_id !== user?.id);
+  const notReady = !currentScope || historyScope !== currentScope || !dialog?.can_reply || !access.canAccessSection('communication', 'manage') || channels.isError || detail.isError;
+  const foreignAssigned = !!(dialog?.assignee_user_id && dialog.assignee_user_id !== user?.id);
+  const blocked = notReady || foreignAssigned;
   const updateRoute = (botId?: string, userId?: string) => setParams({ tab: 'inbox', support_mode: '1', ...(botId ? { bot: botId } : {}), ...(userId ? { chat: userId } : {}) });
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: ['support-bot-dialogs'] }),
     cache.invalidateQueries({ queryKey: ['support-bot-dialog'] }),
   ]);
-  const assign = async () => {
-    if (!bot || !dialog || busy || blocked || !assignee) return;
+  const prepareAssignment = () => {
+    if (!bot || !dialog || !user || busy || notReady || !assignee || dialog.telegram_user_id == null) return;
+    const scope = `${user.id}:${currentScope}`;
+    const previous = assignmentRequests.current.get(scope);
+    if (previous) { setAssignmentToConfirm(previous); return; }
     const rows = cache.getQueryData<Array<{ id: string; created_at: string; direction: string }>>(telegramMessageCacheKey(dialog.user_id, `support-bot:${bot.id}`)) || [];
     const boundary = latestObservedIncomingBoundary(rows);
     const observed = rows.filter(r => r.direction === 'incoming' && r.created_at === boundary).sort((a,b) => b.id.localeCompare(a.id))[0];
-    if (!observed) { toast.error('Сначала дождитесь загрузки истории вопроса'); return; }
+    if (!observed || observed.id !== dialog.latest_incoming_id) { toast.error('Обновите историю вопроса перед назначением'); return; }
+    if (!dialog.assignment_version) { toast.error('Обновите страницу для проверки текущего назначения'); return; }
+    const request: AssignmentRequest = { scope, previousName: dialog.assignee_name || 'Не назначен',
+      nextName: assignees.data?.find(person => person.user_id === assignee)?.display_name || 'Выбранный менеджер', attempted: false,
+      args: { p_user_id: dialog.user_id, p_bot_id: bot.id, p_observed_incoming_id: observed.id,
+        p_assignee_user_id: assignee, p_observed_assignment_id: dialog.assignment_id || null,
+        p_observed_assignment_version: dialog.assignment_version || null,
+        p_observed_telegram_user_id: dialog.telegram_user_id, p_request_id: crypto.randomUUID() } };
+    assignmentRequests.current.set(scope, request);
+    setAssignmentToConfirm(request);
+  };
+  const closeAssignmentConfirmation = () => {
+    if (busy) return;
+    if (assignmentToConfirm && !assignmentToConfirm.attempted) assignmentRequests.current.delete(assignmentToConfirm.scope);
+    setAssignmentToConfirm(null);
+  };
+  const assign = async () => {
+    const request = assignmentToConfirm;
+    if (!request || !bot || !dialog || !user || busy || notReady || request.scope !== `${user.id}:${currentScope}`) return;
+    request.attempted = true;
     setBusy(true);
     try {
       const result = await rpc<{ assignment_id: string; created: boolean }>('support_bot_assign_v1', {
-        p_user_id: dialog.user_id, p_bot_id: bot.id, p_observed_incoming_id: observed.id, p_assignee_user_id: assignee,
+        ...request.args,
       });
       await refresh();
+      assignmentRequests.current.delete(request.scope);
+      setAssignmentToConfirm(null);
       if (!result.created) { toast.info('Назначение уже существует. Повторное уведомление не отправлено'); return; }
-      const { data, error } = await supabase.functions.invoke('contact-center-assignment-notify', { body: { assignment_id: result.assignment_id, support_bot_id: bot.id } });
-      if (error || data?.success !== true) toast.warning('Назначение сохранено, доставка уведомления не подтверждена');
-      else toast.success('Менеджер назначен, уведомление доставлено');
-    } catch { toast.error('Результат назначения не подтверждён. Обновите историю перед повтором'); }
+      try {
+        const { data, error } = await supabase.functions.invoke('contact-center-assignment-notify', { body: { assignment_id: result.assignment_id, support_bot_id: request.args.p_bot_id } });
+        if (error || data?.success !== true) toast.warning('Назначение сохранено, доставка уведомления не подтверждена');
+        else toast.success('Менеджер назначен, уведомление доставлено');
+      } catch { toast.warning('Назначение сохранено, доставка уведомления не подтверждена'); }
+    } catch (error) {
+      // These PostgreSQL exceptions prove rollback. A transport timeout does
+      // not: retain its original request ID for an explicit reconciliation.
+      const rejection = error as { code?: string; message?: string };
+      if (['40001', '22023', '42501'].includes(rejection?.code || '') &&
+        /^(support_new_incoming_refresh_required|support_assignment_stale_refresh_required|support_assignment_snapshot_expired|support_assignment_busy_retry|support_recipient_not_verified|support_channel_not_allowed|invalid_support_assignment|forbidden)$/.test(rejection?.message || '')) {
+        assignmentRequests.current.delete(request.scope);
+      }
+      await refresh();
+      setAssignmentToConfirm(null);
+      toast.error('Результат назначения не подтверждён. Обновите историю перед повтором');
+    }
     finally { setBusy(false); }
   };
   const setState = async (action: 'resolve' | 'reopen') => {
@@ -136,11 +188,11 @@ function SupportBotWorkspace() {
             <span className="font-medium break-words">{dialog.display_name}</span>
             <span className="text-xs">{dialog.unread_count ? 'Требует ответа' : 'Решён'}</span>
             {dialog.assignee_name && <span className="text-xs">Ответственный: {dialog.assignee_name}</span>}
-            <select aria-label="Передать менеджеру" className="max-w-full rounded border bg-background p-1 text-xs" value={assignee} disabled={busy || blocked} onChange={e => setAssignee(e.target.value)}>
+            <select aria-label="Передать менеджеру" className="max-w-full rounded border bg-background p-1 text-xs" value={assignee} disabled={busy || notReady} onChange={e => setAssignee(e.target.value)}>
               <option value="">Выберите менеджера</option>
               {assignees.data?.map(person => <option key={person.user_id} value={person.user_id}>{person.display_name}</option>)}
             </select>
-            <Button size="sm" variant="outline" disabled={busy || blocked || !assignee} onClick={() => void assign()}>Передать менеджеру</Button>
+            <Button size="sm" variant="outline" disabled={busy || notReady || !assignee} onClick={prepareAssignment}>Передать менеджеру</Button>
             <Button size="sm" variant="outline" disabled={busy || blocked} onClick={() => void setState('reopen')}>Оставить нерешённым</Button>
             <Button size="sm" disabled={busy || blocked} onClick={() => void setState('resolve')}>Все вопросы решены</Button>
           </div>
@@ -151,5 +203,17 @@ function SupportBotWorkspace() {
         </> : <p className="p-4 text-sm text-muted-foreground">{selectedUser ? 'Обращение загружается или недоступно в выбранном канале' : 'Выберите обращение'}</p>}
       </section>
     </div>
+    <AlertDialog open={!!assignmentToConfirm} onOpenChange={open => { if (!open) closeAssignmentConfirmation(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>{assignmentToConfirm?.attempted ? 'Проверить результат назначения' : 'Подтвердить назначение'}</AlertDialogTitle>
+          <AlertDialogDescription>{assignmentToConfirm?.attempted ? 'Ответственный при начале операции' : 'Текущий ответственный'}: {assignmentToConfirm?.previousName}. Новый ответственный: {assignmentToConfirm?.nextName}.
+            {assignmentToConfirm?.attempted && ' Будет проверена прежняя операция без повторного уведомления.'}
+          </AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel disabled={busy}>Отмена</AlertDialogCancel>
+          <AlertDialogAction disabled={busy || notReady || assignmentToConfirm?.scope !== `${user?.id}:${currentScope}`}
+            onClick={event => { event.preventDefault(); void assign(); }}>{busy ? 'Проверяем…' : 'Подтвердить'}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>;
 }
