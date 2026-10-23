@@ -34,22 +34,31 @@ vi.mock('@/hooks/useTelegramLink', () => ({ useTelegramLinkStatus: () => ({ data
 vi.mock('@/components/layout/DashboardLayout', () => ({ DashboardLayout: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/components/purchases/SubscriptionListItem', () => ({ SubscriptionListItem: ({ onClick }: { onClick: () => void }) => <button onClick={onClick}>Open subscription</button> }));
 vi.mock('@/components/purchases/OrderListItem', () => ({ OrderListItem: () => null }));
+vi.mock('@/utils/receiptGenerator', () => ({ generateOrderReceipt: vi.fn(), generateSubscriptionReceipt: vi.fn() }));
 vi.mock('@/components/purchases/SubscriptionDetailSheet', () => ({
-  SubscriptionDetailSheet: ({ open, lastPaidOrderId, receiptPaymentId }: {
+  SubscriptionDetailSheet: ({ open, lastPaidOrderId, receiptPaymentId, subscription: sub, onDownloadReceipt }: {
     open: boolean; lastPaidOrderId: string | null; receiptPaymentId: string | null;
-  }) => open ? <output data-testid="document-target">{JSON.stringify({ lastPaidOrderId, receiptPaymentId })}</output> : null,
+    subscription: unknown; onDownloadReceipt: (sub: unknown) => void;
+  }) => open ? <><output data-testid="document-target">{JSON.stringify({ lastPaidOrderId, receiptPaymentId })}</output>
+    <button onClick={() => onDownloadReceipt(sub)}>Download legacy receipt</button></> : null,
 }));
 
 import Purchases from './Purchases';
+import { generateSubscriptionReceipt } from '@/utils/receiptGenerator';
 
 describe('Purchases subscription document wiring', () => {
-  beforeEach(() => { cleanup(); state.ordersError = false; state.subscriptionsError = false; });
+  beforeEach(() => { cleanup(); vi.clearAllMocks(); state.ordersError = false; state.subscriptionsError = false; });
   it('opens documents and receipt for October although the subscription creation FK is January', () => {
     render(<Purchases />);
     fireEvent.click(screen.getByText('Open subscription'));
     expect(JSON.parse(screen.getByTestId('document-target').textContent!)).toEqual({
       lastPaidOrderId: 'october', receiptPaymentId: 'pay-october',
     });
+    fireEvent.click(screen.getByText('Download legacy receipt'));
+    expect(generateSubscriptionReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      orders_v2: expect.objectContaining({ id: 'october', created_at: '2026-10-13T06:00:00Z',
+        payments_v2: [expect.objectContaining({ id: 'pay-october' })] }),
+    }));
   });
   it.each(['ordersError', 'subscriptionsError'] as const)('does not fall back to January on cached-data %s', key => {
     state[key] = true;
@@ -58,5 +67,7 @@ describe('Purchases subscription document wiring', () => {
     expect(JSON.parse(screen.getByTestId('document-target').textContent!)).toEqual({
       lastPaidOrderId: null, receiptPaymentId: null,
     });
+    fireEvent.click(screen.getByText('Download legacy receipt'));
+    expect(generateSubscriptionReceipt).not.toHaveBeenCalled();
   });
 });

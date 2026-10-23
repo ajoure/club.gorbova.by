@@ -372,9 +372,18 @@ export default function Purchases() {
     await generateOrderReceipt(order);
   };
 
-  // Download receipt for subscription (uses related order)
+  // The legacy PDF fallback must use the same proven payment as documents,
+  // never the subscription's original joined order.
   const downloadSubscriptionReceipt = async (sub: SubscriptionV2) => {
-    await generateSubscriptionReceipt(sub);
+    const paid = ordersError || subscriptionsError ? null
+      : latestSubscriptionPayment(user?.id, sub, orders);
+    if (!paid) {
+      toast.error("Не удалось определить оплаченный заказ подписки. Обновите страницу.");
+      return;
+    }
+    await generateSubscriptionReceipt({ ...sub, orders_v2: {
+      ...paid.order, created_at: paid.payment.paid_at!, payments_v2: [paid.payment],
+    } });
   };
 
   // STRICT active filter: only real active access (status active/trial/trialing) AND not expired.
