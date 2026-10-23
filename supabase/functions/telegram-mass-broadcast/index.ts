@@ -8,6 +8,7 @@ import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 import { auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 import { filterUsersByEducationCondition } from '../_shared/broadcastEducation.ts';
+import { isValidAudienceRule, shouldAppendAdministrators } from './audienceBoundary.ts';
 import {
   applyAnalyticsOutcomes,
   ensureAnalyticsLinks,
@@ -80,8 +81,8 @@ interface BroadcastFilters {
   tariffIds?: string[];
   clubId?: string;
   // New schema
-  include?: AudienceRule[];
-  exclude?: AudienceRule[];
+  include?: (AudienceRule | string)[];
+  exclude?: (AudienceRule | string)[];
   club_ids?: string[];
   club_membership?: 'current' | 'ever' | 'any';
   bot_ids?: string[];
@@ -423,24 +424,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Rule 3: every include/exclude rule must have product_id (string) OR non-empty tariff_ids[].
+    // Rule 3: accept the canonical RPC's product rules or exact UUID snapshots.
     if (hasIncludeArr || hasExcludeArr) {
       const allRules: any[] = [
         ...(((filters as any)?.include as any[]) || []),
         ...(((filters as any)?.exclude as any[]) || []),
       ];
-      const badRule = allRules.find((r) => {
-        const pid = typeof r?.product_id === 'string' ? r.product_id.trim() : '';
-        const hasTariffIds = Array.isArray(r?.tariff_ids) && r.tariff_ids.length > 0;
-        return pid.length === 0 && !hasTariffIds;
-      });
-      if (badRule) {
-        console.error('[telegram-broadcast] GUARD: include/exclude rule lacks product_id and tariff_ids', { badRule });
+      if (allRules.some((rule) => !isValidAudienceRule(rule))) {
+        console.error('[telegram-broadcast] GUARD: invalid audience rule');
         return new Response(
           JSON.stringify({
             error: 'invalid_audience_rule',
-            message: 'Each include/exclude rule must contain product_id (string) or non-empty tariff_ids[]',
-            offending_rule: badRule,
+            message: 'Each include/exclude rule must be a UUID or contain product_id or non-empty tariff_ids[]',
           }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -448,7 +443,11 @@ Deno.serve(async (req) => {
     }
     // ===== END PATCH-C =====
 
-    console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType, productContextId });
+    console.log('Starting mass broadcast...', {
+      includeRules: filters.include?.length || 0,
+      excludeRules: filters.exclude?.length || 0,
+      hasMedia: !!mediaBuffer, mediaType, productContextId,
+    });
 
     // Resolve audience via canonical RPC (supports include/exclude/clubs/channel)
     const useNewSchema = Array.isArray(filters.include) || Array.isArray(filters.exclude) || Array.isArray(filters.club_ids);
@@ -557,8 +556,10 @@ Deno.serve(async (req) => {
       profiles = profiles.filter(profile => eligible.has(profile.user_id));
     }
 
-    // Always include administrators
-    const appendAdministrators = !directUserIds && !filters.education && filters.webinar_registration === undefined;
+    // Preserve legacy copies, but never extend a canonical/exact audience.
+    const appendAdministrators = shouldAppendAdministrators(
+      useNewSchema, directUserIds !== null, filters.education, filters.webinar_registration,
+    );
     const { data: adminRoles } = appendAdministrators ? await supabase
       .from('user_roles')
       .select('user_id')
@@ -566,11 +567,11 @@ Deno.serve(async (req) => {
     
     const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
     
-    const { data: adminProfiles } = await supabase
+    const { data: adminProfiles } = appendAdministrators && adminUserIds.size > 0 ? await supabase
       .from('profiles')
       .select('id, user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
-      .in('user_id', [...adminUserIds]);
+      .in('user_id', [...adminUserIds]) : { data: [] };
     
     const existingUserIds = new Set(profiles.map(p => p.user_id));
     for (const adminProfile of (adminProfiles || [])) {
@@ -593,7 +594,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Found ${profiles.length} matching profiles (including admins)`);
+    console.log(`Found ${profiles.length} matching profiles`, { appendAdministrators });
 
     // ===== Resolve target bots (respect filters.bot_ids) =====
     // Load all active bots (we'll filter below)
