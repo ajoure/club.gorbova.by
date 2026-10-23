@@ -104,6 +104,8 @@ jobs:
           node scripts/tests/site-questionnaire-concurrency.test.mjs
       - name: Questionnaire notification editor placeholders
         run: npx vitest run src/lib/tokens/placeholderLinkProtection.test.ts
+      - name: Subscription documents use the exact latest paid renewal
+        run: npx vitest run src/lib/documents/latestSubscriptionPayment.test.ts src/utils/derivePaymentChannel.rebill.test.ts src/pages/Purchases.subscriptionDocuments.test.tsx src/components/purchases/SubscriptionDetailSheet.stripeCancel.test.ts
       - name: Accounting regulations migration safety
         run: node --test scripts/tests/accounting-regulations-migration.test.mjs
       - name: Instagram monitor queue, budget and RLS
