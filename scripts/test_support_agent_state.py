@@ -116,6 +116,40 @@ class SupportStateTest(unittest.TestCase):
         self.assertTrue(self.action('reserve')['ok'])
         self.assertNotIn(self.scope['message_id'], '\n'.join(self.db.iterdump()))
 
+    def test_redirect_survives_restart_and_does_not_consume_support_reply(self):
+        redirect = {**self.scope, 'operation': 'redirect_support'}
+        self.assertTrue(state.run_command(self.db, 'reserve', token=self.token,
+                                         now=102, **redirect)['ok'])
+        state.run_command(self.db, 'record', token=self.token, now=103,
+                          outcome='uncertain', **redirect)
+        self.db.close()
+        self.db = state.connect(self.tmp.name)
+        retry = state.run_command(self.db, 'reserve', token=self.token,
+                                  now=104, **redirect)
+        self.assertFalse(retry['ok'])
+        self.assertEqual(retry['status'], 'uncertain')
+        state.run_command(self.db, 'record', token=self.token, now=105,
+                          outcome='verified', **redirect)
+        self.assertFalse(state.run_command(self.db, 'reserve', token=self.token,
+                                          now=106, **redirect)['ok'])
+        self.assertTrue(self.action('reserve')['ok'])
+        self.assertNotIn(self.scope['message_id'], '\n'.join(self.db.iterdump()))
+
+    def test_redirect_after_old_reply_does_not_authorize_duplicate_answer(self):
+        self.action('reserve')
+        self.action('record', outcome='verified')
+        redirect = {**self.scope, 'operation': 'redirect_support'}
+        self.assertTrue(state.run_command(self.db, 'reserve', token=self.token,
+                                         now=102, **redirect)['ok'])
+        state.run_command(self.db, 'record', token=self.token, now=103,
+                          outcome='verified', **redirect)
+        self.assertFalse(self.action('reserve')['ok'])
+        self.assertFalse(state.run_command(self.db, 'record', token=self.token,
+                         now=104, outcome='not_executed', **redirect)['ok'])
+        for source in ('ticket', 'instagram'):
+            with self.assertRaises(ValueError):
+                state.fingerprint(source, self.scope['message_id'], 'redirect_support')
+
 
 if __name__ == '__main__':
     unittest.main()
