@@ -15,7 +15,8 @@ import uuid
 
 DEFAULT_STATE = Path('/Users/fs/CodexWorkspace/State/gorbova-auto-support')
 OPERATIONS = ('reply', 'handoff', 'restore_access', 'resend_invite', 'close_ticket',
-              'react_heart', 'mark_read', 'mark_unread', 'create_payment_link')
+              'react_heart', 'mark_read', 'mark_unread', 'create_payment_link',
+              'redirect_support')
 OUTCOMES = ('verified', 'uncertain', 'not_executed')
 
 
@@ -43,6 +44,8 @@ def fingerprint(source, message_id, operation):
     # Only opaque IDs, never a name, email, message text, URL or payment details.
     normalized = str(uuid.UUID(message_id))
     if source not in ('telegram', 'ticket', 'instagram') or operation not in OPERATIONS:
+        raise ValueError('invalid_scope')
+    if operation == 'redirect_support' and source != 'telegram':
         raise ValueError('invalid_scope')
     return hashlib.sha256(f'{source}:{normalized}:{operation}'.encode()).hexdigest()
 
