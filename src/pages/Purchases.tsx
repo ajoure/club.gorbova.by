@@ -32,9 +32,14 @@ import { OrderListItem } from "@/components/purchases/OrderListItem";
 import { PreregistrationListItem } from "@/components/purchases/PreregistrationListItem";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTelegramLinkStatus } from "@/hooks/useTelegramLink";
+import { latestSubscriptionPayment } from "@/lib/documents/latestSubscriptionPayment";
 
 interface OrderV2 {
   id: string;
+  user_id: string;
+  product_id: string | null;
+  tariff_id: string | null;
+  bepaid_subscription_id: string | null;
   order_number: string;
   final_price: number;
   currency: string;
@@ -55,6 +60,9 @@ interface OrderV2 {
   } | null;
   payments_v2: Array<{
     id: string;
+    amount: number;
+    paid_at: string | null;
+    meta: Record<string, any> | null;
     status: string;
     provider: string | null;
     provider_payment_id: string | null;
@@ -71,6 +79,10 @@ interface OrderV2 {
 
 interface SubscriptionV2 {
   id: string;
+  user_id: string;
+  product_id: string;
+  tariff_id: string | null;
+  meta: Record<string, any> | null;
   status: string;
   is_trial: boolean;
   access_start_at: string;
@@ -166,19 +178,19 @@ export default function Purchases() {
   const isTelegramLinked = telegramStatus?.status === 'active';
 
   // Fetch orders from orders_v2
-  const { data: orders, isLoading: ordersLoading } = useQuery({
+  const { data: orders, isLoading: ordersLoading, isError: ordersError } = useQuery({
     queryKey: ["user-orders-v2", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
         .from("orders_v2")
         .select(`
-          id, order_number, final_price, currency, status, is_trial, trial_end_at,
+          id, user_id, product_id, bepaid_subscription_id, order_number, final_price, currency, status, is_trial, trial_end_at,
           customer_email, created_at, meta, purchase_snapshot,
           offer_id, tariff_id, payer_type,
           products_v2(name, code),
           tariffs(name, code),
-          payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response, meta)
+          payments_v2(id, amount, paid_at, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response, meta)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -190,14 +202,14 @@ export default function Purchases() {
   });
 
   // Fetch subscriptions from subscriptions_v2
-  const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery({
+  const { data: subscriptions, isLoading: subscriptionsLoading, isError: subscriptionsError } = useQuery({
     queryKey: ["user-subscriptions-v2", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
-          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at, order_id,
+          id, user_id, product_id, tariff_id, meta, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at, order_id,
           products_v2(id, name, code),
           tariffs(id, name, code),
           payment_methods(brand, last4),
@@ -427,6 +439,14 @@ export default function Purchases() {
     const payOk = o.payments_v2?.some(p => VISIBLE_PAYMENT_STATUSES.has(String(p.status).toLowerCase()));
     return orderOk || payOk;
   }) || [];
+
+  const selectedPayment = ordersError || subscriptionsError ? null
+    : latestSubscriptionPayment(user?.id, selectedSubscription, orders);
+  const receiptPayment = selectedPayment?.payment;
+  const receiptProvider = receiptPayment?.provider;
+  const receiptPaymentId = receiptPayment && (receiptProvider === 'stripe'
+    || (receiptProvider === 'bepaid' && !!(receiptPayment.receipt_url
+      || receiptPayment.provider_response?.transaction?.receipt_url))) ? receiptPayment.id : null;
 
   return (
     <DashboardLayout>
@@ -664,16 +684,8 @@ export default function Purchases() {
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
-        lastPaidOrderId={selectedSubscription?.orders_v2?.id || selectedSubscription?.order_id || null}
-        receiptPaymentId={selectedSubscription?.orders_v2?.payments_v2?.find(
-          (payment) => {
-            if (payment.status !== 'succeeded') return false;
-            const provider = String(payment.provider ?? '').toLowerCase();
-            return provider === 'stripe' || (provider === 'bepaid' && !!(
-              payment.receipt_url || payment.provider_response?.transaction?.receipt_url
-            ));
-          },
-        )?.id ?? null}
+        lastPaidOrderId={selectedPayment?.order.id ?? null}
+        receiptPaymentId={receiptPaymentId}
         isProcessing={isProcessing}
       />
 
