@@ -99,6 +99,23 @@ class SupportStateTest(unittest.TestCase):
         self.assertNotIn(self.scope['message_id'], dump)
         self.assertNotIn(scope['message_id'], dump)
 
+    def test_payment_link_does_not_repeat_after_restart_or_block_separate_reply(self):
+        link_scope = {**self.scope, 'operation': 'create_payment_link'}
+        self.assertTrue(state.run_command(self.db, 'reserve', token=self.token, now=102, **link_scope)['ok'])
+        state.run_command(self.db, 'record', token=self.token, now=103,
+                          outcome='uncertain', **link_scope)
+        self.db.close()
+        self.db = state.connect(self.tmp.name)
+        self.assertEqual(state.run_command(self.db, 'reserve', token=self.token, now=104,
+                                          **link_scope)['status'], 'uncertain')
+        # A native read-back may resolve uncertain to verified, never recreate it.
+        self.assertTrue(state.run_command(self.db, 'record', token=self.token, now=105,
+                                         outcome='verified', **link_scope)['ok'])
+        self.assertFalse(state.run_command(self.db, 'reserve', token=self.token, now=106,
+                                          **link_scope)['ok'])
+        self.assertTrue(self.action('reserve')['ok'])
+        self.assertNotIn(self.scope['message_id'], '\n'.join(self.db.iterdump()))
+
 
 if __name__ == '__main__':
     unittest.main()
