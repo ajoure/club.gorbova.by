@@ -3664,7 +3664,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                   <>
                                     <CheckCircle className="w-3.5 h-3.5 text-green-600" />
                                     <span className="text-green-700">
-                                      Автопродление включено{!sub.payment_method_id && " (нет карты)"}
+                                      Автопродление включено{sub.billing_type !== 'provider_managed' && !sub.payment_method_id && " (нет карты)"}
                                     </span>
                                     {sub.charge_attempts > 0 && (
                                       <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs">
