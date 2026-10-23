@@ -20,13 +20,15 @@ export interface AudienceRule {
   mode: AudienceMode;
 }
 
+export type AudienceEntry = AudienceRule | string;
+
 interface Props {
   title: string;
   emptyHint: string;
-  rules: AudienceRule[];
+  rules: AudienceEntry[];
   products: Array<{ id: string; name: string }>;
   tariffs: Array<{ id: string; name: string; product_id: string }>;
-  onChange: (next: AudienceRule[]) => void;
+  onChange: (next: AudienceEntry[]) => void;
   destructive?: boolean;
 }
 
@@ -42,8 +44,9 @@ export function RuleListEditor({
   const addRule = () =>
     onChange([...rules, { product_id: "", tariff_ids: [], mode: "purchased" }]);
   const updateRule = (i: number, patch: Partial<AudienceRule>) =>
-    onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+    onChange(rules.map((r, idx) => (idx === i && typeof r !== 'string' ? { ...r, ...patch } : r)));
   const removeRule = (i: number) => onChange(rules.filter((_, idx) => idx !== i));
+  const exactRecipients = rules.filter((rule) => typeof rule === 'string').length;
 
   return (
     <div className="space-y-2">
@@ -65,7 +68,16 @@ export function RuleListEditor({
         <p className="text-xs text-muted-foreground">{emptyHint}</p>
       ) : (
         <div className="space-y-2">
+          {exactRecipients > 0 && (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm" role="note">
+              <p className="font-medium">Точный список получателей: {exactRecipients}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Состав зафиксирован. Проверьте его в разделе «Получатели рассылки» перед отправкой.
+              </p>
+            </div>
+          )}
           {rules.map((rule, i) => {
+            if (typeof rule === 'string') return null;
             const productTariffs = tariffs.filter((t) => t.product_id === rule.product_id);
             return (
               <div

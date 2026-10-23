@@ -95,7 +95,7 @@ import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { BroadcastRecipientsSheet } from "./BroadcastRecipientsSheet";
-import { RuleListEditor } from "./RuleListEditor";
+import { RuleListEditor, type AudienceEntry } from "./RuleListEditor";
 import { BroadcastFullAudienceDialog, type FullAudienceConfirmation } from "./BroadcastFullAudienceDialog";
 import { WebinarRegistrationAudienceFilter } from "./WebinarRegistrationAudienceFilter";
 import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
@@ -114,8 +114,8 @@ interface AudienceRule {
 }
 
 interface BroadcastFilters {
-  include: AudienceRule[];
-  exclude: AudienceRule[];
+  include: AudienceEntry[];
+  exclude: AudienceEntry[];
   club_ids: string[];
   club_membership: "current" | "ever" | "any";
   bot_ids: string[];      // [] = primary bot
@@ -324,7 +324,7 @@ export function BroadcastsTabContent() {
   // Single product context for {{cf.product.*}} resolution:
   // only when there's exactly one include rule with a concrete product_id
   const productContextId = useMemo(() => {
-    const concreteIncludes = filters.include.filter((r) => r.product_id);
+    const concreteIncludes = filters.include.filter((r): r is AudienceRule => typeof r !== "string" && Boolean(r.product_id));
     return concreteIncludes.length === 1 ? concreteIncludes[0].product_id : null;
   }, [filters.include]);
 
@@ -345,7 +345,7 @@ export function BroadcastsTabContent() {
   const referencedProductIds = useMemo(() => {
     const ids = new Set<string>();
     [...filters.include, ...filters.exclude].forEach((r) => {
-      if (r.product_id) ids.add(r.product_id);
+      if (typeof r !== "string" && r.product_id) ids.add(r.product_id);
     });
     return Array.from(ids);
   }, [filters]);
@@ -963,8 +963,8 @@ export function BroadcastsTabContent() {
       setIncludeArchived(Boolean(af.include_archived));
       if (af.include || af.exclude || af.club_ids || af.webinar_registration) {
         setFilters({
-          include: ((af.include as AudienceRule[]) || []),
-          exclude: ((af.exclude as AudienceRule[]) || []),
+          include: ((af.include as AudienceEntry[]) || []),
+          exclude: ((af.exclude as AudienceEntry[]) || []),
           club_ids: ((af.club_ids as string[]) || []),
           club_membership: ((af.club_membership as "current" | "ever" | "any") || "current"),
           bot_ids: ((af.bot_ids as string[]) || []),
