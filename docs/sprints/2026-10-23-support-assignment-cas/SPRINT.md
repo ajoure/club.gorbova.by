@@ -37,20 +37,26 @@
 
 ## Миграция и границы выпуска
 
-Supabase CLI сгенерировал timestamp-файл, Drizzle `generate --custom` —
-`0019_support_assignment_cas.sql`, journal entry и snapshot. Оба SQL-файла
-байтово равны; это одна миграция, не два последовательных исполнения.
-Snapshot схемы равен 0018, кроме id/prevId: таблицы, RLS, данные и поля не
-меняются. Миграция заменяет только JSON reader и добавляет перегрузку writer;
-DROP/CASCADE не нужны. Прежняя неприменённая QA-миграция 0019 удалена PR655;
-это новый generated tag для реального изменения функций, не её повтор.
+Supabase CLI сгенерировал канонический файл
+`supabase/migrations/20261023065717_support_assignment_cas.sql`.
+Его SHA256: `2928402fe9568c71ae2dfd3b6784d9e4ac624d5c59836615d7c5ef1d24454186`.
+Миграция заменяет только JSON reader и добавляет перегрузку writer;
+DROP/CASCADE, таблицы, RLS и изменения клиентских данных не нужны.
 
-Production принадлежит Lovable Cloud. Применить только этот проверенный
-pending managed migration после merge/exact-SHA проверки; не генерировать
-дополнительный SQL, не повторять 0018/QA repair, не отмечать фиктивные receipts.
-Backend-функции и реальные платежи не используются как smoke. Затем read-back
-функций/прав/журнала, безопасные проверки, Publish только согласованного source
-и отдельные снимки опубликованного управления на ПК/mobile без ПДн.
+Production принадлежит Lovable Cloud. До merge его managed journal и Git
+заканчиваются на фактически применённом 0018. Предварительные Drizzle 0019,
+snapshot и journal-entry удалены из PR: штатный генератор иначе создаёт 0020.
+Один native managed migration `support_assignment_cas` получает точный
+reviewed SQL из этого файла после exact-SHA sync. Только механические receipts
+этого apply могут автоматически появиться в Git: 0019 с теми же SQL-байтами,
+реальные journal/snapshot и типы. Ни авторский новый SQL, ни повтор 0018/QA
+repair, ни ручная фиктивная запись ledger не разрешены.
+
+После apply сверить полный generated diff, SQL SHA256, фактический hash и
+created_at receipt с journal.when, обе сигнатуры и ACL; клиентские таблицы
+не меняются. Голый run_sql без managed receipt не является завершённым
+применением. Затем read-back, безопасные проверки, Publish только согласованного
+source и отдельные снимки опубликованного управления на ПК/mobile без ПДн.
 
 ## Проверки
 

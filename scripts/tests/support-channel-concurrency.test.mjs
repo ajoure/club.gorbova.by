@@ -135,8 +135,9 @@ await replayWinner.ready;const replay=run(assignCas(snapshot,replayRequest));
 assert.equal((await replayWinner.done).code,0);const replayOutcome=await replay.done;assert.equal(replayOutcome.code,0,replayOutcome.error);assert.match(replayOutcome.output,/"created": false/);
 assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'1');
 assert.equal((await run('SELECT count(*) FROM contact_center_message_assignments;').done).output.trim(),'2');
-// Direct legacy writers can hold rows before the advisory lock. Their trigger
-// must fail fast while CAS owns advisory locks, then CAS can acquire the row.
+// Direct legacy writers can hold rows before the advisory lock. Either the
+// trigger rejects them before CAS reaches the row, or NOWAIT rejects CAS.
+// The scheduler may choose either winner; neither ordering may deadlock.
 for (const operation of ['UPDATE','DELETE']) {
   snapshot=await resetAssignment();
   const direct=run(`BEGIN;SELECT id FROM contact_center_message_assignments WHERE id='${snapshot.id}' FOR UPDATE;SELECT 'CAS_DIRECT_ROW_HELD';`,'CAS_DIRECT_ROW_HELD',true);
@@ -146,7 +147,14 @@ for (const operation of ['UPDATE','DELETE']) {
   direct.finish(operation==='UPDATE' ? `UPDATE contact_center_message_assignments SET note='Direct writer' WHERE id='${snapshot.id}';COMMIT;` : `DELETE FROM contact_center_message_assignments WHERE id='${snapshot.id}';COMMIT;`);
   const directOutcome=await direct.done;
   if (directOutcome.code!==0) assert.match(directOutcome.error,/support_assignment_busy_retry/);
-  const casOutcome=await casLocks.done;assert.notEqual(casOutcome.code,0);assert.match(casOutcome.error,/support_assignment_busy_retry/);
+  const casOutcome=await casLocks.done;
+  if (casOutcome.code===0) {
+    assert.notEqual(directOutcome.code,0,'CAS may succeed only after the competing writer rolls back');
+    assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'1');
+  } else {
+    assert.match(casOutcome.error,/support_assignment_busy_retry/);
+    assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'0');
+  }
 }
 // A bot deactivated while the call waits cannot pass stale allowlist checks.
 snapshot=await resetAssignment();
