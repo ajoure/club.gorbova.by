@@ -81,3 +81,84 @@ for (const operation of ['UPDATE','DELETE']) {
   const resolvedResult=await resolving.done;assert.equal(resolvedResult.code,0,resolvedResult.error);
 }
 console.log('PASS real PostgreSQL: direct assignment UPDATE/DELETE vs resolve fail fast, without deadlock.');
+
+// The repaired existing assignment writer: real concurrent transactions, only
+// the loopback synthetic database allowed above. No production connection.
+let sequence=400;
+const uuid=()=>`00000000-0000-0000-0000-${String(++sequence).padStart(12,'0')}`;
+async function assignmentSnapshot() {
+  const result=await run(`SELECT (r->>'latest_incoming_id')||'|'||(r->>'assignment_id')||'|'||(r->>'assignment_version') FROM support_bot_dialogs_v1('${bot}','${client}') r;`).done;
+  assert.equal(result.code,0,result.error);
+  const [incoming,id,version]=result.output.trim().split('|');assert.ok(version);
+  return {incoming,id,version};
+}
+async function resetAssignment() {
+  const result=await run(`DELETE FROM support_bot_send_claims;DELETE FROM contact_center_message_assignments;DELETE FROM audit_logs WHERE action='support_bot_assignment_cas';UPDATE profiles SET telegram_user_id=123 WHERE user_id='${client}';UPDATE telegram_bots SET status='active',support_enabled=true WHERE id='${bot}';SELECT support_bot_assign_v1('${client}','${bot}',(SELECT id FROM telegram_messages WHERE user_id='${client}' AND bot_id='${bot}' AND direction='incoming' AND transport='bot' AND business_account_id IS NULL AND business_connection_id IS NULL ORDER BY created_at DESC,id DESC LIMIT 1),'${client}');`).done;
+  assert.equal(result.code,0,result.error);return assignmentSnapshot();
+}
+const assignCas=(s,request)=>`SELECT support_bot_assign_v1('${client}','${bot}','${s.incoming}','${actor}','${s.id}','${s.version}',123,'${request}');`;
+// A completed direct edit must invalidate the snapshot even when its writer
+// omits updated_at. No timestamp rounding or legacy writer can hide the edit.
+let snapshot=await resetAssignment();
+const edit=run(`BEGIN;UPDATE contact_center_message_assignments SET note='Concurrent edit' WHERE id='${snapshot.id}';SELECT 'EDIT_HELD';SELECT pg_sleep(1);COMMIT;`,'EDIT_HELD');
+await edit.ready;let casResult=run(assignCas(snapshot,uuid()));
+assert.equal((await edit.done).code,0);let outcome=await casResult.done;assert.notEqual(outcome.code,0);assert.match(outcome.error,/support_assignment_stale_refresh_required/);
+// Binding update commits first; stale recipient must fail after the wait.
+snapshot=await resetAssignment();
+const binding=run(`BEGIN;UPDATE profiles SET telegram_user_id=456 WHERE user_id='${client}';SELECT 'CAS_BINDING_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_BINDING_HELD');
+await binding.ready;casResult=run(assignCas(snapshot,uuid()));
+assert.equal((await binding.done).code,0);outcome=await casResult.done;assert.notEqual(outcome.code,0);assert.match(outcome.error,/support_recipient_not_verified/);
+// CAS first protects the binding; a later incoming waits and stays unanswered.
+snapshot=await resetAssignment();
+const request=uuid(),incomingId=uuid();
+const firstCas=run(`BEGIN;${assignCas(snapshot,request)}SELECT 'CAS_LOCKS_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_LOCKS_HELD');
+await firstCas.ready;
+const profileWriter=run(`UPDATE profiles SET telegram_user_id=456 WHERE user_id='${client}';`), newIncoming=run(insert(incomingId));
+const profileOutcome=await profileWriter.done;assert.notEqual(profileOutcome.code,0);assert.match(profileOutcome.error,/support_binding_busy_retry/);
+assert.equal((await firstCas.done).code,0);assert.equal((await newIncoming.done).code,0);
+assert.equal((await run(`SELECT requires_reply AND NOT is_read FROM telegram_messages WHERE id='${incomingId}';`).done).output.trim(),'t');
+// Incoming first rejects the old observed incoming, without changing ownership.
+snapshot=await resetAssignment();
+const incomingFirst=run(`BEGIN;${insert(uuid())}SELECT 'CAS_INCOMING_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_INCOMING_HELD');
+await incomingFirst.ready;casResult=run(assignCas(snapshot,uuid()));
+assert.equal((await incomingFirst.done).code,0);outcome=await casResult.done;assert.notEqual(outcome.code,0);assert.match(outcome.error,/support_new_incoming_refresh_required/);
+// Two operators with different requests cannot both replace the same snapshot.
+snapshot=await resetAssignment();
+const winner=run(`BEGIN;${assignCas(snapshot,uuid())}SELECT 'CAS_WINNER_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_WINNER_HELD');
+await winner.ready;const loser=run(assignCas(snapshot,uuid()));
+assert.equal((await winner.done).code,0);outcome=await loser.done;assert.notEqual(outcome.code,0);assert.match(outcome.error,/support_assignment_stale_refresh_required/);
+assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'1');
+// Concurrent replay uses one request and emits one receipt/assignment only.
+snapshot=await resetAssignment();const replayRequest=uuid();
+const replayWinner=run(`BEGIN;${assignCas(snapshot,replayRequest)}SELECT 'CAS_REPLAY_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_REPLAY_HELD');
+await replayWinner.ready;const replay=run(assignCas(snapshot,replayRequest));
+assert.equal((await replayWinner.done).code,0);const replayOutcome=await replay.done;assert.equal(replayOutcome.code,0,replayOutcome.error);assert.match(replayOutcome.output,/"created": false/);
+assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'1');
+assert.equal((await run('SELECT count(*) FROM contact_center_message_assignments;').done).output.trim(),'2');
+// Direct legacy writers can hold rows before the advisory lock. Either the
+// trigger rejects them before CAS reaches the row, or NOWAIT rejects CAS.
+// The scheduler may choose either winner; neither ordering may deadlock.
+for (const operation of ['UPDATE','DELETE']) {
+  snapshot=await resetAssignment();
+  const direct=run(`BEGIN;SELECT id FROM contact_center_message_assignments WHERE id='${snapshot.id}' FOR UPDATE;SELECT 'CAS_DIRECT_ROW_HELD';`,'CAS_DIRECT_ROW_HELD',true);
+  await direct.ready;
+  const casLocks=run(`BEGIN;SELECT pg_advisory_xact_lock(hashtextextended('support-binding:${client}',0));SELECT pg_advisory_xact_lock(hashtextextended('support-bot:${client}:${bot}',0));SELECT 'CAS_ADVISORY_HELD';${assignCas(snapshot,uuid())}COMMIT;`,'CAS_ADVISORY_HELD');
+  await casLocks.ready;
+  direct.finish(operation==='UPDATE' ? `UPDATE contact_center_message_assignments SET note='Direct writer' WHERE id='${snapshot.id}';COMMIT;` : `DELETE FROM contact_center_message_assignments WHERE id='${snapshot.id}';COMMIT;`);
+  const directOutcome=await direct.done;
+  if (directOutcome.code!==0) assert.match(directOutcome.error,/support_assignment_busy_retry/);
+  const casOutcome=await casLocks.done;
+  if (casOutcome.code===0) {
+    assert.notEqual(directOutcome.code,0,'CAS may succeed only after the competing writer rolls back');
+    assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'1');
+  } else {
+    assert.match(casOutcome.error,/support_assignment_busy_retry/);
+    assert.equal((await run("SELECT count(*) FROM audit_logs WHERE action='support_bot_assignment_cas';").done).output.trim(),'0');
+  }
+}
+// A bot deactivated while the call waits cannot pass stale allowlist checks.
+snapshot=await resetAssignment();
+const disable=run(`BEGIN;UPDATE telegram_bots SET support_enabled=false WHERE id='${bot}';SELECT 'CAS_CONFIG_HELD';SELECT pg_sleep(1);COMMIT;`,'CAS_CONFIG_HELD');
+await disable.ready;casResult=run(assignCas(snapshot,uuid()));
+assert.equal((await disable.done).code,0);outcome=await casResult.done;assert.notEqual(outcome.code,0);assert.match(outcome.error,/support_channel_not_allowed|invalid_support_assignment|support_assignment_busy_retry/);
+console.log('PASS real PostgreSQL assignment CAS: competing owners, replay, incoming/binding/config changes, legacy direct writers and row/advisory lock order.');
