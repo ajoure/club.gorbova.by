@@ -28593,16 +28593,6 @@ export type Database = {
           p_note?: string
           p_observed_incoming_id: string
           p_user_id: string
-        } | {
-          p_assignee_user_id: string
-          p_bot_id: string
-          p_note?: string
-          p_observed_incoming_id: string
-          p_user_id: string
-          p_observed_assignment_id: string | null
-          p_observed_assignment_version: string | null
-          p_observed_telegram_user_id: number
-          p_request_id: string
         }
         Returns: Json
       }
