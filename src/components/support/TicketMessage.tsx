@@ -102,7 +102,12 @@ export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onTo
 
   if (isSystem) {
     return (
-      <div className="flex justify-center my-4">
+      <div
+        className="flex justify-center my-4"
+        data-message-id={isAdmin ? message.id : undefined}
+        data-author-type={isAdmin ? message.author_type : undefined}
+        data-message-internal={isAdmin ? String(message.is_internal === true) : undefined}
+      >
         <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted px-3 py-1.5 rounded-full">
           <Bot className="h-3 w-3" />
           <span>{message.message}</span>
@@ -117,6 +122,9 @@ export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onTo
 
   return (
     <div
+      data-message-id={isAdmin ? message.id : undefined}
+      data-author-type={isAdmin ? message.author_type : undefined}
+      data-message-internal={isAdmin ? String(message.is_internal === true) : undefined}
       className={cn(
         "flex gap-3 mb-4 group/msg min-w-0",
         isCurrentUser && "flex-row-reverse"
