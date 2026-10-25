@@ -26,6 +26,7 @@ import { writeLedgerEntry, type LedgerSourceEventType, type LedgerSourceSubjectT
 import { checkPriorPurchase } from './check-prior-purchase.ts';
 import { resolvePriorPurchaseOwner } from './prior-purchase-identity.ts';
 import { HISTORICAL_COMPONENT_TYPES, hasHistoricalComponent, isModuleOnlyHistory } from './historical-component-purchase.ts';
+import { isAccessBearingUndatedSubscription } from './undated-subscription-window.ts';
 
 export type SecondaryGrantOutcome =
   | 'granted'        // new entitlement created
@@ -438,6 +439,28 @@ export async function syncSecondaryProductAccessForUser(
   const out: SecondaryGrantAction[] = [];
   if (rules.length === 0) return out;
 
+  // Callers historically pass only id/end. Re-read an undated subscription
+  // before a rule duration can turn a technical past_due checkout into access.
+  // Finite bonus sources are independent of recurring subscriptions.
+  let undatedSourceFailure: { outcome: 'failed' | 'no_source_window'; reason: string } | null = null;
+  if (sourceSubscription && !sourceSubscription.access_end_at && !sourceEntitlementSource) {
+    const { data: source, error } = await supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, profile_id, product_id, tariff_id, status, access_end_at')
+      .eq('id', sourceSubscription.id)
+      .maybeSingle();
+    if (error || !source
+      || source.user_id !== userId
+      || source.product_id !== sourceProductId
+      || (sourceTariffId && source.tariff_id !== sourceTariffId)
+      || (profileId && source.profile_id && source.profile_id !== profileId)
+      || source.access_end_at) {
+      undatedSourceFailure = { outcome: 'failed', reason: 'undated_source_lookup_failed_or_changed' };
+    } else if (!isAccessBearingUndatedSubscription(source.status)) {
+      undatedSourceFailure = { outcome: 'no_source_window', reason: 'undated_non_access_bearing_subscription' };
+    }
+  }
+
   // Pre-fetch target product codes (small set per rule list)
   const allTargets = new Set<string>();
   for (const r of rules) {
@@ -476,6 +499,16 @@ export async function syncSecondaryProductAccessForUser(
         current_expires_at: null,
         planned_expires_at: null,
       };
+
+      // Reject the shell before prior-purchase or duration fallback can grant.
+      if (undatedSourceFailure) {
+        action.outcome = undatedSourceFailure.outcome;
+        action.reason = undatedSourceFailure.reason;
+        out.push(action);
+        if (action.outcome === 'failed') await writeFailedLedger(supabase, ctx, action, action.reason);
+        else await writeSkipLedger(supabase, ctx, action, 'no_matching_target');
+        continue;
+      }
 
       // 1. Per-product prior purchase check (when applicable)
       let priorInfo: PriorPurchaseInfo | null = null;
