@@ -33,6 +33,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
 import { buildPriorPurchaseCache, buildEnrichedMeta } from "../_shared/product-access-grants.ts";
+import { isAccessBearingUndatedSubscription } from "../_shared/undated-subscription-window.ts";
 import {
   classifyEntitlement,
   canExecuteDestructive,
@@ -549,6 +550,11 @@ async function processRule(
     window_resolved_from: UserAction["window_resolved_from"];
     window_anchor_source: UserAction["window_anchor_source"];
   } => {
+    // A pre-created past_due checkout with no paid end is not an access
+    // source. Check before every duration override and tariff-date fallback.
+    if (!sub || (!sub.access_end_at && !isAccessBearingUndatedSubscription(sub.status))) {
+      return { plannedIso: null, window_resolved_from: null, window_anchor_source: null };
+    }
     if (durationDaysOverride && durationDaysOverride > 0) {
       return {
         plannedIso: new Date(Date.now() + durationDaysOverride * 86400000).toISOString(),

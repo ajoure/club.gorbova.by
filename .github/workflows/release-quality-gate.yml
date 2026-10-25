@@ -120,6 +120,10 @@ jobs:
       - name: CB2 renewal, sender authorization and purchase proof
         run: |
           deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
+      - name: Undated checkout source windows
+        run: |
+          deno test --no-lock supabase/functions/_shared/undated-subscription-window_test.ts
+          node --test scripts/historical-purchases/undated-source-window.test.mjs scripts/historical-purchases/retroapply-scope.test.mjs
       - name: Live bePaid renewal diagnostics and authorization
         run: |
           node --test scripts/tests/provider-billing-alignment.test.mjs scripts/tests/provider-billing-repair.test.mjs
