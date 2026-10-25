@@ -58,7 +58,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ApplyTariffRulesToUserDialog } from "@/components/admin/entitlements/ApplyTariffRulesToUserDialog";
-import { Wand2 } from "lucide-react";
+import { Wand2, Download, RefreshCw } from "lucide-react";
+import { loadAdminEntitlementPages } from "@/lib/adminEntitlementPages";
+import { exportToCSV } from "@/utils/exportTableData";
 
 interface ResolvedProfile {
   id: string;
@@ -79,6 +81,8 @@ interface Entitlement {
   user_id: string;
   product_code: string;
   product_id: string | null;
+  order_id: string | null;
+  profile_id: string | null;
   status: string;
   expires_at: string | null;
   created_at: string;
@@ -135,25 +139,18 @@ export default function AdminEntitlements() {
   });
 
   // Load entitlements with JOINs on profiles and products_v2
-  const { data: rawEntitlements = [], isLoading: loadingEntitlements, refetch } = useQuery({
+  const { data: rawEntitlements = [], isLoading: loadingEntitlements, isError: entitlementReadFailed, isFetching: refreshingEntitlements, refetch } = useQuery({
     queryKey: ["admin-entitlements"],
-    queryFn: async () => {
-      const { data, error } = await supabase
+    queryFn: () => loadAdminEntitlementPages((from, to) => supabase
         .from("entitlements")
         .select(`
-          id, user_id, product_code, product_id, status, expires_at, created_at, profile_id,
+          id, user_id, product_code, product_id, order_id, status, expires_at, created_at, profile_id,
           profiles:profile_id(id, user_id, full_name, email, phone),
           products_v2:product_id(id, name, code)
-        `)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Error fetching entitlements:", error);
-        toast.error("Ошибка загрузки доступов");
-        return [];
-      }
-      return data || [];
-    },
+        `, { count: "exact" })
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)),
   });
 
   // Fallback profiles for entitlements where profile_id is NULL
@@ -216,6 +213,8 @@ export default function AdminEntitlements() {
       user_id: raw.user_id,
       product_code: raw.product_code,
       product_id: raw.product_id,
+      order_id: raw.order_id,
+      profile_id: raw.profile_id,
       status: raw.status,
       expires_at: raw.expires_at,
       created_at: raw.created_at,
@@ -378,12 +377,21 @@ export default function AdminEntitlements() {
     );
   }
 
+  if (entitlementReadFailed) {
+    return <div role="alert" className="space-y-3 p-6">
+      <p>Не удалось загрузить полный список доступов. По неполному списку нельзя проверять права клиентов.</p>
+      <Button variant="outline" disabled={refreshingEntitlements} onClick={() => refetch()}>
+        <RefreshCw className="mr-2 h-4 w-4" />Повторить загрузку
+      </Button>
+    </div>;
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Доступы</h1>
-        <div className="flex items-center gap-4">
-          <div className="relative w-64">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Поиск..."
@@ -392,6 +400,21 @@ export default function AdminEntitlements() {
               className="pl-9"
             />
           </div>
+          <Button variant="outline" disabled={refreshingEntitlements || filteredEntitlements.length === 0} onClick={() => exportToCSV(filteredEntitlements, [
+            { header: "ID доступа", getValue: e => e.id },
+            { header: "ID пользователя", getValue: e => e.user_id },
+            { header: "ID контакта", getValue: e => e.profile_id || e.profile?.id },
+            { header: "Имя", getValue: e => e.profile?.full_name },
+            { header: "Email", getValue: e => e.profile?.email },
+            { header: "ID продукта", getValue: e => e.product_id },
+            { header: "Продукт", getValue: e => e.product?.name || e.product_code },
+            { header: "ID заказа", getValue: e => e.order_id },
+            { header: "Статус", getValue: e => e.status },
+            { header: "Истекает", getValue: e => e.expires_at },
+            { header: "Выдан", getValue: e => e.created_at },
+          ], `entitlements-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`)}>
+            <Download className="mr-2 h-4 w-4" />Экспорт CSV
+          </Button>
           {canManage && (
             <Button variant="outline" onClick={() => setApplyRulesDialog(true)}>
               <Wand2 className="w-4 h-4 mr-2" />
@@ -406,6 +429,8 @@ export default function AdminEntitlements() {
           )}
         </div>
       </div>
+
+      <p className="text-sm text-muted-foreground" aria-live="polite">Показано {filteredEntitlements.length} из {entitlements.length} доступов</p>
 
       <ApplyTariffRulesToUserDialog
         open={applyRulesDialog}
