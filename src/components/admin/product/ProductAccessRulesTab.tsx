@@ -79,6 +79,18 @@ const PURPOSE_ICONS: Record<RulePurpose, typeof Star> = {
   service: Settings2,
 };
 
+// Server-managed purposes are not necessarily choices in the rule editor.
+// Keep their stored value intact and make display safe for future purposes.
+function getPurposeDisplay(purpose: unknown) {
+  if (purpose === "workspace_entry") {
+    return { label: "Вход в рабочее пространство", Icon: Layout };
+  }
+  if (typeof purpose === "string" && Object.prototype.hasOwnProperty.call(PURPOSE_LABELS, purpose)) {
+    return { label: PURPOSE_LABELS[purpose as RulePurpose], Icon: PURPOSE_ICONS[purpose as RulePurpose] };
+  }
+  return { label: "Другое назначение", Icon: Info };
+}
+
 const RUNTIME_LABELS: Record<string, string> = {
   full: "Исполняется автоматически",
   partial: "Частичная поддержка",
@@ -1058,7 +1070,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
           {filteredRules.map((rule) => {
             const Icon = TARGET_TYPE_ICONS[rule.grant_target_type] || Shield;
             const purpose = getRulePurpose(rule);
-            const PurposeIcon = PURPOSE_ICONS[purpose];
+            const { Icon: PurposeIcon, label: purposeLabel } = getPurposeDisplay(purpose);
             const conflictEntry = conflicts.find((c) => c.items.some((i) => i.id === rule.id));
             const hasRealConflict = !!conflictEntry && conflictEntry.type !== 'valid_parallel_rule';
             const isParallelRule = !!conflictEntry && conflictEntry.type === 'valid_parallel_rule';
@@ -1131,7 +1143,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                         {purpose !== "primary" && (
                           <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300">
                             <PurposeIcon className="h-3 w-3 mr-0.5" />
-                            {PURPOSE_LABELS[purpose]}
+                            {purposeLabel}
                           </Badge>
                         )}
                         {hasRealConflict && conflictEntry && (
@@ -2314,7 +2326,7 @@ function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: Effective
            )}
           {g.rule_purpose !== "primary" && (
             <Badge variant="outline" className="text-[9px] text-purple-600 border-purple-300">
-              {PURPOSE_LABELS[g.rule_purpose]}
+              {getPurposeDisplay(g.rule_purpose).label}
             </Badge>
           )}
           {g.grant_target_type === "training_content" && g.tc_access_mode && (() => {
