@@ -1,3 +1,4 @@
+import { inspectHistoricalReceipt } from './historical-receipt-guard.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
@@ -183,6 +184,11 @@ Deno.serve(async (req) => {
       try {
         stats.processed++;
         
+        // Protect reconstructed receipts before product/profile mutations; do
+        // not rewrite the queue's historical fulfillment/status/attempts.
+        const historical = await inspectHistoricalReceipt(supabase, item.bepaid_uid);
+        if (historical.kind === 'preserved') { stats.skipped++; continue; }
+        if (historical.kind === 'hold') { stats.errors.push(historical.reason); continue; }
         const payload = item.raw_payload as Record<string, any> || {};
         const plan = payload.plan || {};
         const additionalData = payload.additional_data || {};

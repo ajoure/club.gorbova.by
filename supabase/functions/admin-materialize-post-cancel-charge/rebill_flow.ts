@@ -1,2 +1,2 @@
-// Compatibility entry point; implementation is shared across managed packages.
-export * from '../_shared/rebill/rebill_flow.ts';
+// Historical reconstruction guard; ordinary flows delegate to the shared implementation.
+export * from './historical-rebill-flow.ts';

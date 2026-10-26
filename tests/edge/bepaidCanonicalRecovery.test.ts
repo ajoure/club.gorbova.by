@@ -1,7 +1,8 @@
 // Server integration graph: run in Vitest, outside the browser's src typecheck.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { reconcileExactQueuePayment, queueProviderSubscriptionId } from '../../supabase/functions/_shared/bepaid-canonical-recovery';
+import { reconcileExactQueuePayment } from '../../supabase/functions/payments-reconcile/historical-recovery';
+import { queueProviderSubscriptionId } from '../../supabase/functions/_shared/bepaid-canonical-recovery';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const now = new Date('2026-08-31T08:00:00Z');
@@ -98,6 +99,31 @@ function fixture() {
     restoreGrant: () => { grantFails = false; partialGrant = false; } };
 }
 afterEach(() => vi.useRealTimers());
+
+it.each(['completed', 'pending'])('preserves a reconstructed historical receipt with expired access and %s queue without claiming fulfillment', async status => {
+  const h = fixture();
+  const queue = h.rows.payment_reconcile_queue[0];
+  Object.assign(queue, { status, attempts: 5, last_error: 'provider_linkage_conflict', next_retry_at: null });
+  const parent = h.rows.orders_v2[0];
+  const order = { ...structuredClone(parent), id: id(110), order_number: `REBILL-${queue.bepaid_uid.slice(0,12)}`,
+    provider: 'bepaid', provider_payment_id: queue.bepaid_uid, paid_amount: 250, deal_date: paidAt,
+    meta: { reconstructed_historical_deal: true, historical_repair_run: '20261026_legacy_periodic_repair',
+      historical_access_mode: 'retained_on_parent', do_not_grant_access: true,
+      grant_status: 'historical_retained_on_parent', materialization_status: 'reconstructed_historical_deal',
+      historical_parent_order_id: parent.id, parent_order_id: parent.id,
+      historical_receipt_payment_id: id(111), materialized_from_payment_uid: queue.bepaid_uid } };
+  h.rows.orders_v2.push(order);
+  h.rows.payments_v2.push({ id: id(111), provider: 'bepaid', provider_payment_id: queue.bepaid_uid,
+    order_id: order.id, user_id: parent.user_id, profile_id: parent.profile_id,
+    amount: 250, currency: 'BYN', status: 'succeeded', transaction_type: 'Платеж', paid_at: paidAt });
+  const before = structuredClone(h.rows);
+  expect(await h.run({ recordPreflightFailure: true, expectedUpdatedAt: queue.updated_at })).toMatchObject({ success: true,
+    historical_receipt_preserved: true, fulfillment_verified: false, no_writes: true,
+    stale_recovered: 0, stale_terminal: 0, claim_conflicts: 0,
+    results: { orders_reconciled: 0, already_materialized: 1 } });
+  expect(h.rows).toEqual(before); expect(h.writes).toHaveLength(0);
+  expect(h.fetcher).not.toHaveBeenCalled(); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+});
 
 it('leaves a new one-time UID on a paid parent for atomic checkout settlement before all business writes',async()=>{
   const h=fixture();

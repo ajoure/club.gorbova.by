@@ -7,6 +7,7 @@
 // Допустимы только provider-sync поля subscriptions_v2: billing_type, auto_renew,
 // meta.bepaid_subscription_id, meta.bepaid_activated_at. Любая новая запись в
 // access-поля из webhook должна быть отвергнута на code-review.
+import { historicalWebhookReplay, inspectHistoricalReceipt } from './historical-receipt-guard.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
@@ -1150,6 +1151,11 @@ Deno.serve(async (req) => {
         { status: 401, headers: corsHeaders }
       );
     }
+
+    // Authenticated historical receipt replay stops BEFORE queue, provider sync,
+    // mode/cycle dispatch, or any legacy fallback can mutate billing/access.
+    const historicalReplay = await historicalWebhookReplay(supabase, body, corsHeaders);
+    if (historicalReplay) return historicalReplay;
 
     // Provider webhooks can contain card tokens and PII; log only routing metadata.
     const receivedTransaction = body?.transaction || body?.last_transaction || {};
@@ -4139,6 +4145,7 @@ Deno.serve(async (req) => {
           // Build deps. For dry_run, write-deps throw; orchestrator never calls them.
           const isDryRun = rebillMode === 'dry_run';
           const liveDeps = {
+            inspectHistoricalReceipt: (uid: string) => inspectHistoricalReceipt(supabase, uid),
             findRebillOrderByOrderNumber: async (orderNumber: string) => {
               const { data } = await supabase.from('orders_v2')
                 .select('id, order_number, meta')

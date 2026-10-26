@@ -37,7 +37,7 @@ function assertIsolatedBundle(entry: string, shared: string, read: (path: string
 
 describe("payment managed single-function packages", () => {
   it.each(["bepaid-readonly-pull", "payments-reconcile", "bepaid-queue-cron", "bepaid-auto-process",
-    "bepaid-webhook", "admin-materialize-post-cancel-charge", "grant-access-for-order"])(
+    "bepaid-webhook", "bepaid-archive-import", "admin-materialize-post-cancel-charge", "grant-access-for-order"])(
     "%s has all transitive local dependencies in its package",
     (name) => {
       const root = resolve("supabase/functions");

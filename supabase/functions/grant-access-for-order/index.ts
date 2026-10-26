@@ -1,3 +1,4 @@
+import { hasHistoricalReceiptMarker } from './historical-receipt-guard.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';
@@ -326,6 +327,18 @@ Deno.serve(async (req) => {
 
     // PATCH H2.1b-i: 3DS finalize context delegates to extended writer.
     // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
+    // Cover standard, exact-target and 3DS writers before any branch can grant.
+    // A read error is not permission to resume a historical purchase.
+    const historicalOrderRead = await supabase.from('orders_v2').select('meta').eq('id', orderId).maybeSingle();
+    if (historicalOrderRead.error) return new Response(JSON.stringify({ success: false,
+      error: 'historical_receipt_guard_lookup_failed' }),
+      { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (hasHistoricalReceiptMarker(historicalOrderRead.data?.meta)) {
+      return new Response(JSON.stringify({ success: false, skipped: true,
+        error: 'historical_receipt_access_retained_on_parent' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // SEC-A: branch policy already enforced service_role-only above.
     if (_body.context === '3ds_finalize') {
       // ── ELIG-C1R correction #3 ────────────────────────────────────
