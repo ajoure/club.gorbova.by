@@ -1,2 +1,2 @@
-// Compatibility entry point; implementation is shared across managed packages.
-export * from '../_shared/rebill/rebill_deps_adapter.ts';
+// Historical reconstruction guard; ordinary deps remain shared.
+export { buildRebillDepsAdapter } from './historical-rebill-flow.ts';

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { reconcileExactQueuePayment } from "../_shared/bepaid-canonical-recovery.ts";
+import { reconcileExactQueuePayment } from "./historical-recovery.ts";
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 // PATCH-P0.9.1: Strict isolation
