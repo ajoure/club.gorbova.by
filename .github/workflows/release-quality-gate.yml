@@ -84,7 +84,7 @@ jobs:
           node scripts/tests/cb21-learning-release.test.mjs
           node scripts/tests/cb21-oct31-schedule.test.mjs
       - name: Paid module and historical Business access boundaries
-        run: node --test scripts/historical-purchases/independent-order.test.mjs
+        run: node --test scripts/historical-purchases/independent-order.test.mjs scripts/historical-purchases/bundle-repair.test.mjs
       - name: Paid CB20 module course window repair
         run: node --test scripts/paid-modules/align-course-window.test.mjs
       - name: Site questionnaire atomicity and real PostgreSQL concurrency
