@@ -7,17 +7,17 @@ const source = readFileSync(
   'utf8',
 );
 
-describe('bePaid last_transaction persistence', () => {
-  it('does not audit a successful upsert after a failed payment write', () => {
-    expect(source).toContain('bepaid.payment.upsert_from_last_transaction_failed');
-    expect(source).toContain('payment_insert_failed:');
-    expect(source).toContain('payment_update_failed:');
-    expect(source).toContain(".eq('provider', 'bepaid')");
-    expect(source).toContain('payment_id: persistedPaymentId');
+describe('bePaid last_transaction canonical handoff', () => {
+  it('does not audit or perform a successful legacy payment upsert from a snapshot', () => {
+    expect(source).not.toContain(".from('payments_v2')");
+    expect(source).toContain('enqueueReceiptForRecovery');
+    expect(source).toContain('fulfillment_verified: false');
+    expect(source).toContain('direct_business_writes: 0');
   });
 
-  it('carries the canonical order linkage into the recovered payment', () => {
-    expect(source).not.toContain('product_id: resolvedProductId');
-    expect(source).toContain('paymentData.order_id = resolvedOrderId || psMetaOrderId');
+  it('never substitutes the provider parent for an existing receipt purchase', () => {
+    expect(source).not.toContain('paymentData.order_id');
+    expect(source).not.toContain(".from('orders_v2')");
+    expect(source).toContain('inspectReceiptSync');
   });
 });

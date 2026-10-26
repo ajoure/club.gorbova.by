@@ -7,13 +7,6 @@ const detailsSource = readFileSync(
   resolve(root, "supabase/functions/bepaid-get-subscription-details/index.ts"),
   "utf8",
 );
-const guardSource = readFileSync(
-  resolve(
-    root,
-    "supabase/functions/bepaid-get-subscription-details/local_propagation_guard.ts",
-  ),
-  "utf8",
-);
 const relinkSource = readFileSync(
   resolve(
     root,
@@ -23,13 +16,12 @@ const relinkSource = readFileSync(
 );
 
 describe("bePaid provider repair safety", () => {
-  it("blocks failed provider state before local date propagation", () => {
-    expect(guardSource).toContain('decision: "blocked_provider_not_active"');
-    expect(guardSource).toContain('reason: "provider_state_not_active"');
-    expect(detailsSource.indexOf("classifyLocalPropagation({")).toBeLessThan(
-      detailsSource.indexOf("bepaid.subscription.sync_dates"),
-    );
-    expect(detailsSource).toContain("providerState: normalizedState");
+  it("snapshot observation cannot propagate local access or autolink an unproved subscription", () => {
+    for (const table of ['subscriptions_v2', 'entitlements', 'telegram_access_grants']) {
+      expect(detailsSource).not.toContain(`.from('${table}')`);
+    }
+    expect(detailsSource).toContain('provider_snapshot_conflict');
+    expect(detailsSource).toContain('fulfillment_verified: false');
   });
 
   it("requires exact CAS tuple proof for one-row stale relink", () => {

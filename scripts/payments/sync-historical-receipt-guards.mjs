@@ -5,8 +5,11 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '../../supabase/functions');
 const pairs = [
-  ...['payments-reconcile', 'grant-access-for-order', 'bepaid-archive-import', 'admin-materialize-post-cancel-charge']
+  ...['payments-reconcile', 'grant-access-for-order', 'bepaid-archive-import', 'admin-materialize-post-cancel-charge',
+    'bepaid-get-subscription-details', 'bepaid-fetch-transactions', 'admin-bepaid-full-reconcile', 'bepaid-uid-resync']
     .map(name => ['bepaid-webhook/historical-receipt-guard.ts', `${name}/historical-receipt-guard.ts`]),
+  ...['bepaid-fetch-transactions', 'admin-bepaid-full-reconcile', 'bepaid-uid-resync']
+    .map(name => ['bepaid-get-subscription-details/receipt-sync-policy.ts', `${name}/receipt-sync-policy.ts`]),
   ['bepaid-webhook/historical-rebill-flow.ts', 'admin-materialize-post-cancel-charge/historical-rebill-flow.ts'],
 ];
 let mismatches = 0;

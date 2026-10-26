@@ -39,10 +39,10 @@ describe("INV-22 live-provider sibling safety contract", () => {
     expect(resolver).toContain('.eq("auto_renew", true)');
   });
 
-  it("unsafe user-only fallback refuses terminal records and a live sibling", () => {
-    expect(details).toContain("TERMINAL_AUTOLINK_STATES");
-    expect(details).toContain("bepaid.sync.autolink_skipped_terminal_state");
-    expect(details).toContain("bepaid.sync.autolink_skipped_live_sibling");
-    expect(details).toContain("user_only_single_sub");
+  it("snapshot synchronization has no unsafe user-only autolink or local subscription writer", () => {
+    expect(details).not.toContain('user_only_single_sub');
+    expect(details).not.toContain(".from('subscriptions_v2')");
+    expect(details).not.toContain('subscription_v2_id: linkedSubV2Id');
+    expect(details).toContain(".eq('updated_at', existing.data.updated_at)");
   });
 });
