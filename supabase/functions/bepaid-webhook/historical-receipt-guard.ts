@@ -36,9 +36,18 @@ export async function inspectHistoricalReceipt(
       if (r.error) throw new Error('lookup');
       return r.data;
     };
-    const order = await read(db.from('orders_v2').select('id,order_number,user_id,profile_id,product_id,tariff_id,status,is_deleted,provider,provider_payment_id,currency,final_price,paid_amount,deal_date,meta')
+    const orderFields = 'id,order_number,user_id,profile_id,product_id,tariff_id,status,is_deleted,provider,provider_payment_id,currency,final_price,paid_amount,deal_date,meta';
+    const canonical = await read(db.from('orders_v2').select(orderFields)
       .eq('order_number', `REBILL-${uid.slice(0, 12)}`).maybeSingle());
+    const payment = await read(db.from('payments_v2').select('id,order_id,user_id,profile_id,provider,provider_payment_id,status,is_deleted,transaction_type,refunded_amount,amount,currency,paid_at')
+      .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle());
+    const linked = payment?.order_id && payment.order_id !== canonical?.id
+      ? await read(db.from('orders_v2').select(orderFields).eq('id', payment.order_id).maybeSingle()) : canonical;
+    const order = hasHistoricalReceiptMarker(canonical?.meta) ? canonical : linked;
     if (!hasHistoricalReceiptMarker(order?.meta)) return { kind: 'none' };
+    if (hasHistoricalReceiptMarker(canonical?.meta) && hasHistoricalReceiptMarker(linked?.meta) && canonical.id !== linked.id) {
+      return { kind: 'hold', reason: 'historical_receipt_multiple_orders' };
+    }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return { kind: 'hold', reason: 'historical_receipt_invalid_uid' };
     const m = order.meta;
     if (m.reconstructed_historical_deal !== true || m.historical_repair_run !== HISTORICAL_RECEIPT_RUN ||
@@ -47,14 +56,12 @@ export async function inspectHistoricalReceipt(
         m.materialization_status !== 'reconstructed_historical_deal' ||
         !m.historical_parent_order_id || !m.historical_receipt_payment_id ||
         m.parent_order_id !== m.historical_parent_order_id ||
-        m.materialized_from_payment_uid !== uid || order.provider !== 'bepaid' ||
+        m.materialized_from_payment_uid !== uid || order.order_number !== `REBILL-${uid.slice(0, 12)}` || order.provider !== 'bepaid' ||
         order.provider_payment_id !== uid || order.status !== 'paid' || order.is_deleted === true ||
         !validDate(order.deal_date) || !sameMoney(order.paid_amount, order.final_price) ||
         !(Number(order.final_price) > 0)) {
       return { kind: 'hold', reason: 'historical_receipt_marker_mismatch' };
     }
-    const payment = await read(db.from('payments_v2').select('id,order_id,user_id,profile_id,provider,provider_payment_id,status,is_deleted,transaction_type,refunded_amount,amount,currency,paid_at')
-      .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle());
     const parent = await read(db.from('orders_v2').select('id,user_id,profile_id,product_id,tariff_id,is_deleted')
       .eq('id', m.historical_parent_order_id).maybeSingle());
     if (!payment || !parent || parent.id === order.id || parent.is_deleted === true ||

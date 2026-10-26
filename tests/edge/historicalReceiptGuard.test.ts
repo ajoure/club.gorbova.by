@@ -48,7 +48,7 @@ it('acknowledges exactly one historical receipt without reading or writing acces
 it('ignores an ordinary canonical rebill, without weakening normal processing',async()=>{
   const h=fixture(); h.order.meta={} as any;
   expect(await inspectHistoricalReceipt(h.db,uid)).toEqual({kind:'none'});
-  expect(h.reads).toEqual(['orders_v2']);
+  expect(h.reads).toEqual(['orders_v2','payments_v2']);
 });
 
 describe('fail-closed stored proof',()=>{
@@ -58,6 +58,7 @@ describe('fail-closed stored proof',()=>{
     ['fake success', (h: any)=>{h.order.meta.grant_status='success';}],
     ['missing no-grant', (h: any)=>{h.order.meta.do_not_grant_access=false;}],
     ['uid', (h: any)=>{h.order.provider_payment_id='other';}],
+    ['renamed canonical order', (h: any)=>{h.order.order_number='MANUAL-renamed';}],
     ['parent mismatch', (h: any)=>{h.order.meta.parent_order_id='other';}],
     ['payment moved', (h: any)=>{h.payment.order_id=h.parent.id;}],
     ['amount', (h: any)=>{h.payment.amount=200;}],
