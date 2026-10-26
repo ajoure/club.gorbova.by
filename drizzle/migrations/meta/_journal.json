@@ -148,6 +148,13 @@
       "when": 1793007662713,
       "tag": "0020_renewal_checkout_cycle_month",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793007748366,
+      "tag": "0021_receipt_purchase_settlement",
+      "breakpoints": true
     }
   ]
 }
