@@ -913,7 +913,7 @@ export async function onInvoicePaid(
     }
   }
 
-  const paidTimestamp = (invoice as any).status_transitions?.paid_at ?? event.created;
+  const paidTimestamp = (invoice as any).status_transitions?.paid_at ?? (event as any).created;
   if (!Number.isFinite(paidTimestamp) || paidTimestamp <= 0) throw new Error('stripe_paid_timestamp_missing');
   const paidAt = new Date(paidTimestamp * 1000).toISOString();
   const provider_payment_id = pi_id ?? charge_id_from_api ?? invoice_id;
