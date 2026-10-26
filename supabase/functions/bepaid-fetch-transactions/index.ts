@@ -1,5 +1,6 @@
+import { inspectReceiptSync, enqueueReceiptForRecovery, requiresReceiptRecovery } from './receipt-sync-policy.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser
@@ -215,6 +216,30 @@ async function ensureReconcileQueueItem(
     throw new Error(`queue insert failed for ${uid}: ${insertError?.message || "row missing"}`);
   }
   return { action: "inserted", id: inserted.id };
+}
+
+// Successful purchases exit through the canonical recovery queue, never a
+// direct insert/upsert on the tracking/subscription parent. Existing jobs are
+// observations only: do not reset attempts, steal processing or reopen holds.
+async function routeFetchedReceipt(db: any, tx: any, mode: string, source: string, results: any) {
+  const decision = await inspectReceiptSync(db, tx.uid, tx);
+  if (decision.kind === 'hold' || decision.kind === 'preserved') {
+    if (decision.kind === 'hold') results.errors++;
+    else results.protected_receipts = (results.protected_receipts || 0) + 1;
+    return true;
+  }
+  if (!requiresReceiptRecovery(tx)) return false;
+  if (decision.kind === 'existing') { results.already_exists++; return true; }
+  if (mode !== 'execute') {
+    results.dry_run_items.push({ uid: tx.uid, source, would_create: 'canonical_reconcile_queue' });
+    return true;
+  }
+  const queued = await enqueueReceiptForRecovery(db, tx, source);
+  if (queued.kind === 'hold') results.errors++;
+  else if (queued.kind === 'queued') results.queued_for_processing++;
+  else if (queued.kind === 'queued_existing') results.existing_queue_preserved = (results.existing_queue_preserved || 0) + 1;
+  else results.already_exists++;
+  return true;
 }
 
 interface ProbeResult {
@@ -631,6 +656,7 @@ serve(async (req) => {
             results.sample_uids.push(tx.uid);
             const { type: txType, isRefund } = determineTransactionType(tx);
             const normalizedStatus = normalizeTransactionStatus(tx.status);
+            if (await routeFetchedReceipt(supabase, tx, mode, 'recover_sync', results)) continue;
 
             if (mode === 'dry-run') {
               results.dry_run_items.push({
@@ -791,6 +817,7 @@ serve(async (req) => {
           const { type: txType, isRefund } = determineTransactionType(tx);
           const normalizedStatus = normalizeTransactionStatus(tx.status);
           const parsed = parseTrackingId(tx.tracking_id);
+          if (await routeFetchedReceipt(supabase, tx, mode, 'reports_api', results)) continue;
           
           if (isRefund) {
             results.refunds_found++;
@@ -811,7 +838,7 @@ serve(async (req) => {
             
           if (existingPayment) {
             results.already_exists++;
-            if (normalizedStatus === 'successful' && !isRefund && !existingPayment.order_id) {
+            if (normalizedStatus === 'successful' && !isRefund && ['payment', 'capture'].includes(txType) && !existingPayment.order_id) {
               if (mode === 'dry-run') {
                 results.dry_run_items.push({
                   uid,
@@ -900,11 +927,11 @@ serve(async (req) => {
               
               const { error: upsertError } = await supabase
                 .from("payments_v2")
-                .upsert(paymentData, { onConflict: "provider_payment_id" });
+                .upsert(paymentData, { onConflict: "provider_payment_id", ignoreDuplicates: true });
                 
               if (!upsertError) {
                 results.upserted++;
-                if (normalizedStatus === 'successful' && !isRefund) {
+                if (normalizedStatus === 'successful' && !isRefund && ['payment', 'capture'].includes(txType)) {
                   await ensureReconcileQueueItem(
                     supabase, tx, uid, normalizedStatus, txType, 'reports_api',
                   );
@@ -919,7 +946,7 @@ serve(async (req) => {
           }
           
           // Queue for manual review if no order found
-          if (normalizedStatus === 'successful' && !isRefund) {
+          if (normalizedStatus === 'successful' && !isRefund && ['payment', 'capture'].includes(txType)) {
             await ensureReconcileQueueItem(
               supabase, tx, uid, normalizedStatus, txType, 'reports_api',
             );
@@ -973,6 +1000,7 @@ serve(async (req) => {
                 const { type: txType, isRefund } = determineTransactionType(tx);
                 const normalizedStatus = normalizeTransactionStatus(tx.status);
                 const parsed = parseTrackingId(tx.tracking_id);
+                if (await routeFetchedReceipt(supabase, tx, mode, 'uid_fallback', results)) continue;
                 
                 if (parsed.orderId) {
                   const { data: order } = await supabase
@@ -1005,7 +1033,7 @@ serve(async (req) => {
                     
                     const { error: upsertError } = await supabase
                       .from("payments_v2")
-                      .upsert(paymentData, { onConflict: "provider_payment_id" });
+                      .upsert(paymentData, { onConflict: "provider_payment_id", ignoreDuplicates: true });
                     
                     if (!upsertError) {
                       results.recovered = (results.recovered || 0) + 1;
@@ -1158,6 +1186,7 @@ serve(async (req) => {
           const { type: txType, isRefund } = determineTransactionType(tx);
           const normalizedStatus = normalizeTransactionStatus(tx.status);
           const parsed = parseTrackingId(tx.tracking_id);
+          if (await routeFetchedReceipt(supabase, tx, mode, 'bulk_sync', results)) continue;
 
           if (isRefund) {
             results.refunds_found++;
@@ -1169,7 +1198,7 @@ serve(async (req) => {
           const existingPayment = existingPaymentsByUid.get(uid);
           if (existingPayment) {
             results.already_exists++;
-            if (normalizedStatus === 'successful' && !isRefund && !existingPayment.order_id) {
+            if (normalizedStatus === 'successful' && !isRefund && ['payment', 'capture'].includes(txType) && !existingPayment.order_id) {
               if (mode === 'dry-run') {
                 results.dry_run_items.push({
                   uid,
@@ -1402,7 +1431,7 @@ serve(async (req) => {
               .from("payments_v2")
               .upsert(paymentData, { 
                 onConflict: "provider_payment_id",
-                ignoreDuplicates: false,
+                ignoreDuplicates: true,
               });
 
             if (upsertError) {
@@ -1422,7 +1451,7 @@ serve(async (req) => {
               results.upsert_errors.push({ uid, error: upsertError.message });
             } else {
               results.upserted++;
-              if (normalizedStatus === 'successful' && !isRefund) {
+              if (normalizedStatus === 'successful' && !isRefund && ['payment', 'capture'].includes(txType)) {
                 await ensureReconcileQueueItem(
                   supabase, tx, uid, normalizedStatus, txType, 'bulk_sync',
                 );

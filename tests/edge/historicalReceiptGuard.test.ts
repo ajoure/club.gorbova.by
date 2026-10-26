@@ -119,8 +119,12 @@ it('blocks incomplete marker intent, but does not conflate post-cancel orders wi
 it('ships identical guards in each isolated managed function package',()=>{
   const file=(p:string)=>readFileSync(`supabase/functions/${p}`,'utf8');
   const canonical=file('bepaid-webhook/historical-receipt-guard.ts');
-  for(const name of ['payments-reconcile','grant-access-for-order','bepaid-archive-import','admin-materialize-post-cancel-charge']) {
+  for(const name of ['payments-reconcile','grant-access-for-order','bepaid-archive-import','admin-materialize-post-cancel-charge',
+    'bepaid-get-subscription-details','bepaid-fetch-transactions','admin-bepaid-full-reconcile','bepaid-uid-resync']) {
     expect(file(`${name}/historical-receipt-guard.ts`)).toBe(canonical);
+  }
+  for(const name of ['bepaid-fetch-transactions','admin-bepaid-full-reconcile','bepaid-uid-resync']) {
+    expect(file(`${name}/receipt-sync-policy.ts`)).toBe(file('bepaid-get-subscription-details/receipt-sync-policy.ts'));
   }
   expect(file('admin-materialize-post-cancel-charge/historical-rebill-flow.ts')).toBe(file('bepaid-webhook/historical-rebill-flow.ts'));
 });

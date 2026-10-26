@@ -1,4 +1,5 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { inspectReceiptSync, enqueueReceiptForRecovery, requiresReceiptRecovery, updateLegacyReceipt } from './receipt-sync-policy.ts';
+import { createClient } from "npm:@supabase/supabase-js@2";
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -52,6 +53,8 @@ interface ResyncResult {
     created: number;
     fetch_errors: number;
     already_complete: number;
+    protected_receipts: number;
+    queued_for_processing: number;
     paid_at_fixed: number;
   };
   samples: {
@@ -201,6 +204,8 @@ Deno.serve(async (req) => {
         created: 0,
         fetch_errors: 0,
         already_complete: 0,
+        protected_receipts: 0,
+        queued_for_processing: 0,
         paid_at_fixed: 0,
       },
       samples: {
@@ -360,13 +365,13 @@ Deno.serve(async (req) => {
     
     // Process single UID
     const processUid = async (uid: string) => {
+      const receipt = await inspectReceiptSync(supabaseAdmin, uid);
+      if (receipt.kind === 'hold' || receipt.kind === 'preserved') {
+        if (receipt.kind === 'hold') result.stats.fetch_errors++; else result.stats.protected_receipts++;
+        return;
+      }
       // Check if already complete in payments_v2
-      const { data: existingPayment } = await supabaseAdmin
-        .from('payments_v2')
-        .select('id, paid_at, provider_response, order_id, profile_id, user_id, meta')
-        .eq('provider', 'bepaid')
-        .eq('provider_payment_id', uid)
-        .single();
+      const existingPayment = receipt.kind === 'existing' ? receipt.payment : null;
 
       const hasCompleteData = existingPayment?.paid_at && existingPayment?.provider_response;
       
@@ -478,22 +483,17 @@ Deno.serve(async (req) => {
           // Update only specific fields, preserve links
           // F13: order_id, profile_id, user_id NOT in update payload — fill-only safe.
           // Do NOT add these fields to the update without a fill-only guard.
-          const { error: updateError } = await supabaseAdmin
-            .from('payments_v2')
-            .update({
-              status: upsertData.status,
-              transaction_type: upsertData.transaction_type,
-              paid_at: upsertData.paid_at || existingPayment.paid_at,
-              provider_response: upsertData.provider_response,
-              card_last4: upsertData.card_last4 || undefined,
-              card_brand: upsertData.card_brand || undefined,
-              meta: { ...(existingPayment.meta as Record<string, any> || {}), ...upsertData.meta },
-              updated_at: upsertData.updated_at,
-            })
-            .eq('id', existingPayment.id);
+          const updated = await updateLegacyReceipt(supabaseAdmin, uid, existingPayment, {
+            status: upsertData.status, transaction_type: upsertData.transaction_type,
+            paid_at: upsertData.paid_at || existingPayment.paid_at,
+            provider_response: upsertData.provider_response,
+            card_last4: upsertData.card_last4 || undefined, card_brand: upsertData.card_brand || undefined,
+            meta: upsertData.meta, updated_at: upsertData.updated_at,
+          });
+          const updateError = !updated;
 
           if (updateError) {
-            console.error(`[bepaid-uid-resync] Update error for ${uid}:`, updateError);
+            console.error('[bepaid-uid-resync] Receipt update held or conflicted');
             result.stats.fetch_errors++;
           } else {
             result.stats.updated++;
@@ -502,6 +502,13 @@ Deno.serve(async (req) => {
             }
           }
         } else {
+          if (requiresReceiptRecovery(transaction)) {
+            const queued = await enqueueReceiptForRecovery(supabaseAdmin, transaction, 'uid_resync');
+            if (queued.kind === 'hold') result.stats.fetch_errors++;
+            else if (queued.kind === 'queued') result.stats.queued_for_processing++;
+            // Queueing is not a newly created/fulfilled payment.
+            return;
+          }
           // Create new payment record
           upsertData.created_at = new Date().toISOString();
           // Preserve gateway_message and status info in meta

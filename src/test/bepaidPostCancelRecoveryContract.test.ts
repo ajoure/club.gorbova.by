@@ -20,24 +20,19 @@ const bundledRecoveryModules = [
 ] as const;
 
 describe('bePaid post-cancel recovery safety', () => {
-  it('blocks a proven post-cancel charge before any local access propagation', () => {
-    const guardIndex = syncSource.indexOf('classifyLocalPropagation({');
-    const subscriptionUpdateIndex = syncSource.indexOf("action: 'bepaid.subscription.sync_dates'");
-    const entitlementUpdateIndex = syncSource.indexOf(".from('entitlements')", guardIndex);
-    const telegramUpdateIndex = syncSource.indexOf(".from('telegram_access_grants')", guardIndex);
-
-    expect(guardIndex).toBeGreaterThan(0);
-    expect(subscriptionUpdateIndex).toBeGreaterThan(guardIndex);
-    expect(entitlementUpdateIndex).toBeGreaterThan(guardIndex);
-    expect(telegramUpdateIndex).toBeGreaterThan(guardIndex);
-    expect(syncSource).toContain("local_propagation: guard.decision");
+  it('a provider snapshot cannot itself revive any local subscription or access', () => {
+    for (const table of ['subscriptions_v2', 'entitlements', 'telegram_access_grants']) {
+      expect(syncSource).not.toContain(`.from('${table}')`);
+    }
+    expect(syncSource).toContain('enqueueReceiptForRecovery');
+    expect(syncSource).toContain('fulfillment_verified: false');
   });
 
-  it('does not attempt to insert a provider transaction with no amount', () => {
-    expect(syncSource).toContain('bepaid.payment.upsert_skipped_no_amount');
-    expect(syncSource).toContain('provider_last_transaction_amount_missing_or_invalid');
-    expect(syncSource).toContain('amount: lastTxAmountCents / 100');
-    expect(syncSource).not.toContain('amount: lastTx.amount ? lastTx.amount / 100 : null');
+  it('does not directly insert a transaction or invent a paid date/amount from a snapshot', () => {
+    expect(syncSource).not.toContain(".from('payments_v2')");
+    expect(syncSource).not.toContain('lastTx.amount ? lastTx.amount / 100 : null');
+    expect(syncSource).not.toContain('paymentData');
+    expect(syncSource).toContain('receipt_sync_missing_uid');
   });
 
   it('requires an exact admin-scoped queue recovery and suppresses access', () => {

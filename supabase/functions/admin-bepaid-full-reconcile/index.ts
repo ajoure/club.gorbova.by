@@ -1,3 +1,4 @@
+import { inspectReceiptSync, enqueueReceiptForRecovery, requiresReceiptRecovery, updateLegacyReceipt } from './receipt-sync-policy.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
@@ -19,6 +20,7 @@ interface ReconcileRequest {
 
 interface UidVerifyStats {
   checked_uids: number;
+  protected_receipts: number;
   verified_ok: number;
   unverifiable: number;
   updated_amount: number;
@@ -135,29 +137,36 @@ async function fetchTransactionDetails(auth: string, uid: string): Promise<{ suc
 
 // UID VERIFY MODE
 async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, toDate: string, dryRun: boolean, limit: number, startTime: number): Promise<{ success: boolean; stats: UidVerifyStats; samples: any; error?: string }> {
-  const stats: UidVerifyStats = { checked_uids: 0, verified_ok: 0, unverifiable: 0, updated_amount: 0, updated_status: 0, updated_paid_at: 0, updated_card_fields: 0, refunds_card_filled: 0, errors: 0 };
+  const stats: UidVerifyStats = { checked_uids: 0, protected_receipts: 0, verified_ok: 0, unverifiable: 0, updated_amount: 0, updated_status: 0, updated_paid_at: 0, updated_card_fields: 0, refunds_card_filled: 0, errors: 0 };
   const samples = { verified: [] as any[], unverifiable: [] as any[], errors: [] as any[] };
   const maxSamples = 20;
 
-  const { data: payments, error: fetchError } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, paid_at, card_last4, card_brand, transaction_type, meta').gte('paid_at', fromDate).lte('paid_at', toDate + 'T23:59:59Z').not('provider_payment_id', 'is', null).order('paid_at', { ascending: false }).limit(limit);
+  const { data: payments, error: fetchError } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, paid_at, card_last4, card_brand, transaction_type, meta').eq('provider', 'bepaid').gte('paid_at', fromDate).lte('paid_at', toDate + 'T23:59:59Z').not('provider_payment_id', 'is', null).order('paid_at', { ascending: false }).limit(limit);
   
   if (fetchError) return { success: false, stats, samples, error: `DB error: ${fetchError.message}` };
   if (!payments || payments.length === 0) return { success: true, stats, samples };
   
   console.log(`[uid-verify] Found ${payments.length} UIDs to verify`);
   
-  for (const payment of payments) {
+  for (let payment of payments) {
     if (Date.now() - startTime > 25000) break;
     stats.checked_uids++;
     const uid = payment.provider_payment_id;
     
     try {
+      const receipt = await inspectReceiptSync(supabase, uid);
+      if (receipt.kind === 'hold' || receipt.kind === 'preserved') {
+        if (receipt.kind === 'hold') stats.errors++; else stats.protected_receipts++;
+        continue;
+      }
+      if (receipt.kind !== 'existing' || receipt.payment.id !== payment.id) { stats.errors++; continue; }
+      payment = receipt.payment;
       const txResult = await fetchTransactionDetails(auth, uid);
       
       if (!txResult.success || !txResult.data) {
         stats.unverifiable++;
         if (!dryRun) {
-          await supabase.from('payments_v2').update({ meta: { ...(payment.meta || {}), reconcile_verification: { status: 'unverifiable', reason: 'bepaid_details_denied', at: new Date().toISOString(), uid } } }).eq('id', payment.id);
+          if (!await updateLegacyReceipt(supabase, uid, payment, { meta: { reconcile_verification: { status: 'unverifiable', reason: 'bepaid_details_denied', at: new Date().toISOString(), uid } } })) stats.errors++;
         }
         if (samples.unverifiable.length < maxSamples) samples.unverifiable.push({ uid, reason: 'bepaid_details_denied' });
         continue;
@@ -180,10 +189,10 @@ async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, t
       if (bepaidCardBrand && !payment.card_brand) { changes.push(`card_brand: null → ${bepaidCardBrand}`); updates.card_brand = bepaidCardBrand; }
       
       if (changes.length > 0) {
-        updates.meta = { ...(payment.meta || {}), reconcile_verification: { status: 'verified', at: new Date().toISOString(), uid, changes } };
+        updates.meta = { reconcile_verification: { status: 'verified', at: new Date().toISOString(), uid, changes } };
         // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
         // are NOT in this update payload — fill-only safe by omission.
-        if (!dryRun) await supabase.from('payments_v2').update(updates).eq('id', payment.id);
+        if (!dryRun && !await updateLegacyReceipt(supabase, uid, payment, updates)) { stats.errors++; continue; }
         if (samples.verified.length < maxSamples) samples.verified.push({ uid, changes });
       } else {
         stats.verified_ok++;
@@ -196,19 +205,26 @@ async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, t
 
 // LIST MODE: Process transactions
 async function processListModeTransactions(supabase: any, transactions: any[], dryRun: boolean): Promise<{ counters: any; samples: any }> {
-  const counters = { bepaid_total: transactions.length, already_in_db: 0, missing_in_db: 0, mismatched: 0, inserted: 0, updated: 0, skipped: 0, errors: 0 };
+  const counters = { bepaid_total: transactions.length, already_in_db: 0, missing_in_db: 0, mismatched: 0, inserted: 0, updated: 0, skipped: 0, queued_for_processing: 0, protected_receipts: 0, errors: 0 };
   const samples = { inserts: [] as any[], updates: [] as any[], mismatches: [] as any[] };
   const maxSamples = 20;
-  
-  const uids = transactions.map(tx => tx.uid || tx.id).filter(Boolean);
-  const { data: existingPayments } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, card_last4, card_brand, meta').in('provider_payment_id', uids);
-  const existingMap = new Map<string, { id: string; provider_payment_id: string; amount: number; status: string; card_last4: string | null; card_brand: string | null; meta: any }>((existingPayments || []).map((p: any) => [p.provider_payment_id, p]));
   
   for (const tx of transactions) {
     const uid = tx.uid || tx.id;
     if (!uid) { counters.skipped++; continue; }
+    const receipt = await inspectReceiptSync(supabase, uid, tx);
+    if (receipt.kind === 'hold' || receipt.kind === 'preserved') {
+      counters.skipped++; if (receipt.kind === 'preserved') counters.protected_receipts++; else counters.errors++; continue;
+    }
+    if (receipt.kind === 'absent' && requiresReceiptRecovery(tx)) {
+      if (!dryRun) {
+        const queued = await enqueueReceiptForRecovery(supabase, tx, 'bepaid_full_reconcile');
+        if (queued.kind === 'hold') counters.errors++; else if (queued.kind === 'queued') counters.queued_for_processing++; else counters.skipped++;
+      } else counters.skipped++;
+      continue;
+    }
     
-    const existing = existingMap.get(uid);
+    const existing = receipt.kind === 'existing' ? receipt.payment : null;
     const bepaidAmount = (tx.amount || 0) / 100;
     const bepaidStatus = normalizeStatus(tx.status);
     const last4 = normalizeLast4(tx.credit_card?.last_4 || tx.card?.last_4);
@@ -229,13 +245,13 @@ async function processListModeTransactions(supabase: any, transactions: any[], d
         // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
         // are NOT in this update payload — fill-only safe by omission.
         // Do NOT add link fields without explicit fill-only check.
-        if (!dryRun) { await supabase.from('payments_v2').update(updates).eq('id', existing.id); }
+        if (!dryRun && !await updateLegacyReceipt(supabase, uid, existing, updates)) { counters.errors++; continue; }
         counters.updated++;
         if (samples.mismatches.length < maxSamples) samples.mismatches.push({ uid, changes });
       }
     } else {
       counters.missing_in_db++;
-      const newPayment = { provider_payment_id: uid, amount: bepaidAmount, currency: tx.currency || 'BYN', status: bepaidStatus, card_last4: last4, card_brand: brand, paid_at: tx.paid_at || tx.created_at, customer_email: tx.customer?.email, provider_response: tx, meta: { source: 'bepaid_full_reconcile', imported_at: new Date().toISOString() } };
+      const newPayment = { provider: 'bepaid', provider_payment_id: uid, amount: bepaidAmount, currency: tx.currency || 'BYN', status: bepaidStatus, card_last4: last4, card_brand: brand, paid_at: tx.paid_at || tx.created_at, customer_email: tx.customer?.email, provider_response: tx, meta: { source: 'bepaid_full_reconcile', imported_at: new Date().toISOString() } };
       if (!dryRun) { await supabase.from('payments_v2').insert(newPayment); }
       counters.inserted++;
       if (samples.inserts.length < maxSamples) samples.inserts.push({ uid, amount: bepaidAmount, status: bepaidStatus });
