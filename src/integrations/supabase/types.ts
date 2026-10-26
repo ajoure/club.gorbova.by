@@ -25876,6 +25876,10 @@ export type Database = {
             }
             Returns: Json
           }
+      crm_apply_renewal_period: {
+        Args: { p_expected_hash: string; p_order_id: string }
+        Returns: Json
+      }
       crm_apply_reviewed_routes: {
         Args: {
           p_batch_id: string
@@ -26256,6 +26260,20 @@ export type Database = {
           source_order_id: string
         }[]
       }
+      crm_preview_renewal_period: {
+        Args: { p_order_ids: string[] }
+        Returns: {
+          amount: number
+          eligible: boolean
+          expected_hash: string
+          new_month: string
+          old_deal_date: string
+          old_month: string
+          order_id: string
+          paid_at: string
+          payment_id: string
+        }[]
+      }
       crm_refresh_paid_purchase: {
         Args: { p_order_id: string }
         Returns: boolean
@@ -26297,6 +26315,10 @@ export type Database = {
           status: string
           tariff_id: string
         }[]
+      }
+      crm_settle_one_time_receipt: {
+        Args: { p_order_id: string; p_payment: Json }
+        Returns: Json
       }
       crm_settle_stripe_invoice: {
         Args: { p_order: Json; p_payment: Json; p_pending_order_id: string }
