@@ -21,7 +21,7 @@ export async function reconcileExactQueuePayment(
   if (!item) throw new Error('recovery_queue_missing');
   if (options.expectedUpdatedAt && options.expectedUpdatedAt !== item.updated_at) throw new Error('recovery_queue_snapshot_changed');
   const historical = await inspectHistoricalReceipt(db, item.bepaid_uid);
-  if (historical.kind === 'hold') throw new Error(historical.reason);
+  if (historical.kind === 'hold') throw new Error(`recovery_${historical.reason}`);
   if (historical.kind === 'preserved') return { success: true, historical_receipt_preserved: true,
     no_writes: true, fulfillment_verified: false, order_id: historical.orderId,
     results: { orders_reconciled: 0, already_materialized: 1 } };
