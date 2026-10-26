@@ -119,6 +119,7 @@ it.each(['completed', 'pending'])('preserves a reconstructed historical receipt 
   const before = structuredClone(h.rows);
   expect(await h.run({ recordPreflightFailure: true, expectedUpdatedAt: queue.updated_at })).toMatchObject({ success: true,
     historical_receipt_preserved: true, fulfillment_verified: false, no_writes: true,
+    stale_recovered: 0, stale_terminal: 0, claim_conflicts: 0,
     results: { orders_reconciled: 0, already_materialized: 1 } });
   expect(h.rows).toEqual(before); expect(h.writes).toHaveLength(0);
   expect(h.fetcher).not.toHaveBeenCalled(); expect(h.db.functions.invoke).not.toHaveBeenCalled();

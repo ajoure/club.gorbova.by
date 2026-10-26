@@ -58,14 +58,18 @@ REBILL entry module is identical in webhook and post-cancel packages.
 tests enforce both package isolation and mirror equality. `_shared` and the
 independent CB21 release digest stay byte-identical. Managed deployment scope:
 `bepaid-webhook`, `payments-reconcile`, `bepaid-archive-import`,
-`grant-access-for-order`, `admin-materialize-post-cancel-charge`.
+`grant-access-for-order`, `admin-materialize-post-cancel-charge`, plus
+`system-health-full-check` for its generated preflight source digest only.
+The eligible OPTIONS set stays at the same 320 functions; no scanner policy or
+schedule changes. The generated digest is rebuilt with
+`node scripts/health-preflight-manifest.mjs` and checked by CI.
 `bepaid-recover-payment` already returns `already_exists` on an existing UID;
 `bepaid-auto-process` invokes the guarded `payments-reconcile` endpoint. Neither
 needs an unrelated redeployment. No UI Publish is required for this backend fix.
 
 ## Gates before data repair
 
-1. PR and CI pass, exact reviewed merged SHA deployed for all five consumers.
+1. PR and CI pass, exact reviewed merged SHA deployed for all five guard consumers and the generated health manifest.
 2. Safe runtime/source attestation proves the guards; do not replay real payment
    webhooks or invoke real grants as smoke tests.
 3. Native SELECT-only dry-run and full-row CAS of exact payment/order/queue/

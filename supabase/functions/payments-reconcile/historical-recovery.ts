@@ -24,6 +24,7 @@ export async function reconcileExactQueuePayment(
   if (historical.kind === 'hold') throw new Error(`recovery_${historical.reason}`);
   if (historical.kind === 'preserved') return { success: true, historical_receipt_preserved: true,
     no_writes: true, fulfillment_verified: false, order_id: historical.orderId,
+    stale_recovered: 0, stale_terminal: 0, claim_conflicts: 0,
     results: { orders_reconciled: 0, already_materialized: 1 } };
   return canonicalRecovery(db, options);
 }
