@@ -266,6 +266,13 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
   const priorPayments = existingPayment ? [] : await checked(db.from('payments_v2').select('id,provider_payment_id')
     .eq('order_id', parent.id).eq('status', 'succeeded').gt('amount', 0), 'parent_payments');
   const isRebill = !!sbs && !existingPayment && priorPayments.length > 0;
+  // A successful webhook continues into the atomic checkout settlement after
+  // this recovery attempt. Never attach its new one-time UID to a paid parent
+  // here before that handler can materialize a separate purchase. A queue-only
+  // recovery stays pending for exact settlement rather than changing access.
+  if (!sbs && !existingPayment && priorPayments.length > 0) {
+    throw new Error('recovery_new_receipt_requires_checkout_settlement');
+  }
   if (isRebill && parent.status !== 'paid') throw new Error('recovery_parent_not_paid');
   if (sbs && !existingPayment && !isRebill) throw new Error('recovery_missing_recurring_parent_payment');
   if (parent.meta?.do_not_grant_access || parent.meta?.refund_candidate || parent.meta?.grant_status === 'suppressed_post_cancel_charge') {

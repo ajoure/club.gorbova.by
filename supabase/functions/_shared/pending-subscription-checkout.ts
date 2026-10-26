@@ -1,5 +1,5 @@
 import { BLOCKING_PROVIDER_STATES, TERMINAL_STATUSES } from './subscription-conflict.ts';
-import { pendingPurchaseContext } from './pending-purchase.ts';
+import { pendingPurchaseContext, pendingPurchaseMonth } from './pending-purchase.ts';
 import { getBepaidCredsStrict, isBepaidCredsError, createBepaidAuthHeader } from './bepaid-credentials.ts';
 import { readAcquiringSecret } from './acquiring/vault.ts';
 import { stripeGetCheckoutSession } from './acquiring/stripe-client.ts';
@@ -17,6 +17,8 @@ export function samePendingSubscriptionPurchase(existing:Row, proposed:Row):bool
   if(existing.offer_id==null && proposed.offer_id!=null && existing.meta?.payment_flow==='renewal_subscription') {
     existingContext.offer_id=null;
     proposedContext.offer_id=null;
+    proposedContext.month=pendingPurchaseMonth({...proposed,
+      meta:{...proposed.meta,payment_flow:'renewal_subscription'}});
   }
   return !existing.is_deleted && ['pending','failed'].includes(existing.status) && Number(existing.paid_amount||0)===0
     && ['user_id','product_id','tariff_id'].every(k=>existing[k]===proposed[k])

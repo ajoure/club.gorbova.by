@@ -99,6 +99,16 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 
+it('leaves a new one-time UID on a paid parent for atomic checkout settlement before all business writes',async()=>{
+  const h=fixture();
+  h.rows.payment_reconcile_queue[0].raw_payload={};
+  h.rows.payment_reconcile_queue[0].tracking_id=`link:order:${id(5)}`;
+  h.tx.tracking_id=`link:order:${id(5)}`;
+  await expect(h.run()).rejects.toThrow('recovery_new_receipt_requires_checkout_settlement');
+  expect(h.writes).toHaveLength(0);
+  expect(h.db.functions.invoke).not.toHaveBeenCalled();
+});
+
 describe('automatic preflight failure backoff', () => {
   const auto = (h: ReturnType<typeof fixture>, options: any = {}) => h.run({
     recordPreflightFailure: true, expectedUpdatedAt: h.rows.payment_reconcile_queue[0].updated_at, ...options,

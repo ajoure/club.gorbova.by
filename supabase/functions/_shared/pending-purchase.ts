@@ -2,6 +2,20 @@
  * never purchase identity. Only trusted checkout writers can call these RPCs. */
 type Row = Record<string, any>;
 
+/** Renewal reminders buy a new period. Session retries within that period
+ * keep one purchase, but an unpaid reminder from a previous month cannot own
+ * the next month's payment. Explicit contractual months remain authoritative. */
+export function pendingPurchaseMonth(order: Row): string | null {
+  const meta = order.meta || {};
+  if (meta.deal_month != null) return meta.deal_month;
+  if (!['renewal_one_time', 'renewal_subscription'].includes(meta.payment_flow)) return null;
+  const issuedAt = order.deal_date || order.created_at;
+  const time = typeof issuedAt === 'string' ? Date.parse(issuedAt) : NaN;
+  if (!Number.isFinite(time)) throw new Error('renewal_purchase_period_missing');
+  // Europe/Minsk has no DST; match the existing paid deal month contract.
+  return new Date(time + 3 * 60 * 60 * 1000).toISOString().slice(0, 7);
+}
+
 export function pendingPurchaseContext(order: Row, kind: string): Row {
   const meta = order.meta || {};
   const quote = meta.composable_checkout;
@@ -27,7 +41,7 @@ export function pendingPurchaseContext(order: Row, kind: string): Row {
     payer_type: order.payer_type === 'individual' ? null : order.payer_type ?? null,
     company_id: order.company_id ?? null,
     legal_details_id: meta.legal_details_id ?? null,
-    month: meta.deal_month ?? null,
+    month: pendingPurchaseMonth(order),
     access_days: order.purchase_snapshot?.access_days ?? null,
     is_trial: order.is_trial ?? order.purchase_snapshot?.is_trial ?? false,
     cohort_id: meta.cohort_id ?? order.purchase_snapshot?.cohort_id ?? null,

@@ -913,6 +913,9 @@ export async function onInvoicePaid(
     }
   }
 
+  const paidTimestamp = (invoice as any).status_transitions?.paid_at ?? event.created;
+  if (!Number.isFinite(paidTimestamp) || paidTimestamp <= 0) throw new Error('stripe_paid_timestamp_missing');
+  const paidAt = new Date(paidTimestamp * 1000).toISOString();
   const provider_payment_id = pi_id ?? charge_id_from_api ?? invoice_id;
   const pendingOrderId = (isSubscriptionCreate || (subv2.status === 'pending' && invoice.billing_reason !== 'subscription_cycle')) ? ((subv2 as any).order_id ?? ps.order_id ?? null) : null;
   const { data: settlement, error: settlementError } = await supabase.rpc('crm_settle_stripe_invoice', {
@@ -920,7 +923,7 @@ export async function onInvoicePaid(
     p_pending_order_id: pendingOrderId,
     p_payment: {
       provider: 'stripe', provider_payment_id, amount: amount_major, currency,
-      status: 'succeeded', paid_at: new Date().toISOString(),
+      status: 'succeeded', paid_at: paidAt,
       meta: { stripe: { invoice_id, subscription_id: stripeSubId, payment_intent_id: pi_id,
         charge_id: charge_id_from_api, account_code, source: 'invoice.paid', api_2026_04_fallback: !pi_id } },
     },
