@@ -1,8 +1,12 @@
 -- Keep manual-period lookup bounded on the large audit ledger. The predicate
 -- also covers admin-ui events whose order ID lives only in meta.
+SET lock_timeout = '3s';
+SET statement_timeout = '15s';
 CREATE INDEX IF NOT EXISTS idx_audit_logs_manual_period_order
   ON public.audit_logs ((coalesce(meta->>'order_id',CASE WHEN entity_type='orders_v2' THEN entity_id END)))
   WHERE action IN ('deal.deal_date.updated','deal.deal_month.updated');
+RESET lock_timeout;
+RESET statement_timeout;
 
 -- No historical backfill. Money and its effective purchase are committed in
 -- one transaction; provider requests and access delivery remain outside SQL.
