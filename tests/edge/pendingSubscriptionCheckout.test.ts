@@ -8,7 +8,7 @@ vi.mock('../../supabase/functions/_shared/bepaid-credentials.ts',()=>({
 }));
 import { stripeGetCheckoutSession } from '../../supabase/functions/_shared/acquiring/stripe-client';
 import { reusePendingSubscriptionCheckout,samePendingSubscriptionPurchase } from '../../supabase/functions/_shared/pending-subscription-checkout';
-const proposal={user_id:'user',product_id:'product',tariff_id:'tariff',offer_id:'offer',currency:'BYN',final_price:250,purchase_snapshot:{access_days:30,is_trial:false}};
+const proposal={user_id:'user',product_id:'product',tariff_id:'tariff',offer_id:'offer',currency:'BYN',final_price:250,deal_date:'2026-10-18T06:00:00Z',purchase_snapshot:{access_days:30,is_trial:false}};
 const order={...proposal,id:'order',order_number:'order-number',status:'pending',paid_amount:0,meta:{payment_type:'subscription'}};
 function dbFixture(money:any[]=[], extraProviders:any[]=[], baseOrder:any=order, baseProvider:any={id:'provider-row',provider:'stripe',subscription_v2_id:'sub',provider_subscription_id:'pending:sub',order_id:'order',state:'pending',meta:{stripe:{account_code:'account',checkout_session_id:'cs_test'}}}, baseSubscription:any={id:'sub',order_id:'order',status:'pending',tariff_id:'tariff',meta:{}}) {
  const rows:any={subscriptions_v2:Array.isArray(baseSubscription)?baseSubscription:[baseSubscription],provider_subscriptions:[baseProvider,...extraProviders],orders_v2:baseOrder,payments_v2:money};
@@ -41,6 +41,7 @@ describe('provider-confirmed subscription checkout reuse',()=>{
   expect(samePendingSubscriptionPurchase({...renewal,meta:{payment_type:'subscription',payment_flow:'admin_subscription'}},proposal)).toBe(false);
   expect(samePendingSubscriptionPurchase({...renewal,tariff_id:'other'},proposal)).toBe(false);
   expect(samePendingSubscriptionPurchase({...renewal,final_price:251},proposal)).toBe(false);
+  expect(samePendingSubscriptionPurchase({...renewal,deal_date:'2026-09-18T06:00:00Z'},proposal)).toBe(false);
  });
  it('returns the same legacy purchase only for a verified open unexpired Stripe session',async()=>{
   vi.mocked(stripeGetCheckoutSession).mockResolvedValue({ok:true,status:200,data:{id:'cs_test',status:'open',expires_at:Math.floor(Date.now()/1000)+3600,payment_status:'unpaid',url:'https://checkout.example.test/live'}});

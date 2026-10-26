@@ -522,8 +522,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // === SUBSCRIPTION ===
     const pendingProposal = {
       user_id, product_id, tariff_id, offer_id: offer_id ?? null,
+      deal_date: new Date().toISOString(),
       final_price: amount / 100, currency: params.currency ?? 'BYN',
-      meta: {...extraMeta,replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
+      meta: {payment_flow:paymentFlow,...extraMeta,replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
       purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
     };
     const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');

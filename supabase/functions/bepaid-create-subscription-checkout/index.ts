@@ -356,6 +356,7 @@ Deno.serve(async (req) => {
 
     const pendingProposal = {
       user_id:userId, product_id:productId, tariff_id:tariff.id, offer_id:effectiveOfferId || null,
+      deal_date:new Date().toISOString(),
       final_price:amountCents/100, currency, meta:{...referralMeta, replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
       purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
     };
