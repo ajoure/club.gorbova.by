@@ -111,4 +111,16 @@ describe('atomic receipt purchase settlement',()=>{
       await expect(preview()).rejects.toMatchObject({code:'42501'});
     }finally{await db.close();}
   },20000);
+
+  it('finishes the period stamp when inline recovery already recorded the first receipt',async()=>{
+    const db=await setup();try{
+      const id=await pending(db);
+      await db.query(`INSERT INTO payments_v2(order_id,provider,provider_payment_id,amount,currency,status,paid_at)
+        VALUES($1,'bepaid','inline-recovery',250,'BYN','succeeded','2026-10-23T10:24:20Z')`,[id]);
+      await db.query(`UPDATE orders_v2 SET status='paid',paid_amount=250 WHERE id=$1`,[id]);
+      expect((await settle(db,id,receipt('inline-recovery'))).duplicate).toBe(true);
+      expect((await db.query(`SELECT paid_amount::int n,meta->>'deal_month' m FROM orders_v2 WHERE id=$1`,[id])).rows).toEqual([{n:250,m:'2026-10'}]);
+      expect((await db.query(`SELECT count(*)::int n FROM payments_v2`)).rows).toEqual([{n:1}]);
+    }finally{await db.close();}
+  },20000);
 });

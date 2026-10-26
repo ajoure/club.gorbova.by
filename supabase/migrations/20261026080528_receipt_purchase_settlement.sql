@@ -28,7 +28,8 @@ BEGIN
   END IF;
   -- Receipt lock always precedes the source-order lock, including retries.
   PERFORM pg_advisory_xact_lock(hashtextextended('purchase_receipt:'||proposed.provider||':'||account_code||':'||proposed.provider_payment_id,0));
-  PERFORM 1 FROM public.orders_v2 WHERE id=p_order_id FOR UPDATE;
+  SELECT * INTO source FROM public.orders_v2 WHERE id=p_order_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'purchase_missing'; END IF;
   SELECT * INTO receipt FROM public.payments_v2
     WHERE provider=proposed.provider AND provider_payment_id=proposed.provider_payment_id
       AND coalesce(meta#>>'{stripe,account_code}','')=account_code FOR UPDATE;
@@ -37,12 +38,28 @@ BEGIN
     IF target.id IS NULL OR (target.id<>p_order_id AND target.meta->>'receipt_parent_order_id' IS DISTINCT FROM p_order_id::text)
       OR receipt.amount IS DISTINCT FROM proposed.amount
       OR upper(receipt.currency) IS DISTINCT FROM upper(proposed.currency)
+      OR target.user_id IS DISTINCT FROM source.user_id OR target.product_id IS DISTINCT FROM source.product_id
+      OR target.tariff_id IS DISTINCT FROM source.tariff_id OR target.profile_id IS DISTINCT FROM source.profile_id
+      OR coalesce(target.is_deleted,false)
       OR (proposed.provider='stripe' AND receipt.meta#>>'{stripe,invoice_id}' IS DISTINCT FROM p_payment#>>'{meta,stripe,invoice_id}')
       OR coalesce(receipt.is_deleted,false) THEN
       RAISE EXCEPTION 'receipt_already_settled_elsewhere';
     END IF;
+    -- Inline recovery may have persisted the first receipt immediately before
+    -- this webhook continued. Finish only the proven system period stamp;
+    -- money/status already match and no other principal receipt may exist.
+    IF target.id=p_order_id AND receipt.status::text='succeeded'
+      AND target.paid_amount=receipt.amount
+      AND target.meta->>'payment_flow' IN ('renewal_one_time','renewal_subscription')
+      AND NOT EXISTS(SELECT 1 FROM public.payments_v2 p WHERE p.order_id=target.id AND p.id<>receipt.id
+        AND NOT coalesce(p.is_deleted,false) AND p.amount>0
+        AND p.status::text IN ('succeeded','refunded','partially_refunded')
+        AND coalesce(p.transaction_type,'payment') IN ('payment','sale','capture','Платеж')) THEN
+      PERFORM public.crm_refresh_paid_purchase(target.id);
+    END IF;
     RETURN jsonb_build_object('order_id',target.id,'payment_id',receipt.id,'duplicate',true,
-      'split',target.id<>p_order_id,'access_allowed',receipt.status::text='succeeded' AND coalesce(receipt.refunded_amount,0)=0);
+      'split',target.id<>p_order_id,'access_allowed',receipt.status::text='succeeded' AND coalesce(receipt.refunded_amount,0)=0
+        AND target.status::text NOT IN ('refunded','canceled') AND NOT coalesce(target.meta @> '{"do_not_grant_access":true}',false));
   END IF;
   SELECT * INTO source FROM public.orders_v2 WHERE id=p_order_id FOR UPDATE;
   IF NOT FOUND OR coalesce(source.is_deleted,false) OR source.user_id IS NULL
