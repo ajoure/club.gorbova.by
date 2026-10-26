@@ -141,6 +141,13 @@
       "when": 1792742484628,
       "tag": "0019_support_assignment_cas",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793007662713,
+      "tag": "0020_renewal_checkout_cycle_month",
+      "breakpoints": true
     }
   ]
 }
