@@ -5050,125 +5050,29 @@ Deno.serve(async (req) => {
         if (routeAuditErr) console.error('[WEBHOOK-LINK] Route audit log error (non-fatal):', routeAuditErr);
       }
 
-      // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
-      const { data: existingLinkPayment } = await supabase
-        .from('payments_v2')
-        .select('id, order_id, origin, status')
-        .eq('provider_payment_id', transactionUid)
-        .eq('provider', 'bepaid')
-        .maybeSingle();
-
-      if (existingLinkPayment) {
-        // True idempotency only if same order
-        if (existingLinkPayment.order_id === parsedOrderId) {
-          // FIX-B: Idempotency upgrade — allow failed/processing → succeeded
-          const existingStatus = (existingLinkPayment as any).status as string | null;
-          
-          // DO-NOT-DOWNGRADE: if already succeeded, always return already_processed
-          if (existingStatus === 'succeeded') {
-            console.log('[WEBHOOK-LINK] Already succeeded (DO-NOT-DOWNGRADE):', transactionUid);
-            try {
-              await supabase.from('payment_reconcile_queue')
-                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
-                .eq('bepaid_uid', transactionUid);
-            } catch (_) {}
-            await recordWebhookEvent(supabase, {
-              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
-              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
-            });
-            return new Response(JSON.stringify({ ok: true, status: 'already_processed', reason: 'already_succeeded' }), {
-              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-          
-          // UPGRADE PATH: existing is failed/processing and incoming is successful → allow through
-          if (['failed', 'processing'].includes(existingStatus || '') && isLinkSuccessful) {
-            console.log(`[WEBHOOK-LINK] UPGRADE ${existingStatus} → succeeded for:`, transactionUid);
-            // Fall through to success path — do NOT return
-          } else if (['failed', 'processing'].includes(existingStatus || '') && !isLinkSuccessful) {
-            // Allow update of failed/processing with new non-successful status (e.g. processing→failed)
-            console.log(`[WEBHOOK-LINK] UPDATE ${existingStatus} with incoming ${transactionStatus}:`, transactionUid);
-            // Fall through to !isLinkSuccessful branch — do NOT return
-          } else {
-            // Default: already_processed (e.g. processing→pending duplicate)
-            console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
-            try {
-              await supabase.from('payment_reconcile_queue')
-                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
-                .eq('bepaid_uid', transactionUid);
-            } catch (_) {}
-            await recordWebhookEvent(supabase, {
-              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
-              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
-            });
-            return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-        } else {
-        // CONFLICT: provider_payment_id exists but linked to different order_id
-        console.warn('[WEBHOOK-LINK] CONFLICT provider_payment_id linked to other order:', {
-          transactionUid,
-          existing_order_id: existingLinkPayment.order_id,
-          tracking_order_id: parsedOrderId,
-          origin: (existingLinkPayment as any).origin,
-        });
-
-        await supabase.from('audit_logs').insert({
-          actor_type: 'system',
-          actor_label: 'bepaid-webhook',
-          action: 'payment_link.conflict_provider_payment_id',
-          meta: {
-            transaction_uid: transactionUid,
-            tracking_id: rawTrackingId,
-            parsed_kind: effectiveKind,
-            existing_payment_id: existingLinkPayment.id,
-            existing_order_id: existingLinkPayment.order_id,
-            tracking_order_id: parsedOrderId,
-            origin: (existingLinkPayment as any).origin || null,
-          },
-        });
-
-        try {
-          await supabase
-            .from('payment_reconcile_queue')
-            .update({
-              status: 'pending_needs_mapping',
-              last_error: `conflict: provider_payment_id linked to order ${existingLinkPayment.order_id}, tracking wants ${parsedOrderId}`,
-              processed_at: null,
-            })
-            .eq('bepaid_uid', transactionUid);
-        } catch (_) {}
-
-        await recordWebhookEvent(supabase, {
-          provider: 'bepaid',
-          event_type: 'payment_link',
-          transaction_uid: transactionUid,
-          tracking_id: rawTrackingId,
-          parsed_kind: effectiveKind,
-          parsed_order_id: parsedOrderId,
-          outcome: 'conflict_provider_payment_id',
-          http_status: 202,
-          processing_ms: Date.now() - startTime,
-        });
-
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            status: 'conflict',
-            reason: 'provider_payment_id_linked_to_different_order',
-            existing_order_id: existingLinkPayment.order_id,
-            tracking_order_id: parsedOrderId,
-          }),
-          { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      // The same UID can legitimately point at the child created by the
+      // atomic settlement. Validate lineage before resuming access delivery.
+      const { data: existingLinkPayment, error: existingLinkError } = await supabase
+        .from('payments_v2').select('id, order_id, status')
+        .eq('provider_payment_id', transactionUid).eq('provider', 'bepaid').maybeSingle();
+      if (existingLinkError) throw new Error('link_receipt_lookup_failed');
+      if (existingLinkPayment?.order_id && existingLinkPayment.order_id !== parsedOrderId) {
+        const { data: receiptOrder, error: receiptOrderError } = await supabase
+          .from('orders_v2').select('id, meta').eq('id', existingLinkPayment.order_id).maybeSingle();
+        if (receiptOrderError || receiptOrder?.meta?.receipt_parent_order_id !== parsedOrderId) {
+          throw new Error('link_receipt_lineage_conflict');
         }
+      }
+      // Confirmed receipts must never be downgraded. Successful retries still
+      // resume canonical finalization after a previous delivery failure.
+      if (existingLinkPayment?.status === 'succeeded' && !isLinkSuccessful) {
+        return new Response(JSON.stringify({ok:true,status:'already_processed'}), {
+          status:200,headers:{...corsHeaders,'Content-Type':'application/json'},
+        });
       }
 
       // 2. Find order in orders_v2
-      const { data: linkOrderV2 } = await supabase
+      let { data: linkOrderV2 } = await supabase
         .from('orders_v2')
         .select('*')
         .eq('id', parsedOrderId)
@@ -5195,27 +5099,6 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ ok: false, status: 'pending_needs_mapping', reason: 'order_not_found' }), {
           status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
-      }
-
-      // Idempotency belongs to the receipt, not the order or latest checkout
-      // token. A different successful receipt on an already-paid purchase is
-      // still money and must reach the ledger.
-      if (linkOrderV2.status === 'paid') {
-        const { data: recordedReceipt, error: receiptLookupError } = await supabase
-          .from('payments_v2').select('id, status')
-          .eq('order_id', linkOrderV2.id).eq('provider', 'bepaid')
-          .eq('provider_payment_id', transactionUid).maybeSingle();
-        if (receiptLookupError) throw new Error('link_receipt_lookup_failed');
-        if (!isLinkSuccessful || recordedReceipt?.status === 'succeeded') {
-          await recordWebhookEvent(supabase, {
-            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-            tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
-            outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
-          });
-          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
       }
 
       // Never suppress confirmed money from an older checkout. Unknown UIDs
@@ -5455,19 +5338,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 4. Create payments_v2
-      // F12.1 P5: fill-only guard — don't overwrite existing order_id
-      const { data: existingLinkPayForP5 } = await supabase
-        .from('payments_v2')
-        .select('id, order_id')
-        .eq('provider', 'bepaid')
-        .eq('provider_payment_id', transactionUid)
-        .maybeSingle();
-
-      const linkP5OrderId = (existingLinkPayForP5?.order_id) ? existingLinkPayForP5.order_id : linkOrderV2.id;
-
       const linkPaymentPayload = {
-        order_id: linkP5OrderId,
+        order_id: linkOrderV2.id,
         user_id: linkOrderV2.user_id,
         profile_id: linkProfile.id,
         amount: linkPaymentAmount,
@@ -5477,7 +5349,7 @@ Deno.serve(async (req) => {
         provider_payment_id: transactionUid,
         card_brand: transaction?.credit_card?.brand || null,
         card_last4: transaction?.credit_card?.last_4 || null,
-        paid_at: transaction?.paid_at || new Date().toISOString(),
+        paid_at: transaction?.paid_at || null,
         is_recurring: false,
         origin: 'payment_link',
         provider_response: { transaction_uid: transactionUid, status: transactionStatus, amount: transaction?.amount, currency: transaction?.currency, paid_at: transaction?.paid_at },
@@ -5493,7 +5365,21 @@ Deno.serve(async (req) => {
         });
       }
 
-      const linkPayResult = await upsertPaymentV2(supabase, linkPaymentPayload, '[WEBHOOK-LINK]');
+      const {data: receiptSettlement,error: receiptSettlementError}=await supabase.rpc('crm_settle_one_time_receipt', {
+        p_order_id:linkOrderV2.id,p_payment:linkPaymentPayload,
+      });
+      const linkPayResult={id:receiptSettlement?.payment_id||null,
+        action:receiptSettlementError?'error':receiptSettlement?.duplicate?'updated':'created',
+        error:receiptSettlementError?.message};
+      if (!receiptSettlementError && (!receiptSettlement?.order_id || !linkPayResult.id)) {
+        throw new Error('link_receipt_settlement_invalid');
+      }
+      if (!receiptSettlementError && receiptSettlement.order_id!==linkOrderV2.id) {
+        const {data:effectiveOrder,error:effectiveOrderError}=await supabase.from('orders_v2')
+          .select('*').eq('id',receiptSettlement.order_id).single();
+        if(effectiveOrderError||!effectiveOrder)throw new Error('link_effective_order_missing');
+        linkOrderV2=effectiveOrder;
+      }
 
       if (linkPayResult.action === 'error') {
         console.error('[WEBHOOK-LINK] payments_v2 write FAILED:', linkPayResult.error);
@@ -5516,12 +5402,15 @@ Deno.serve(async (req) => {
       }
       console.log('[WEBHOOK-LINK] payments_v2', linkPayResult.action, linkPayResult.id);
 
+      if (receiptSettlement.access_allowed === false) {
+        // A replay of refunded money must never run a new access delivery.
+        return new Response(JSON.stringify({ok:true,status:'already_processed',order_id:linkOrderV2.id}), {
+          status:200,headers:{...corsHeaders,'Content-Type':'application/json'},
+        });
+      }
 
-      // Roll up all confirmed receipts under the order lock so concurrent
-      // successful sessions cannot overwrite one another's paid amount.
-      const { error: settleError } = await supabase.rpc('crm_refresh_paid_purchase', { p_order_id: linkOrderV2.id });
-      if (settleError) throw new Error('link_purchase_settlement_failed');
-      console.log('[WEBHOOK-LINK] Order updated to paid:', linkOrderV2.id);
+      // Money was settled atomically on the effective order. Every following
+      // routing/grant/queue operation must use that ID, including UID retries.
       // CRM routing — Layer A: применить closed_won (если есть snapshot и не было manual override)
       try { await applyCrmStageOnTerminal(supabase, linkOrderV2.id, 'success', 'webhook_link_paid'); }
       catch (e) { console.error('[WEBHOOK-LINK] crm-routing apply failed:', e); }
@@ -5586,9 +5475,11 @@ Deno.serve(async (req) => {
             action: 'bepaid.webhook.grant_access_failed',
             meta: { order_id: linkOrderV2.id, http_status: grantResp.status, error: grantResult?.error || grantResult, severity: 'CRITICAL' },
           });
+          throw new Error('link_checkout_finalization_failed');
         }
       } catch (grantErr) {
-        console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
+        console.error('[WEBHOOK-LINK] checkout finalization failed; receipt stays retryable');
+        throw grantErr;
       }
 
       // 8. Admin purchase notification — moved to canonical `notify-order-purchased`

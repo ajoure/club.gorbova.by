@@ -13,8 +13,9 @@ CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_numbe
 product_id uuid,tariff_id uuid,offer_id uuid,responsible_user_id uuid,company_id uuid,base_price numeric,final_price numeric,
 paid_amount numeric,currency text,status order_status,provider text,provider_payment_id text,payer_type text,reconcile_source text,customer_ip text,customer_email text,customer_phone text,
 is_trial boolean DEFAULT false,trial_end_at timestamptz,created_at timestamptz DEFAULT now(),deal_date timestamptz,meta jsonb,pipeline_id uuid,pipeline_stage_id uuid,purchase_snapshot jsonb,is_deleted boolean DEFAULT false);
-CREATE TABLE payments_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid REFERENCES orders_v2(id),
-provider text,provider_payment_id text,amount numeric,refunded_amount numeric,currency text,status payment_status,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb);
+CREATE TABLE payments_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid REFERENCES orders_v2(id),user_id uuid,profile_id uuid,
+provider text,provider_payment_id text,amount numeric,refunded_amount numeric,currency text,status payment_status,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb,
+origin text,card_brand text,card_last4 text,provider_response jsonb,receipt_url text,payment_classification text);
 CREATE TABLE subscriptions_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid,status text,auto_renew boolean,meta jsonb);
 CREATE TABLE provider_subscriptions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),subscription_v2_id uuid,provider_subscription_id text,order_id uuid,provider text,state text,meta jsonb);
 CREATE TABLE audit_logs(id uuid DEFAULT gen_random_uuid(),actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);
@@ -130,6 +131,7 @@ describe('pending purchase contract', () => {
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
       await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
       await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20261026080528_receipt_purchase_settlement.sql','utf8'));
       const proposal = { ...order, meta: { marker:'preserved' } };
       const claimArgs = [JSON.stringify(proposal), JSON.stringify(pendingPurchaseContext(proposal,'subscription'))];
       const claimed = (await db.query<{r:any}>(`SELECT crm_claim_pending_purchase($1,$2,'stripe','poland') r`, claimArgs)).rows[0].r;
@@ -138,7 +140,7 @@ describe('pending purchase contract', () => {
         const stripe = {invoice_id:invoice,account_code:'poland'};
         const paid = { ...order,user_id:recipient,order_number:invoice,status:'paid',paid_amount:amount,
           provider:'stripe',provider_payment_id:invoice,payer_type:'individual',meta:{stripe} };
-        const payment = {provider:'stripe',provider_payment_id:invoice,amount,currency:'BYN',status:'succeeded',meta:{stripe}};
+        const payment = {provider:'stripe',provider_payment_id:invoice,amount,currency:'BYN',status:'succeeded',paid_at:'2026-10-23T10:24:20Z',meta:{stripe}};
         return (await db.query<{r:any}>(`SELECT crm_settle_stripe_invoice($1,$2,$3) r`, [JSON.stringify(paid),pending,JSON.stringify(payment)])).rows[0].r;
       };
       const pair = await Promise.all([settle('in_first',pendingId),settle('in_first',pendingId)]);
@@ -152,10 +154,13 @@ describe('pending purchase contract', () => {
       await expect(settle('in_invalid_amount',null,order.user_id,-1)).rejects.toThrow('invalid_stripe_invoice_settlement');
       expect((await db.query(`SELECT count(*)::int n FROM payments_v2`)).rows).toEqual([{n:2}]);
       expect((await db.query(`SELECT count(*)::int n FROM orders_v2`)).rows).toEqual([{n:2}]);
-      // A second actual receipt is money, even on an already-paid purchase.
-      await settle('in_another_receipt',pendingId);
+      // A second actual receipt is a separate purchase; invoice retry finds it.
+      const additional=await settle('in_another_receipt',pendingId);
+      expect(additional.order_id).not.toBe(pendingId);
+      expect((await settle('in_another_receipt',pendingId)).order_id).toBe(additional.order_id);
       expect((await settle('in_first',pendingId)).duplicate).toBe(true);
-      expect((await db.query(`SELECT paid_amount::int n FROM orders_v2 WHERE id=$1`,[pendingId])).rows).toEqual([{n:500}]);
+      expect((await db.query(`SELECT paid_amount::int n FROM orders_v2 WHERE id=$1`,[pendingId])).rows).toEqual([{n:250}]);
+      expect((await db.query(`SELECT count(*)::int n FROM orders_v2`)).rows).toEqual([{n:3}]);
     } finally { await db.close(); }
   },20000);
   it('rolls up real money without counting voids or deleted receipts and restores an archived purchase', async () => {

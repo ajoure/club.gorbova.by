@@ -286,6 +286,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       product_name: product.name,
       tariff_name: tariff.name,
       payment_flow: paymentFlow,
+      ...(['renewal_one_time','renewal_subscription'].includes(paymentFlow) && !extraMeta.deal_month
+        ? {renewal_period_basis:'checkout_issued_at'} : {}),
       ...extraMeta,
     };
 
