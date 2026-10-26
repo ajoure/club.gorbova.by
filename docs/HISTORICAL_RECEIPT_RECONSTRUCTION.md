@@ -50,7 +50,12 @@ An uncertain database lookup also stops processing; it is not a missing marker.
 - Direct access writer: before standard, exact-target and 3DS branches. A marked
   historical deal cannot start an unpaid access period.
 
-The modules live at the bePaid function entry points so `_shared` and the
+Managed deploys package only each function and `_shared`, so the small guard
+module has byte-identical local copies in the five consumers. The guarded
+REBILL entry module is identical in webhook and post-cancel packages.
+`node scripts/payments/sync-historical-receipt-guards.mjs` checks the mirrors;
+`--write` regenerates them after editing the canonical webhook copy. Contract
+tests enforce both package isolation and mirror equality. `_shared` and the
 independent CB21 release digest stay byte-identical. Managed deployment scope:
 `bepaid-webhook`, `payments-reconcile`, `bepaid-archive-import`,
 `grant-access-for-order`, `admin-materialize-post-cancel-charge`.

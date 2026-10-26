@@ -1,4 +1,4 @@
-import { inspectHistoricalReceipt } from '../bepaid-webhook/historical-receipt-guard.ts';
+import { inspectHistoricalReceipt } from './historical-receipt-guard.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 

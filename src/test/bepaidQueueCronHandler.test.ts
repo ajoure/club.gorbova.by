@@ -80,6 +80,8 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       if (path === "./grant-capability.ts") return { requireExactGrantCapability };
       if (path === "./manual-continuation.ts") return { authorizeManualContinuation };
       if (path.endsWith('/_shared/verified-financial-caller.ts')) return { resolveGrantAccessCaller };
+      // The real wrapper + recovery are exercised by tests/edge/bepaidCanonicalRecovery.test.ts.
+      if (path === "./historical-recovery.ts") return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-canonical-recovery.ts")) return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {

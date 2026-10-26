@@ -116,6 +116,15 @@ it('blocks incomplete marker intent, but does not conflate post-cancel orders wi
   expect(hasHistoricalReceiptMarker({do_not_grant_access:true,grant_status:'suppressed_post_cancel_charge'})).toBe(false);
 });
 
+it('ships identical guards in each isolated managed function package',()=>{
+  const file=(p:string)=>readFileSync(`supabase/functions/${p}`,'utf8');
+  const canonical=file('bepaid-webhook/historical-receipt-guard.ts');
+  for(const name of ['payments-reconcile','grant-access-for-order','bepaid-archive-import','admin-materialize-post-cancel-charge']) {
+    expect(file(`${name}/historical-receipt-guard.ts`)).toBe(canonical);
+  }
+  expect(file('admin-materialize-post-cancel-charge/historical-rebill-flow.ts')).toBe(file('bepaid-webhook/historical-rebill-flow.ts'));
+});
+
 it('wires early boundaries before authenticated webhook queue, importer profile/product writes, recovery claims and 3DS writer',()=>{
   const source=(p:string)=>readFileSync(`supabase/functions/${p}`,'utf8');
   const w=source('bepaid-webhook/index.ts');

@@ -1,4 +1,4 @@
-import { hasHistoricalReceiptMarker } from '../bepaid-webhook/historical-receipt-guard.ts';
+import { hasHistoricalReceiptMarker } from './historical-receipt-guard.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';

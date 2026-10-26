@@ -1,6 +1,6 @@
 // Guard the deployed entry point without changing unrelated shared packages.
 import { reconcileExactQueuePayment as canonicalRecovery } from '../_shared/bepaid-canonical-recovery.ts';
-import { inspectHistoricalReceipt } from '../bepaid-webhook/historical-receipt-guard.ts';
+import { inspectHistoricalReceipt } from './historical-receipt-guard.ts';
 
 export async function reconcileExactQueuePayment(
   db: Parameters<typeof canonicalRecovery>[0], options: Parameters<typeof canonicalRecovery>[1],
