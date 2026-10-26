@@ -1,3 +1,9 @@
+-- Keep manual-period lookup bounded on the large audit ledger. The predicate
+-- also covers admin-ui events whose order ID lives only in meta.
+CREATE INDEX IF NOT EXISTS idx_audit_logs_manual_period_order
+  ON public.audit_logs ((coalesce(meta->>'order_id',CASE WHEN entity_type='orders_v2' THEN entity_id END)))
+  WHERE action IN ('deal.deal_date.updated','deal.deal_month.updated');
+
 -- No historical backfill. Money and its effective purchase are committed in
 -- one transaction; provider requests and access delivery remain outside SQL.
 CREATE OR REPLACE FUNCTION public.crm_settle_one_time_receipt(p_order_id uuid,p_payment jsonb)
@@ -96,13 +102,14 @@ BEGIN
     END IF;
     IF proposed.amount IS DISTINCT FROM source.final_price OR source.final_price<=0
       OR coalesce(jsonb_array_length(source.meta#>'{composable_checkout,items}'),0)>1
+      OR source.meta ? 'contractual_month'
       OR EXISTS(SELECT 1 FROM public.payments_v2 p WHERE order_id=source.id AND NOT coalesce(p.is_deleted,false)
         AND (coalesce(refunded_amount,0)>0 OR amount<0 OR status::text IN ('refunded','partially_refunded'))) THEN
       RAISE EXCEPTION 'receipt_split_requires_review';
     END IF;
     SELECT coalesce(jsonb_object_agg(key,value),'{}'::jsonb) INTO child_meta
       FROM jsonb_each(coalesce(source.meta,'{}'::jsonb))
-      WHERE key IN ('crm_routing_snapshot','payment_flow','product_name','tariff_name','utm','financial_kind');
+      WHERE key IN ('crm_routing_snapshot','payment_flow','product_name','tariff_name','utm','financial_kind','legal_details_id');
     child_meta:=child_meta||jsonb_build_object('receipt_parent_order_id',source.id,
       'parent_order_id',source.id,'source','new_receipt_on_paid_purchase',
       'materialized_from_payment_uid',proposed.provider_payment_id,
@@ -170,7 +177,7 @@ BEGIN
       OR (purchase.meta#>>'{checkout_purchase_identity,context,month}' IS NULL
         AND purchase.meta->>'deal_month'=to_char(purchase.created_at AT TIME ZONE 'Europe/Minsk','YYYY-MM')))
     AND NOT EXISTS(SELECT 1 FROM public.audit_logs a WHERE a.action IN ('deal.deal_date.updated','deal.deal_month.updated')
-      AND (a.entity_id=p_order_id OR a.meta->>'order_id'=p_order_id::text));
+      AND coalesce(a.meta->>'order_id',CASE WHEN a.entity_type='orders_v2' THEN a.entity_id END)=p_order_id::text);
   UPDATE public.orders_v2 SET paid_amount=greatest(coalesce(paid_amount,0),gross),
     status=CASE WHEN purchase.status='refunded' THEN 'refunded'::public.order_status
       WHEN gross>=final_price THEN 'paid'::public.order_status ELSE 'partial'::public.order_status END,
@@ -290,7 +297,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
         AND NOT coalesce(q.is_deleted,false) AND (q.amount<0 OR coalesce(q.refunded_amount,0)>0
           OR (q.amount>0 AND q.status::text IN ('succeeded','refunded','partially_refunded'))))
       AND NOT EXISTS(SELECT 1 FROM public.audit_logs l WHERE l.action IN ('deal.deal_date.updated','deal.deal_month.updated')
-        AND (l.entity_id=o.id OR l.meta->>'order_id'=o.id::text))
+        AND coalesce(l.meta->>'order_id',CASE WHEN l.entity_type='orders_v2' THEN l.entity_id END)=o.id::text)
   FROM public.orders_v2 o
   JOIN public.payments_v2 p ON p.order_id=o.id AND p.amount>0
     AND NOT coalesce(p.is_deleted,false)

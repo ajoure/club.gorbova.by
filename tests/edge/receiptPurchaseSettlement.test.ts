@@ -71,13 +71,14 @@ describe('atomic receipt purchase settlement',()=>{
 
   it('completes a pending UID in place and leaves refunded, composed and foreign purchases for review',async()=>{
     const db=await setup();try{
-      const id=await pending(db,{payment_flow:'renewal_one_time',deal_month:'2026-09',active_checkout_token:'old',grant_status:'old',replacement_of_subscription_v2_id:'old',crm_routing_snapshot:{pipeline:'retained'}});
+      const id=await pending(db,{payment_flow:'renewal_one_time',deal_month:'2026-09',active_checkout_token:'old',grant_status:'old',replacement_of_subscription_v2_id:'old',crm_routing_snapshot:{pipeline:'retained'},legal_details_id:'retained-requisites'});
       await db.query(`INSERT INTO payments_v2(order_id,provider,provider_payment_id,status,amount,currency) VALUES($1,'bepaid','processing','processing',250,'BYN')`,[id]);
       const first=await settle(db,id,receipt('processing'));
       const next=await settle(db,id,receipt('child'));
       expect(first.order_id).toBe(id);expect(next.order_id).not.toBe(id);
       const child=(await db.query<any>(`SELECT meta FROM orders_v2 WHERE id=$1`,[next.order_id])).rows[0].meta;
       expect(child).toHaveProperty('crm_routing_snapshot');
+      expect(child.legal_details_id).toBe('retained-requisites');
       for(const key of ['active_checkout_token','grant_status','replacement_of_subscription_v2_id'])expect(child).not.toHaveProperty(key);
       const foreign=await pending(db);
       await expect(settle(db,foreign,receipt('child'))).rejects.toThrow('receipt_already_settled_elsewhere');

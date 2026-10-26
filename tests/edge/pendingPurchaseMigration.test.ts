@@ -18,7 +18,7 @@ provider text,provider_payment_id text,amount numeric,refunded_amount numeric,cu
 origin text,card_brand text,card_last4 text,provider_response jsonb,receipt_url text,payment_classification text);
 CREATE TABLE subscriptions_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid,status text,auto_renew boolean,meta jsonb);
 CREATE TABLE provider_subscriptions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),subscription_v2_id uuid,provider_subscription_id text,order_id uuid,provider text,state text,meta jsonb);
-CREATE TABLE audit_logs(id uuid DEFAULT gen_random_uuid(),actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);
+CREATE TABLE audit_logs(id uuid DEFAULT gen_random_uuid(),actor_type text,action text,entity_type text,entity_id text,meta jsonb);
 CREATE FUNCTION generate_order_number() RETURNS text LANGUAGE sql AS 'SELECT gen_random_uuid()::text';`;
 
 describe('pending purchase contract', () => {
