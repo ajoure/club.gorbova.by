@@ -130,6 +130,10 @@ jobs:
           deno test --no-lock supabase/functions/system-health-full-check/renewal-check_test.ts supabase/functions/_shared/payment-health-policy.test.ts supabase/functions/grant-access-for-order/notification-policy_test.ts supabase/functions/payments-reconcile/grant-capability_test.ts supabase/functions/payments-reconcile/manual-continuation_test.ts
           deno test --no-lock --allow-read supabase/functions/grant-access-for-order/caller_auth_config_test.ts
           deno check --no-lock supabase/functions/system-health-full-check/index.ts supabase/functions/payments-reconcile/index.ts
+      - name: Provider-managed daily audit and concurrent changes
+        run: |
+          deno test --no-lock --allow-read supabase/functions/bepaid-subscription-audit-cron/risk-policy_test.ts
+          deno check --no-lock supabase/functions/bepaid-subscription-audit-cron/index.ts
       - name: Telegram renewal truth and safe preview
         run: |
           deno test --no-lock --allow-read supabase/functions/telegram-send-reminders/renewal-state_test.ts

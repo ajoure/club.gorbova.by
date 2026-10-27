@@ -1,8 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { disableCardlessInternalRenewals, RENEWAL_AUDIT_RELEASE } from "./risk-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  "X-Renewal-Audit-Release": RENEWAL_AUDIT_RELEASE,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
@@ -90,52 +92,22 @@ serve(async (req) => {
     // Part 2: Internal audit - find at-risk subscriptions
     console.log("[Cron] Running internal subscription audit...");
     
-    // Find subscriptions with auto_renew=true but no payment_method_id
-    const { data: atRiskSubs, error: atRiskError } = await supabase
-      .from("subscriptions_v2")
-      .select(`
-        id,
-        user_id,
-        profile_id,
-        payment_method_id,
-        payment_token,
-        status,
-        profiles:profiles!subscriptions_v2_profile_id_fkey(full_name, email)
-      `)
-      .in("status", ["active", "trial", "past_due"])
-      .eq("auto_renew", true)
-      .is("payment_method_id", null);
+    const internalAudit = await disableCardlessInternalRenewals(supabase);
+    auditReport.internal_audit.at_risk_found = internalAudit.found;
+    auditReport.internal_audit.auto_renew_disabled = internalAudit.changedIds.length;
 
-    if (atRiskError) {
-      console.error("[Cron] At-risk query error:", atRiskError);
-    } else if (atRiskSubs && atRiskSubs.length > 0) {
-      auditReport.internal_audit.at_risk_found = atRiskSubs.length;
-      console.log(`[Cron] Found ${atRiskSubs.length} at-risk subscriptions`);
-      
-      // Disable auto_renew for all at-risk subscriptions
-      const atRiskIds = atRiskSubs.map((s: any) => s.id);
-      
-      const { error: updateError } = await supabase
-        .from("subscriptions_v2")
-        .update({ auto_renew: false })
-        .in("id", atRiskIds);
-      
-      if (!updateError) {
-        auditReport.internal_audit.auto_renew_disabled = atRiskIds.length;
-        console.log(`[Cron] Disabled auto_renew for ${atRiskIds.length} subscriptions`);
-        
-        // Create audit log
-        await supabase.from("audit_logs").insert({
-          action: "subscription.cron_security_fix",
-          actor_type: "system",
-          actor_label: "bepaid-subscription-audit-cron",
-          meta: {
-            fixed_count: atRiskIds.length,
-            subscription_ids: atRiskIds.slice(0, 10), // First 10 for reference
-            fix_type: "auto_renew_disabled_no_payment_method",
-          },
-        });
-      }
+    if (internalAudit.changedIds.length > 0) {
+      console.log(`[Cron] Disabled ${internalAudit.changedIds.length} eligible internal cardless renewals`);
+      await supabase.from("audit_logs").insert({
+        action: "subscription.cron_security_fix",
+        actor_type: "system",
+        actor_label: "bepaid-subscription-audit-cron",
+        meta: {
+          fixed_count: internalAudit.changedIds.length,
+          subscription_ids: internalAudit.changedIds.slice(0, 10),
+          fix_type: "auto_renew_disabled_no_payment_method",
+        },
+      });
     }
 
     // Part 3: Find orphan tokens
