@@ -3,7 +3,9 @@
 BEGIN;
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, /* TRANSACTION_MODE */ READ ONLY;
 SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '30s';
+-- The full protected-state fingerprint runs both before and after the repair.
+-- Keep its bounded budget separate from the five-second row-lock deadline.
+SET LOCAL statement_timeout = '90s';
 DO $bundle$
 DECLARE
   cfg jsonb := /* REVIEWED_INPUT */ '{}'::jsonb;
