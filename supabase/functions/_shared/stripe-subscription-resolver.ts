@@ -32,6 +32,7 @@ import { materializeStripeDocumentLinks } from './stripe-receipt-materialize.ts'
 export interface StripeEvent {
   id: string;
   type: string;
+  created?: number;
   data: { object: Record<string, unknown> };
   livemode?: boolean;
   account?: string;
