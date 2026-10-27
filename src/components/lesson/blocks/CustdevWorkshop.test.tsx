@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, cleanup } from '@testing-library/react';
+import { act, fireEvent, render, screen, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyState, emptyAnalysis } from '../../../../supabase/functions/_shared/custdev-contract';
 const {mock}=vi.hoisted(()=>({mock:{value:null as any}}));
@@ -17,4 +17,4 @@ describe('custdev integrated lesson view',()=>{
  });
  it('student sees save vs submit status and can add a next question using the existing block',()=>{mock.value.canEdit=true;mock.value.isAdmin=false;mock.value.workspace.status='draft';render(<CustdevWorkshop lessonId="l" blockId="b"/>);expect(screen.getByText('Сохранено · в работе')).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:/1. Исходная ситуация/}));fireEvent.click(screen.getByRole('button',{name:'+ Вопрос'}));expect(mock.value.edit).toHaveBeenCalled();expect(screen.getByRole('button',{name:'Завершить и отправить на проверку'})).toBeInTheDocument();});
 });
-it('loads earlier history pages through the same authorized endpoint',()=>{mock.value.historyMore={runs:true,versions:false};render(<CustdevWorkshop lessonId="l" blockId="b"/>);fireEvent.click(screen.getByText('История анализов и сдач'));fireEvent.click(screen.getByRole('button',{name:'Показать более ранние версии'}));return Promise.resolve().then(()=>expect(mock.value.action).toHaveBeenCalledWith('history',{runsOffset:0,versionsOffset:0}));});
+it('loads earlier history pages through the same authorized endpoint',async()=>{mock.value.historyMore={runs:true,versions:false};render(<CustdevWorkshop lessonId="l" blockId="b"/>);fireEvent.click(screen.getByText('История анализов и сдач'));await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'Показать более ранние версии'}));await Promise.resolve();});expect(mock.value.action).toHaveBeenCalledWith('history',{runsOffset:0,versionsOffset:0});});

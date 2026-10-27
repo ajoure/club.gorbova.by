@@ -1200,6 +1200,11 @@ export function CustdevWorkshop(
                             «{q.text}»
                           </span>
                         </label>
+                        {q.rationale && (
+                          <p className="text-xs text-muted-foreground">
+                            Обоснование ИИ: {q.rationale}
+                          </p>
+                        )}
                         {q.historical && (
                           <p className="text-xs text-amber-700 dark:text-amber-400">
                             Историческая цитата: исходный ответ изменён.
@@ -1522,6 +1527,15 @@ export function CustdevWorkshop(
                             ? "— · заполнены не все оценки"
                             : `${scores.total}/20`}
                         </p>
+                        {!!need.aiOriginal?.productRefs?.length && (
+                          <p className="text-sm text-muted-foreground">
+                            Механизмы матрицы Шага 3:{" "}
+                            {need.aiOriginal.productRefs.map((id) =>
+                              products.find((p) => p.id === id)?.name ??
+                                "Источник изменён; проверьте матрицу"
+                            ).join(", ")}
+                          </p>
+                        )}
                         <Field
                           label="Обоснование и ручные замечания"
                           value={need.overrides.rationale ??

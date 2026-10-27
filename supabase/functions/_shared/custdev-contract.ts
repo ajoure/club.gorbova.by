@@ -91,6 +91,7 @@ export interface Quote {
   excluded: boolean;
   manual: boolean;
   sourceVersion: string;
+  rationale?: string;
   categoryOverridden?: boolean;
   historical?: boolean;
 }
@@ -104,7 +105,7 @@ export interface Need {
   label: string;
   category: Category;
   quoteIds: string[];
-  aiOriginal: (Scores & { rationale: string }) | null;
+  aiOriginal: (Scores & { rationale: string; productRefs?: string[] }) | null;
   overrides: Partial<Scores & { frequency: Score; rationale: string }>;
   approvedValue:
     | (Scores & { frequency: Score; rationale: string; sourceHash: string })
@@ -571,7 +572,8 @@ export function extractQuotes(raw: unknown, answers: SourceAnswer[]): Quote[] {
   return raw.map((v) => {
     insist(
       obj(v) && text(v.exact_quote) &&
-        String(v.exact_quote).trim().length > 0 && isCategory(v.category),
+        String(v.exact_quote).trim().length > 0 && isCategory(v.category) &&
+        text(v.rationale),
       "Неверная цитата ИИ",
     );
     const source = answers.find((a) =>
@@ -591,6 +593,7 @@ export function extractQuotes(raw: unknown, answers: SourceAnswer[]): Quote[] {
       excluded: false,
       manual: false,
       sourceVersion: "",
+      rationale: String(v.rationale),
     };
   });
 }
@@ -646,6 +649,7 @@ export function extractNeeds(
         significance: sig.score,
         purchaseImpact: impact.score,
         productFit: products.length && refs.length ? fit.score : null,
+        productRefs: refs,
         rationale: [
           sig.rationale,
           impact.rationale,

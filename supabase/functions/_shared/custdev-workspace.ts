@@ -136,6 +136,7 @@ export async function normalizeUserState(
         ? prior.manual || prior.text !== q.text || prior.sourceId !== q.sourceId
         : true;
       q.historical = !current;
+      q.rationale = prior?.rationale ?? "";
       q.categoryOverridden = prior
         ? prior.categoryOverridden || prior.category !== q.category
         : true;
