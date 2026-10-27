@@ -30,7 +30,7 @@
  *   - Не принимает произвольный status/payload.
  *   - Не работает в mode='battle'.
  */
-import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { createClient } from "npm:@supabase/supabase-js@2.108.2";
 import {
   handleCorsPreflightRequest,
   jsonResponse,
