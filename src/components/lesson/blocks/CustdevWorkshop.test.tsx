@@ -11,7 +11,7 @@ describe('custdev integrated lesson view',()=>{
   render(<CustdevWorkshop lessonId="l" blockId="b" ownerId="student" reviewMode/>);
   expect(screen.getByLabelText('Название целевого сегмента')).toBeDisabled();expect(screen.getByRole('button',{name:'+ Сегмент'})).toBeDisabled();
   fireEvent.click(screen.getByRole('button',{name:/2. Проведение интервью/}));expect(screen.getByLabelText('Карточка интервью')).not.toBeDisabled();expect(screen.getByLabelText('Имя или псевдоним респондента')).toBeDisabled();
-  fireEvent.click(screen.getByRole('button',{name:/3. Анализ результатов/}));expect(screen.getByRole('button',{name:/Источник: Респондент/})).not.toBeDisabled();
+  fireEvent.click(screen.getByRole('button',{name:/3. Анализ результатов/}));expect(screen.getByRole('button',{name:/Источник: Респондент/})).not.toBeDisabled();expect(screen.getByLabelText('Сегмент анализа')).not.toBeDisabled();
   fireEvent.click(screen.getByRole('button',{name:/4. Позиционирование/}));expect(screen.getByLabelText('Сегмент для адаптации')).not.toBeDisabled();
   fireEvent.click(screen.getByRole('button',{name:/5. УТП/}));expect(screen.getByLabelText('Сегмент для УТП')).not.toBeDisabled();expect(screen.getByRole('button',{name:'Утвердить результат'})).not.toBeDisabled();
  });

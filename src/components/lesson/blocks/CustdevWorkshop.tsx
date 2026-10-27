@@ -1117,6 +1117,7 @@ export function CustdevWorkshop(
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4">
                   <SelectField
+                    navigation
                     label="Сегмент анализа"
                     value={sid}
                     onChange={(v) => {
