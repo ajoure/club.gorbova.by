@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fixture,id,a,b,admin,noAccess,lesson,block,blank } from './custdev-fixture.mjs';
+import { fixture,serviceAclMigration,id,a,b,admin,noAccess,lesson,block,blank } from './custdev-fixture.mjs';
+
+test('platform default grants are reproduced and history ACLs are narrowed without data loss',async()=>{
+ const {db,as,save}=await fixture({applyServiceAcl:false});
+ try{
+  const privilege=async(table,p)=>(await db.query('SELECT has_table_privilege($1,$2,$3) AS ok',['service_role',`public.${table}`,p])).rows[0].ok;
+  assert.equal(await privilege('training_custdev_versions','UPDATE'),true);
+  assert.equal(await privilege('training_custdev_ai_runs','DELETE'),true);
+  const w=await save(a,a,0,blank,true);
+  await db.exec(serviceAclMigration);
+  await db.exec(serviceAclMigration); // Reapplying ACLs has no data side effects.
+  for(const table of ['training_custdev_workspaces','training_custdev_ai_runs','training_custdev_versions']){
+   const direct=(await db.query("SELECT p.privilege_type FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) p WHERE c.oid=$1::regclass AND p.grantee=(SELECT oid FROM pg_roles WHERE rolname='service_role') ORDER BY p.privilege_type",[`public.${table}`])).rows.map(r=>r.privilege_type);
+   assert.deepEqual(direct,table==='training_custdev_workspaces'?['DELETE','INSERT','SELECT','UPDATE']:['INSERT','SELECT']);
+   for(const p of ['SELECT','INSERT'])assert.equal(await privilege(table,p),true);
+   for(const p of ['TRUNCATE','TRIGGER','REFERENCES'])assert.equal(await privilege(table,p),false);
+   if(table!=='training_custdev_workspaces')for(const p of ['UPDATE','DELETE'])assert.equal(await privilege(table,p),false);
+  }
+  await as('service_role',a,async()=>{
+   const run=(await db.query('SELECT public.custdev_reserve_ai_run($1,$2,$3,$4,$5,$6,$7,$8,$9) AS r',[a,w.id,id(101),'quotes','s1',null,'hash',w.revision,'fixture-model'])).rows[0].r.run;
+   await assert.rejects(db.query('UPDATE public.training_custdev_ai_runs SET user_id=$1 WHERE id=$2',[b,run.id]),/permission denied/);
+   await db.query("UPDATE public.training_custdev_ai_runs SET status='failed',error_code='fixture',finished_at=now() WHERE id=$1",[run.id]);
+   await assert.rejects(db.query('DELETE FROM public.training_custdev_ai_runs'),/permission denied/);
+   await assert.rejects(db.query("UPDATE public.training_custdev_versions SET status='draft'"),/permission denied/);
+   await assert.rejects(db.query('DELETE FROM public.training_custdev_versions'),/permission denied/);
+   await assert.rejects(db.query('TRUNCATE public.training_custdev_versions'),/permission denied/);
+  });
+  const reviewed=await save(admin,a,w.revision,blank,false,'approved');
+  assert.equal(reviewed.status,'approved');
+  assert.equal((await db.query('SELECT count(*) AS n FROM public.training_custdev_versions')).rows[0].n,2);
+  assert.equal((await db.query('SELECT count(*) AS n FROM public.training_custdev_ai_runs')).rows[0].n,1);
+ }finally{await db.close();}
+});
 
 test('migration, RLS, CAS, immutable submission and admin review',async()=>{
  const {db,as,save}=await fixture();
