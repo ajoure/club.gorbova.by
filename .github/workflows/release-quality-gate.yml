@@ -121,7 +121,7 @@ jobs:
         run: |
           deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
       - name: Stripe subscription resolver types
-        run: deno check --no-lock supabase/functions/_shared/stripe-subscription-resolver.ts
+        run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/_shared/stripe-subscription-resolver.ts supabase/functions/rr-admin-deliver-test-webhook/index.ts
       - name: Undated checkout source windows
         run: |
           deno test --no-lock supabase/functions/_shared/undated-subscription-window_test.ts
