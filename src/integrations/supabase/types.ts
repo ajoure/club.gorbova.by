@@ -23644,6 +23644,172 @@ export type Database = {
           },
         ]
       }
+      training_custdev_ai_runs: {
+        Row: {
+          action: string
+          created_at: string
+          error_code: string | null
+          finished_at: string | null
+          id: string
+          model_name: string
+          request_id: string
+          result: Json | null
+          segment_id: string | null
+          source_hash: string
+          status: string
+          target_id: string | null
+          user_id: string
+          workspace_id: string
+          workspace_revision: number
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          error_code?: string | null
+          finished_at?: string | null
+          id?: string
+          model_name: string
+          request_id: string
+          result?: Json | null
+          segment_id?: string | null
+          source_hash: string
+          status?: string
+          target_id?: string | null
+          user_id: string
+          workspace_id: string
+          workspace_revision: number
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          error_code?: string | null
+          finished_at?: string | null
+          id?: string
+          model_name?: string
+          request_id?: string
+          result?: Json | null
+          segment_id?: string | null
+          source_hash?: string
+          status?: string
+          target_id?: string | null
+          user_id?: string
+          workspace_id?: string
+          workspace_revision?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "training_custdev_ai_runs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "training_custdev_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      training_custdev_versions: {
+        Row: {
+          actor_id: string | null
+          created_at: string
+          id: string
+          review_notes: string
+          revision: number
+          state: Json
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          created_at?: string
+          id?: string
+          review_notes?: string
+          revision: number
+          state: Json
+          status: string
+          workspace_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          created_at?: string
+          id?: string
+          review_notes?: string
+          revision?: number
+          state?: Json
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "training_custdev_versions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "training_custdev_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      training_custdev_workspaces: {
+        Row: {
+          block_id: string
+          created_at: string
+          id: string
+          lesson_id: string
+          review_notes: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          revision: number
+          state: Json
+          status: string
+          submitted_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          block_id: string
+          created_at?: string
+          id?: string
+          lesson_id: string
+          review_notes?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          revision?: number
+          state: Json
+          status?: string
+          submitted_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          block_id?: string
+          created_at?: string
+          id?: string
+          lesson_id?: string
+          review_notes?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          revision?: number
+          state?: Json
+          status?: string
+          submitted_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "training_custdev_workspaces_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "lesson_blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "training_custdev_workspaces_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       training_lessons: {
         Row: {
           audio_url: string | null
@@ -26401,6 +26567,35 @@ export type Database = {
         Returns: undefined
       }
       crm_tasks_schedule_due_notifications: { Args: never; Returns: Json }
+      custdev_reserve_ai_run: {
+        Args: {
+          p_action: string
+          p_actor: string
+          p_hash: string
+          p_model: string
+          p_request: string
+          p_revision: number
+          p_segment: string
+          p_target: string
+          p_workspace: string
+        }
+        Returns: Json
+      }
+      custdev_save_workspace: {
+        Args: {
+          p_actor: string
+          p_block: string
+          p_expected: number
+          p_lesson: string
+          p_notes?: string
+          p_owner: string
+          p_review?: string
+          p_state: Json
+          p_submit?: boolean
+        }
+        Returns: Json
+      }
+      custdev_validate_state: { Args: { p_state: Json }; Returns: boolean }
       deactivate_global_document_package: {
         Args: { _package_id: string }
         Returns: Json
