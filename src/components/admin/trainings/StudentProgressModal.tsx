@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { FileText, MessageSquare, ChevronDown, Download } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
+import { CustdevWorkshop } from "@/components/lesson/blocks/CustdevWorkshop";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -831,11 +832,11 @@ export function StudentProgressModal({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <BlockResponseDetail
+                  {block.block_type === "custdev_workshop" ? <CustdevWorkshop lessonId={lessonId || record.lesson_id} blockId={block.id} ownerId={record.user_id} reviewMode /> : <BlockResponseDetail
                     block={block}
                     response={response}
                     lessonBlocks={lessonBlocks}
-                  />
+                  />}
                 </CardContent>
               </Card>
             );

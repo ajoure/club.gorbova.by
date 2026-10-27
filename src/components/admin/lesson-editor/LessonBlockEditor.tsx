@@ -17,6 +17,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { 
   DropdownMenu, 
@@ -176,6 +178,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
   html_raw: { icon: Code, label: "HTML код", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
   external_product_workshop: { icon: Sparkles, label: "Воркшоп: Внешний продукт", color: "bg-violet-500/10 text-violet-600", category: 'interactive' },
+  custdev_workshop: { icon: Sparkles, label: "Шаг 5: Кастдев и УТП", color: "bg-muted text-foreground", category: 'interactive' },
 };
 
 const categoryConfig = {
@@ -196,7 +199,7 @@ const availableBlocks: BlockType[] = [
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
   'video_unskippable', 'diagnostic_table', 'sequential_form', 'role_description',
   'input_short', 'file_upload',
-  'html_raw', 'checklist',
+  'html_raw', 'checklist', 'custdev_workshop',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -268,6 +271,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { title: 'Чек-лист', description: '', groups: [] };
     case 'external_product_workshop':
       return { version: 'v1' };
+    case 'custdev_workshop':
+      return { version: 'v1', title: 'Кастдев, позиционирование и УТП', source_portfolio_lesson_id: '', source_product_lesson_id: '', source_context_lesson_id: '' };
     case 'divider':
     default:
       return {};
@@ -369,6 +374,10 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         return <HtmlRawBlock content={block.content as any} onChange={onUpdate} />;
       case 'checklist':
         return <ChecklistBlock content={block.content as any} onChange={onUpdate} />;
+      case 'custdev_workshop': {
+        const value = block.content as unknown as Record<string,string>;
+        return <div className="rounded-lg border p-4 space-y-3"><p className="font-medium">Пять блоков интерактивного задания Шага 5</p><p className="text-sm text-muted-foreground">По умолчанию источники определяются среди предыдущих уроков этого же модуля: портфель, внешний продукт и ответы на пошаговую форму. При необходимости задайте ID уроков явно. Данные других модулей не импортируются.</p>{([['source_portfolio_lesson_id','Урок портфеля · необязательно'],['source_product_lesson_id','Урок внешнего продукта · необязательно'],['source_context_lesson_id','Урок контекста и идеального клиента · необязательно']] as const).map(([key,label])=><div key={key} className="space-y-1"><Label htmlFor={`${block.id}-${key}`}>{label}</Label><Input id={`${block.id}-${key}`} value={value[key]||''} onChange={e=>onUpdate({...block.content,[key]:e.target.value})} placeholder="Автоматически из предыдущих уроков"/></div>)}</div>;
+      }
       case 'external_product_workshop':
         return (
           <div className="rounded-lg border border-dashed p-6 text-center space-y-2 bg-violet-500/5">

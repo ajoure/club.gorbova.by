@@ -34,6 +34,7 @@ import { StudentUploadBlock } from "@/components/admin/lesson-editor/blocks/Stud
 import { HtmlRawBlock } from "@/components/admin/lesson-editor/blocks/HtmlRawBlock";
 import { ChecklistBlock } from "@/components/admin/lesson-editor/blocks/ChecklistBlock";
 import { ExternalProductWorkshop } from "@/components/lesson/blocks/ExternalProductWorkshop";
+import { CustdevWorkshop } from "@/components/lesson/blocks/CustdevWorkshop";
 
 // Kvest-specific props passed from KvestLessonView
 export interface KvestBlockProps {
@@ -94,7 +95,7 @@ export function LessonBlockRenderer({
   onSeekApplied,
   kvestProps 
 }: LessonBlockRendererProps) {
-  const { progress, saveBlockResponse, resetBlockProgress } = useUserProgress(lessonId || '');
+  const { progress, saveBlockResponse, resetBlockProgress, refetch: refetchBlockProgress } = useUserProgress(lessonId || '');
 
   if (!blocks || blocks.length === 0) {
     return null;
@@ -448,6 +449,8 @@ export function LessonBlockRenderer({
             }}
           />
         );
+      case 'custdev_workshop':
+        return <CustdevWorkshop blockId={block.id} lessonId={lessonId || ''} onSaved={refetchBlockProgress} />;
       case 'external_product_workshop': {
         const epwContent = (block.content || {}) as { source_lesson_id?: string | null };
         return (

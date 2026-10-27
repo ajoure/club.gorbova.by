@@ -31,6 +31,7 @@ const INTERACTIVE_BLOCK_TYPES = new Set([
   "quiz_true_false",
   "role_description",
   "external_product_workshop",
+  "custdev_workshop",
 ]);
 
 export function isInteractiveBlock(blockType: string): boolean {
@@ -92,6 +93,7 @@ const BLOCK_TYPE_LABELS: Record<string, string> = {
   table_input: "Таблица",
   role_description: "Выбор роли",
   external_product_workshop: "Воркшоп: внешний продукт",
+  custdev_workshop: "Кастдев, позиционирование и УТП",
 };
 
 export function blockTypeLabel(blockType: string): string {
@@ -147,6 +149,8 @@ export function resolveProgressValue(
       return resolveTableInput(resp);
     case "role_description":
       return resolveRoleDescription(resp);
+    case "custdev_workshop":
+      return { hasResponse: true, summary: resp.status === "approved" ? "✓ проверено" : resp.status === "submitted" ? "Завершено · на проверке" : resp.status === "changes_requested" ? "Нужны доработки" : "Черновик" };
     case "external_product_workshop":
       return resolveExternalProductWorkshop(resp);
     default:
