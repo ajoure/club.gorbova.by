@@ -25,7 +25,7 @@ export type BlockType =
   // HTML raw block
   | 'html_raw'
   // Hardcoded workshop blocks
-  | 'external_product_workshop';
+  | 'external_product_workshop' | 'custdev_workshop';
 
 export interface HeadingContent {
   text: string;

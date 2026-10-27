@@ -288,3 +288,5 @@ verify_jwt = false
 
 [functions.site-questionnaire-visit]
 verify_jwt = false
+[functions.training-custdev]
+verify_jwt = false

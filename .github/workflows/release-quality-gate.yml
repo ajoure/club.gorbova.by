@@ -42,6 +42,10 @@ jobs:
         run: npm run verify:edge-functions
       - name: Unit and integration contracts
         run: npx vitest run
+      - name: BKB custdev ownership, autosave and SQL contracts
+        run: |
+          node --experimental-strip-types --test scripts/tests/custdev-workspace.test.mjs scripts/tests/custdev-handler.test.mjs
+          npx eslint src/components/lesson/blocks/CustdevWorkshop.tsx src/hooks/useCustdevWorkspace.ts src/lib/custdev-export.ts supabase/functions/_shared/custdev-*.ts supabase/functions/training-custdev/*.ts
       - name: Sales knowledge and dialogue contracts (offline)
         # The AAC regression uses a real decoder, never a mocked PCM buffer.
         # Install explicitly: GitHub's Ubuntu runner does not bundle ffmpeg.
@@ -117,6 +121,8 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: BKB custdev Edge types
+        run: deno check --no-lock supabase/functions/training-custdev/index.ts
       - name: CB2 renewal, sender authorization and purchase proof
         run: |
           deno test --no-lock supabase/functions/_shared/cb2-grant-proof_test.ts supabase/functions/_shared/cb2-access-window_test.ts supabase/functions/_shared/email-delivery-result_test.ts supabase/functions/send-email/authorization_test.ts supabase/functions/_shared/service-request-auth_test.ts
