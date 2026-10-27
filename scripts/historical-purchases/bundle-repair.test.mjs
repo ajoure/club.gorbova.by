@@ -116,6 +116,23 @@ test('read-only rehearsal changes nothing; canonical repair and second execution
   }finally{await db.close()}
 });
 
+test('completed repair ignores later ordinary activity but still rejects changed repair outputs',async()=>{
+  const db=await fixture();try {
+    const input=await reviewed(db);
+    await db.exec(renderBundleRepair(input,'execute'));
+    await db.query("INSERT INTO audit_logs(action,target_user_id,meta) VALUES('unrelated.activity',$1,'{}'),('support.reply',$2,'{}')",[id(99),id(1)]);
+    await db.query('INSERT INTO telegram_messages VALUES($1,$2,$3,null,null)',[id(98),id(1),'1a560e98-574e-4fd9-82ab-4b7bbdc300b4']);
+    const afterActivity=await dump(db);
+    await db.exec(renderBundleRepair(input,'execute'));
+    assert.deepEqual(await dump(db),afterActivity,'completed re-entry must not repeat or undo any write');
+    await db.query("UPDATE entitlements SET meta=meta||'{\"changed_after_repair\":true}' WHERE product_id=$1",[retail]);
+    const afterDrift=await dump(db);
+    await assert.rejects(db.exec(renderBundleRepair(input,'execute')),/Completed repair no longer matches/);
+    await db.exec('ROLLBACK');
+    assert.deepEqual(await dump(db),afterDrift,'changed output remains held without replacement grants');
+  }finally{await db.close()}
+});
+
 test('observed history drift and stale entitlement hashes stop before any write',async()=>{
   for(const mutation of ["UPDATE orders_v2 SET meta=meta||'{\"newer\":true}' WHERE paid_amount=0", "UPDATE entitlements SET meta=meta||'{\"newer\":true}' WHERE product_code='cb_module_ip'"]){
     const db=await fixture();try{const input=await reviewed(db);await db.exec(mutation);await refuses(db,input,/CAS\/lineage\/coverage drift/);}finally{await db.close()}

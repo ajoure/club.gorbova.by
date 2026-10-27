@@ -129,10 +129,12 @@ BEGIN
     END IF;
     before_hashes:=fingerprints;
     IF already_done THEN
+      -- Re-entry is read-only. Ordinary audit/chat activity may advance after
+      -- the committed repair; validate its exact outputs and paid source here.
+      -- The mutation path still compares every protected fingerprint in pass 2.
       IF hist->'purchase_snapshot'->'module_list_mapped' IS DISTINCT FROM to_jsonb(targets)
         OR hist->'purchase_snapshot'->'module_list_provenance'->>'repair_key' IS DISTINCT FROM batch
         OR md5((hist-'purchase_snapshot'-'updated_at')::text) IS DISTINCT FROM prior_audit->>'history_protected_md5'
-        OR before_hashes IS DISTINCT FROM prior_audit->'protected_before'
         OR md5((hist->'purchase_snapshot')::text) IS DISTINCT FROM prior_audit->>'history_snapshot_after_md5'
         OR (SELECT md5(jsonb_agg(to_jsonb(e) ORDER BY e.id)::text) FROM entitlements e
           WHERE e.user_id=uid AND e.product_id=ANY(targets)) IS DISTINCT FROM prior_audit->>'targets_after_md5'
