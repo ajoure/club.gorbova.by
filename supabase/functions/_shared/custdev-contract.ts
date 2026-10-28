@@ -621,9 +621,15 @@ export function extractNeeds(
     }
     const read = (key: string) => {
       const x = v[key];
+      // The model can express an unknown assessment as a bare null. Preserve
+      // that uncertainty instead of inventing a numeric score or rejecting an
+      // otherwise grounded grouping. Missing/malformed numeric values fail closed.
+      if (x === null) {
+        return { score: null, rationale: "Недостаточно данных для оценки" };
+      }
       insist(
         obj(x) && score(x.score) && text(x.rationale),
-        "Неверная оценка ИИ",
+        `Неверная оценка ИИ (${key}): ожидаются score 1–5 или null и текст rationale`,
       );
       return x as {
         score: Score;

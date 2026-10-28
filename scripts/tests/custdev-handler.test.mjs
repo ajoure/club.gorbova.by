@@ -35,7 +35,9 @@ test('complete isolated learner-to-admin path, preview, replay, confirmation and
   assert.equal((await f.request('owner','apply',{expectedRevision:1,runId:quoteRun.id,preserve:false})).status,400);
   r=await f.request('owner','apply',{expectedRevision:1,runId:quoteRun.id,preserve:true});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.state.analyses.s1.quotes.length,1);
   let current=r.body.state;const qid=current.analyses.s1.quotes[0].id;
-  f.deps.output={items:[{need_label:'Сроки',primary_category:'problem',quote_ids:[qid],significance:{score:3,rationale:'Время'},purchase_impact:{score:4,rationale:'Сроки'},product_fit:{score:5,rationale:'Нет матрицы',linked_product_refs:[]}}]};
+  // Real model output can use bare null for an unknown product assessment.
+  // It must complete the normal AI/save/apply/submit/review flow without fabricating fit.
+  f.deps.output={items:[{need_label:'Сроки',primary_category:'problem',quote_ids:[qid],significance:{score:3,rationale:'Время'},purchase_impact:{score:4,rationale:'Сроки'},product_fit:null}]};
   r=await f.request('owner','ai',{expectedRevision:2,aiAction:'needs',segmentId:'s1',requestId:id(101)});assert.equal(r.status,200,JSON.stringify(r.body));const needsRun=r.body.run;
   r=await f.request('owner','apply',{expectedRevision:2,runId:needsRun.id,preserve:true});assert.equal(r.status,200,JSON.stringify(r.body));current=r.body.state;
   const need=current.analyses.s1.needs[0];assert.equal(need.aiOriginal.productFit,null);need.overrides={productFit:3};need.approvedValue={...needScores(current,'s1',need),sourceHash:r.body.hashes.s1};current.company.approvedText='Работаем с магазинами';current.positioning.s1={...emptyWording(),approvedText:'Помогаем магазинам со сроками',needIds:[need.id]};current.usps=[{id:'u1',segmentId:'s1',title:'Сроки',needId:need.id,problem:'Потери времени',result:'Документы в срок',mechanism:'Планирование',productRefs:[],evidence:'',userText:'Гипотеза',aiText:'',approvedText:'Гипотеза: планирование',status:'needs_evidence'}];

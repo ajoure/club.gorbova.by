@@ -18,6 +18,29 @@ async function analyzed(){const s=fixture(),h=await hashesFor(s,sources);const a
 const aiNeed=(ids:string[],refs:string[]=[])=>({items:[{need_label:'Сроки',primary_category:'problem',quote_ids:ids,significance:{score:3,rationale:'Из ответа'},purchase_impact:{score:4,rationale:'Причина выбора'},product_fit:{score:5,rationale:'Механизм',linked_product_refs:refs}}]});
 
 describe('custdev business contract',()=>{
+ it('preserves bare-null model assessments as unknown, without inventing scores or product fit',async()=>{
+  const {s}=await analyzed(),ids=s.analyses.s1.quotes.map(q=>q.id);
+  const response=aiNeed(ids) as unknown as {items:Record<string,unknown>[]};
+  response.items[0].significance=null;
+  response.items[0].purchase_impact=null;
+  response.items[0].product_fit=null;
+  const result=await validateAiOutput(response,s,sources,'needs','s1');
+  expect(result[0].aiOriginal).toMatchObject({significance:null,purchaseImpact:null,productFit:null,productRefs:[]});
+  expect(result[0].quoteIds).toEqual(ids);
+  expect(result[0].aiOriginal.rationale).toContain('Недостаточно данных');
+ });
+ it.each([undefined,{},'4',4,{score:'4',rationale:'Из ответа'},{score:3.5,rationale:'Из ответа'},{score:0,rationale:'Из ответа'},{score:6,rationale:'Из ответа'},{score:4,rationale:null}])('rejects malformed model assessments with field-specific safe diagnostics: %j',async(bad)=>{
+  const {s}=await analyzed(),ids=s.analyses.s1.quotes.map(q=>q.id);
+  const response=aiNeed(ids) as unknown as {items:Record<string,unknown>[]};
+  response.items[0].purchase_impact=bad;
+  await expect(validateAiOutput(response,s,sources,'needs','s1')).rejects.toThrow(/Неверная оценка ИИ \(purchase_impact\)/);
+ });
+ it('asks the model for integer-or-null scores, explicit rationales and unassessed product fit without product sources',async()=>{
+  const {s}=await analyzed();
+  const prepared=await prepareAi(s,sources,'needs','s1');
+  expect(prepared.prompt).toContain('целое JSON-число 1..5 или null');
+  expect(prepared.prompt).toContain('"score":null,"rationale":"Соответствие продукту требует проверки","linked_product_refs":[]');
+ });
  it('supports independent segments, all 7 groups and 10 active questions per group',()=>{const s=fixture();s.segments[0].questions=Array.from({length:70},(_,i)=>({id:`q${i}`,group:Math.floor(i/10)+1,text:'?',note:'',order:i,types:['active'] as const as any}));expect(()=>validateState(s)).not.toThrow();s.segments[0].questions.push({...s.segments[0].questions[0],id:'overflow'});expect(()=>validateState(s)).toThrow(/10/);s.segments[0].questions[0].archived=true;expect(()=>validateState(s)).not.toThrow();});
  it('selects one or several respondent types and rejects no selection',()=>{const s=fixture();expect(applicableQuestions(s.segments[0],'active')).toHaveLength(1);expect(applicableQuestions(s.segments[0],'former')).toHaveLength(2);s.segments[0].questions[0].types=[];expect(()=>validateState(s)).toThrow(/типы/);});
  it('preserves interview wording after question edits and autosave-generated IDs',async()=>{const before=fixture(),next=clone(before),old=before.interviews[0].answers[0];next.segments[0].questions[0].text='Новый вопрос';next.interviews[0].answers=[];const saved=await normalizeUserState(next,before,sources);expect(saved.interviews[0].answers[0]).toEqual(old);const delayed=clone(before);delayed.interviews[0].answers[0].id='other-answer';delayed.interviews[0].answers[0].snapshot='Подмена';const normalized=await normalizeUserState(delayed,before,sources);expect(normalized.interviews[0].answers[0].id).toBe(old.id);expect(normalized.interviews[0].answers[0].snapshot).toBe(old.snapshot);});

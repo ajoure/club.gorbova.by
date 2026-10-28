@@ -260,7 +260,7 @@ export async function prepareAi(
     );
     data = { segment, quotes, products: sources.products };
     instruction =
-      "Верни JSON {items:[{need_label,primary_category,quote_ids,significance:{score,rationale},purchase_impact:{score,rationale},product_fit:{score,rationale,linked_product_refs}}]}. Объединяй по мотиву, сохрани ВСЕ источники. quote_ids только из входа, не дублируй между группами. Категории problem|trigger|desired_outcome|selection_criterion|concern. Баллы 1..5 с доказательным обоснованием, при нехватке данных null. Product fit — только по реальным refs, без них null. Не рассчитывай частоту или итог: их считает программа.";
+      'Верни JSON {items:[{need_label,primary_category,quote_ids,significance:{score,rationale},purchase_impact:{score,rationale},product_fit:{score,rationale,linked_product_refs}}]}. Объединяй по мотиву, сохрани ВСЕ источники. quote_ids только из входа, не дублируй между группами. Категории problem|trigger|desired_outcome|selection_criterion|concern. Во всех трёх оценках score — целое JSON-число 1..5 или null; не строка, не дробь, не 0. rationale всегда строка с доказательным обоснованием. Если данных нет, используй объект {"score":null,"rationale":"Недостаточно данных"}. Product fit — только по реальным refs. Если products пуст или подходящих refs нет, product_fit строго {"score":null,"rationale":"Соответствие продукту требует проверки","linked_product_refs":[]}. Не рассчитывай частоту или итог: их считает программа.';
   } else {
     const relevant = action === "company"
       ? Object.entries(state.analyses).filter(([id]) =>
