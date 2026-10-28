@@ -23,7 +23,7 @@ import {
 import { corsHeaders } from "../_shared/cors.ts";
 import { wordingSourceRequest } from "./wording-sources.ts";
 
-export const CUSTDEV_RELEASE = "bkb-step5-wording-sources-v3";
+export const CUSTDEV_RELEASE = "bkb-step5-wording-scope-v4";
 
 export interface Dependencies {
   db: CustdevDb;
