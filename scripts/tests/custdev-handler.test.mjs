@@ -44,6 +44,11 @@ test('complete isolated learner-to-admin path, preview, replay, confirmation and
   r=await f.request('owner','save',{expectedRevision:3,state:current});assert.equal(r.status,200,JSON.stringify(r.body));current=r.body.state;
   // The model receives short, scoped references; only the canonical validated
   // source IDs are retained in the saved AI version. A preview does not edit the author.
+  f.deps.output={text:'Позиционирование: магазины\nУТП: отдельное предложение',used_sources:['CUSTDEV_SOURCE_1'],missing_evidence:[]};
+  const beforeMixed=f.calls.length;
+  r=await f.request('owner','ai',{expectedRevision:4,aiAction:'company',segmentId:null,requestId:id(104)});
+  assert.equal(r.status,502);assert.match(r.body.error,/смешал разные задания/);assert.equal(f.calls.length,beforeMixed+1);
+  assert.deepEqual((await f.request('owner','load')).body.state,current);
   f.deps.output={text:'Гипотеза позиционирования',used_sources:['CUSTDEV_SOURCE_1'],missing_evidence:['Проверить механизм']};
   r=await f.request('owner','ai',{expectedRevision:4,aiAction:'company',segmentId:null,requestId:id(103)});
   assert.equal(r.status,200,JSON.stringify(r.body));assert.deepEqual(r.body.run.result.output.used_sources,[need.id]);
@@ -54,8 +59,8 @@ test('complete isolated learner-to-admin path, preview, replay, confirmation and
   r=await f.request('admin','load',{ownerId:a});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.canEdit,false);assert.equal(r.body.versions.length,1);
   assert.equal((await f.request('admin','save',{ownerId:a,expectedRevision:5,state:current})).status,403);
   r=await f.request('admin','review',{ownerId:a,expectedRevision:5,status:'approved',notes:'Проверено'});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.workspace.status,'approved');assert.deepEqual(r.body.state,current);
-  r=await f.request('owner','load');assert.equal(r.body.versions.length,2);assert.equal(r.body.workspace.review_notes,'Проверено');assert.equal(r.body.runs.length,4);
+  r=await f.request('owner','load');assert.equal(r.body.versions.length,2);assert.equal(r.body.workspace.review_notes,'Проверено');assert.equal(r.body.runs.length,5);
   await f.db.query("INSERT INTO public.training_custdev_ai_runs(workspace_id,user_id,request_id,action,source_hash,workspace_revision,model_name,status,finished_at) SELECT $1,$2,gen_random_uuid(),'quotes','h',6,'fixture','failed',now() FROM generate_series(1,41)",[r.body.workspace.id,a]);
-  r=await f.request('owner','load');assert.equal(r.body.runs.length,40);assert.equal(r.body.historyMore.runs,true);r=await f.request('owner','history',{runsOffset:40,versionsOffset:0});assert.equal(r.status,200);assert.equal(r.body.runs.length,5);assert.equal(r.body.historyMore.runs,false);
+  r=await f.request('owner','load');assert.equal(r.body.runs.length,40);assert.equal(r.body.historyMore.runs,true);r=await f.request('owner','history',{runsOffset:40,versionsOffset:0});assert.equal(r.status,200);assert.equal(r.body.runs.length,6);assert.equal(r.body.historyMore.runs,false);
  }finally{await f.db.close();}
 });

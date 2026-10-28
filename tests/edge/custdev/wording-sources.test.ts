@@ -22,6 +22,23 @@ const metadata = (prompt:string) => JSON.parse(prompt.split('\n').at(-1)!);
 const proposal = (refs:unknown[]) => ({text:'Гипотеза по проверенным потребностям',used_sources:refs,missing_evidence:['Проверить механизм']});
 
 describe('request-local wording source references', () => {
+  it.each([{action:'company',text:'одно общее позиционирование компании'},{action:'positioning',text:'для выбранного сегмента как адаптацию'},{action:'usp',text:'одно УТП для выбранной карточки'}] as const)('states a single action-specific task for $action and separates evidence from current losses',async({action,text})=>{
+    const f=await fixture(),request=wordingSourceRequest('base',action,'s1',f.state,f.sources,f.hashes),m=metadata(request.prompt);
+    expect(m.task).toBe(action);expect(m.response_schema.properties.text.description).toContain(text);
+    expect(request.prompt).toContain('один цельный вариант именно этой задачи');
+    expect(request.prompt).toContain('Не превращай время на проблему в обещанную экономию');
+    expect(request.prompt).toContain('при его отсутствии результат и механизм — гипотеза');
+    expect(request.prompt).toContain('оставь доказательство незаполненным');
+  });
+  it.each([{action:'company',text:'Позиционирование: магазины\n\nУТП: экономия'},{action:'positioning',text:'УТП: предложение'},{action:'usp',text:'Позиционирование: магазины\nУТП: предложение'},{action:'positioning',text:'Уникальное торговое предложение: обещание'}] as const)('rejects another task section in $action without mutating the model output',async({action,text})=>{
+    const f=await fixture(),request=wordingSourceRequest('base',action,'s1',f.state,f.sources,f.hashes),raw={...proposal(['CUSTDEV_SOURCE_1']),text};
+    expect(()=>request.decode(raw)).toThrow(/ИИ смешал разные задания/);expect(raw.text).toBe(text);
+  });
+  it('allows an ordinary mention of USP within the single requested positioning text',async()=>{
+    const f=await fixture(),request=wordingSourceRequest('base','company',null,f.state,f.sources,f.hashes);
+    const result=await validateAiOutput(request.decode({...proposal(['CUSTDEV_SOURCE_1']),text:'Мы помогаем магазинам объяснить своё УТП.'}),f.state,f.sources,'company',null);
+    expect(result).toMatchObject({used_sources:['need-s1']});
+  });
   it.each(['quotes','needs'] as const)('does not alter %s prompts or outputs',async action => {
     const f=await fixture(),output={items:[]};
     const request=wordingSourceRequest('base',action,'s1',f.state,f.sources,f.hashes);
