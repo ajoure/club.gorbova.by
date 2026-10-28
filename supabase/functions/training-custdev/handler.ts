@@ -22,6 +22,8 @@ import {
 } from "../_shared/custdev-workspace.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 
+export const CUSTDEV_RELEASE = "bkb-step5-ai-scores-v2";
+
 export interface Dependencies {
   db: CustdevDb;
   callAi: (prompt: string) => Promise<unknown>;
@@ -35,7 +37,7 @@ const response = (data: unknown, status = 200) =>
     headers: {
       ...corsHeaders,
       "Content-Type": "application/json",
-      "X-Custdev-Release": "bkb-step5-v1",
+      "X-Custdev-Release": CUSTDEV_RELEASE,
     },
   });
 const fail = (message: string, status = 400): never => {

@@ -2,11 +2,11 @@ import type { CustdevDb } from "../_shared/custdev-storage.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { AI_MODEL } from "../_shared/custdev-workspace.ts";
-import { handleCustdev } from "./handler.ts";
+import { CUSTDEV_RELEASE, handleCustdev } from "./handler.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: {...corsHeaders,"X-Custdev-Release":"bkb-step5-v1"} });
+    return new Response(null, { status: 204, headers: {...corsHeaders,"X-Custdev-Release":CUSTDEV_RELEASE} });
   }
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
