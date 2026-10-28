@@ -21,8 +21,9 @@ import {
   validateAiOutput,
 } from "../_shared/custdev-workspace.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { wordingSourceRequest } from "./wording-sources.ts";
 
-export const CUSTDEV_RELEASE = "bkb-step5-ai-scores-v2";
+export const CUSTDEV_RELEASE = "bkb-step5-wording-sources-v3";
 
 export interface Dependencies {
   db: CustdevDb;
@@ -316,8 +317,16 @@ export async function handleCustdev(
         );
       }
       try {
+        const request = wordingSourceRequest(
+          prepared.prompt,
+          action,
+          sid,
+          state,
+          sources,
+          hashes,
+        );
         const output = await validateAiOutput(
-          await deps.callAi(prepared.prompt),
+          request.decode(await deps.callAi(request.prompt)),
           state,
           sources,
           action,
