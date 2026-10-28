@@ -1969,7 +1969,7 @@ export function BroadcastsTabContent() {
           )}
 
           {/* Safe single-recipient tests. These never use the broadcast audience. */}
-          {sendMode === "now" && (sendToTelegram || sendToEmail) && (
+          {(sendToTelegram || sendToEmail) && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Тестовая отправка</CardTitle>
