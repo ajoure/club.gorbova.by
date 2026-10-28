@@ -14,12 +14,23 @@
 интервью или ответа модели. Проверки дословных цитат, покрытия всех источников,
 уникальности и действительных product refs не меняются.
 
-Только один managed deploy `training-custdev` после merge/CI и ревизии
-плана Lovable. Маркер OPTIONS/POST: `bkb-step5-ai-scores-v2`. SQL, RLS,
-Auth, config, уведомления, другие функции, платежи и доступы не меняются.
-Shared contract/workspace импортируются только этим Edge-обработчиком;
-frontend использует тот же контракт. Обычный frontend Publish допускается
-только после проверки точного merged SHA и отсутствия чужих изменений.
+Один managed deploy `training-custdev` после merge/CI и ревизии плана Lovable.
+Маркер OPTIONS/POST: `bkb-step5-ai-scores-v2`. SQL, RLS, Auth, config,
+уведомления, платежи и доступы не меняются. Shared contract/workspace
+импортируются только этим Edge-обработчиком; frontend использует тот же контракт.
+
+CI обнаружил обязательный общий source-attestation digest, который учитывает
+все `_shared` файлы. Проверка сохранена; digest обновлён с `8bedad9e…` на
+`8d80164c…`. Это требует packaging-only развёртывания `telegram-webhook`,
+`sales-runtime-worker`, `sales-runtime-control`, `telegram-media-worker`,
+`instagram-monitor`; их логика и config не меняются. Перед deploy — отдельная
+ревизия Lovable по этому новому факту. Telegram: отклонение неподписанного
+запроса до и после (0/30/120 секунд), verify_jwt=false сохраняется; никаких
+сообщений/обработки реальных событий. Сначала один deploy webhook, затем
+после PASS оставшиеся четыре одним вызовом; никаких повторов при неясном
+ответе. Сохраняются source/package hashes и квитанции, без заявления о binary hash.
+Обычный frontend Publish — после всех backend gates, точного merged SHA и
+отсутствия чужих изменений.
 
 Проверки: nullable и malformed оценки, сохранность quote IDs, prompt;
 изолированный полный handler→БД→apply→submit→admin review с bare-null fit;
