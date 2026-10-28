@@ -10,7 +10,6 @@ import {
 import { Button as UiButton } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -25,9 +24,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { type AiRun, useCustdevWorkspace } from "@/hooks/useCustdevWorkspace";
 import { exportCustdevText } from "@/lib/custdev-export";
+import { getCustdevGuidance } from "./custdev-guidance";
+import {
+  CustdevFieldLabel,
+  CustdevHelp,
+  CustdevQuestionGuide,
+  CustdevSectionGuide,
+} from "./CustdevGuidance";
 import {
   type Analysis,
   applicableQuestions,
@@ -81,14 +97,16 @@ function Field(
   },
 ) {
   const id = useId(), readOnly = useContext(ReadOnly);
+  const hint = getCustdevGuidance(label)?.inline;
   return (
     <div className="min-w-0 space-y-1">
-      <Label htmlFor={id}>{label}</Label>
+      <CustdevFieldLabel label={label} htmlFor={id} />
       {area
         ? (
           <Textarea
             disabled={readOnly}
             id={id}
+            aria-describedby={hint ? `${id}-hint` : undefined}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className="min-h-20"
@@ -98,11 +116,20 @@ function Field(
           <Input
             disabled={readOnly}
             id={id}
+            aria-describedby={hint ? `${id}-hint` : undefined}
             type={type}
             value={value}
             onChange={(e) => onChange(e.target.value)}
           />
         )}
+      {hint && (
+        <p
+          id={`${id}-hint`}
+          className="text-xs leading-relaxed text-muted-foreground"
+        >
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -118,7 +145,7 @@ function SelectField(
   const id = useId(), readOnly = useContext(ReadOnly);
   return (
     <div className="min-w-0 space-y-1">
-      <Label htmlFor={id}>{label}</Label>
+      <CustdevFieldLabel label={label} htmlFor={id} />
       <select
         disabled={readOnly && !navigation}
         id={id}
@@ -174,6 +201,11 @@ export function CustdevWorkshop(
     [preview, setPreview] = useState<AiRun | null>(null),
     [versionText, setVersionText] = useState<string | null>(null),
     [reviewNotes, setReviewNotes] = useState("");
+  const [confirmation, setConfirmation] = useState<
+    { message: string; run: () => void } | null
+  >(null);
+  const confirmChange = (message: string, run: () => void) =>
+    setConfirmation({ message, run });
   const [selectedQuotes, setSelectedQuotes] = useState<string[]>([]),
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [manualSource, setManualSource] = useState(""),
@@ -346,7 +378,7 @@ export function CustdevWorkshop(
               })}
           />
           <div className="space-y-1">
-            <Label>Потребности для позиционирования</Label>
+            <CustdevFieldLabel label="Потребности для позиционирования" />
             {analysis.needs.filter((n) =>
               !n.excluded && n.approvedValue?.sourceHash === currentHash
             ).map((n) => (
@@ -511,11 +543,10 @@ export function CustdevWorkshop(
                 </Button>
                 <Button
                   onClick={() => {
-                    if (
-                      window.confirm(
-                        "Восстановить локальный черновик поверх текущей серверной версии? Проверьте обе версии перед заменой.",
-                      )
-                    ) w.restoreDraft();
+                    confirmChange(
+                      "Восстановить локальный черновик поверх текущей серверной версии? Проверьте обе версии перед заменой.",
+                      () => w.restoreDraft(),
+                    );
                   }}
                 >
                   Восстановить черновик
@@ -523,11 +554,10 @@ export function CustdevWorkshop(
                 <Button
                   variant="ghost"
                   onClick={() => {
-                    if (
-                      window.confirm(
-                        "Отбросить локальный черновик и оставить серверную версию?",
-                      )
-                    ) w.discardDraft();
+                    confirmChange(
+                      "Отбросить локальный черновик и оставить серверную версию?",
+                      () => w.discardDraft(),
+                    );
                   }}
                 >
                   Оставить серверную версию
@@ -562,6 +592,7 @@ export function CustdevWorkshop(
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4">
+                  <CustdevSectionGuide section="prepare" />
                   <p className="text-sm text-muted-foreground">
                     Рекомендуется 1–3 целевых сегмента. Экономическая категория
                     портфеля и целевой сегмент — разные понятия.
@@ -605,9 +636,7 @@ export function CustdevWorkshop(
                       </div>
                       {productTypes.length > 0 && (
                         <div className="space-y-1">
-                          <Label>
-                            Связанные типы продукта из Шага 3 · необязательно
-                          </Label>
+                          <CustdevFieldLabel label="Связанные типы продукта из Шага 3 · необязательно" />
                           {productTypes.map((p) => (
                             <label
                               key={p.id}
@@ -641,6 +670,7 @@ export function CustdevWorkshop(
                                 {g + 1}. {title} · {questions.length}/10
                               </AccordionTrigger>
                               <AccordionContent className="space-y-3">
+                                <CustdevQuestionGuide group={g + 1} />
                                 {questions.map((q, idx) => (
                                   <div
                                     key={q.id}
@@ -657,6 +687,10 @@ export function CustdevWorkshop(
                                           )!.text = v;
                                         })}
                                     />
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      Для кого этот вопрос
+                                      <CustdevHelp label="Типы респондентов" />
+                                    </div>
                                     <div className="flex flex-wrap gap-3">
                                       {TYPES.map((t) => (
                                         <label
@@ -733,17 +767,16 @@ export function CustdevWorkshop(
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => {
-                                          if (
-                                            window.confirm(
-                                              "Убрать вопрос из плана? Уже записанные ответы и формулировки интервью сохранятся.",
-                                            )
-                                          ) {
-                                            editSegment(s.id, (s) => {
-                                              s.questions.find((x) =>
-                                                x.id === q.id
-                                              )!.archived = true;
-                                            });
-                                          }
+                                          confirmChange(
+                                            "Убрать вопрос из плана? Уже записанные ответы и формулировки интервью сохранятся.",
+                                            () => {
+                                              editSegment(s.id, (s) => {
+                                                s.questions.find((x) =>
+                                                  x.id === q.id
+                                                )!.archived = true;
+                                              });
+                                            },
+                                          );
                                         }}
                                       >
                                         Удалить вопрос
@@ -782,15 +815,14 @@ export function CustdevWorkshop(
                         variant="ghost"
                         className={buttonClass}
                         onClick={() => {
-                          if (
-                            window.confirm(
-                              "Архивировать сегмент вместе с его историей? Интервью, анализ и УТП сохранятся и будут доступны после восстановления.",
-                            )
-                          ) {
-                            editSegment(s.id, (s) => {
-                              s.archived = true;
-                            });
-                          }
+                          confirmChange(
+                            "Архивировать сегмент вместе с его историей? Интервью, анализ и УТП сохранятся и будут доступны после восстановления.",
+                            () => {
+                              editSegment(s.id, (s) => {
+                                s.archived = true;
+                              });
+                            },
+                          );
                         }}
                       >
                         Архивировать сегмент
@@ -850,6 +882,7 @@ export function CustdevWorkshop(
                   {state.interviews.filter((i) => !i.archived).length}
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4">
+                  <CustdevSectionGuide section="interviews" />
                   <SelectField
                     navigation
                     label="Целевой сегмент интервью"
@@ -1068,15 +1101,14 @@ export function CustdevWorkshop(
                       <Button
                         variant="ghost"
                         onClick={() => {
-                          if (
-                            window.confirm(
-                              "Архивировать интервью? Записанные ответы сохранятся; анализ станет неактуальным.",
-                            )
-                          ) {
-                            editInterview(interview.id, (i) => {
-                              i.archived = true;
-                            });
-                          }
+                          confirmChange(
+                            "Архивировать интервью? Записанные ответы сохранятся; анализ станет неактуальным.",
+                            () => {
+                              editInterview(interview.id, (i) => {
+                                i.archived = true;
+                              });
+                            },
+                          );
                         }}
                       >
                         Архивировать интервью
@@ -1116,6 +1148,7 @@ export function CustdevWorkshop(
                   3. Анализ результатов
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4">
+                  <CustdevSectionGuide section="analysis" />
                   <SelectField
                     navigation
                     label="Сегмент анализа"
@@ -1678,6 +1711,7 @@ export function CustdevWorkshop(
                     ).length}/{active.length + 1}
                 </AccordionTrigger>
                 <AccordionContent className="space-y-5">
+                  <CustdevSectionGuide section="positioning" />
                   <p className="text-sm text-muted-foreground">
                     Мы работаем с [аудиторией], помогая решать [задачу],
                     специализируемся на [компетенции] и отличаемся от
@@ -1718,6 +1752,7 @@ export function CustdevWorkshop(
                   5. УТП · {state.usps.length}
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4">
+                  <CustdevSectionGuide section="usp" />
                   <p className="text-sm text-muted-foreground">
                     Решаем [проблему], обеспечивая [результат] благодаря
                     [механизму], эффективность подтверждается [доказательством].
@@ -1794,7 +1829,7 @@ export function CustdevWorkshop(
                           })}
                       />
                       <div className="space-y-1">
-                        <Label>Связанные механизмы продукта Шага 3</Label>
+                        <CustdevFieldLabel label="Связанные механизмы продукта Шага 3" />
                         {products.map((p) => (
                           <label key={p.id} className="flex gap-2 text-sm">
                             <CheckInput
@@ -1906,15 +1941,14 @@ export function CustdevWorkshop(
                       <Button
                         variant="ghost"
                         onClick={() => {
-                          if (
-                            window.confirm(
-                              "Удалить это УТП? Утверждённые сдачи сохраняются в истории.",
-                            )
-                          ) {
-                            w.edit((s) => {
-                              s.usps = s.usps.filter((x) => x.id !== u.id);
-                            });
-                          }
+                          confirmChange(
+                            "Удалить это УТП? Утверждённые сдачи сохраняются в истории.",
+                            () => {
+                              w.edit((s) => {
+                                s.usps = s.usps.filter((x) => x.id !== u.id);
+                              });
+                            },
+                          );
                         }}
                       >
                         Удалить УТП
@@ -2342,20 +2376,19 @@ export function CustdevWorkshop(
                       variant="outline"
                       disabled={busy}
                       onClick={() => {
-                        if (
-                          window.confirm(
-                            "Заменить текущую группировку и ручные оценки новым анализом? Предыдущие AI-версии и сданные результаты останутся в истории.",
-                          )
-                        ) {
-                          void work(async () => {
-                            await w.action("apply", {
-                              runId: preview.id,
-                              preserve: false,
-                              confirmReplace: true,
+                        confirmChange(
+                          "Заменить текущую группировку и ручные оценки новым анализом? Предыдущие AI-версии и сданные результаты останутся в истории.",
+                          () => {
+                            void work(async () => {
+                              await w.action("apply", {
+                                runId: preview.id,
+                                preserve: false,
+                                confirmReplace: true,
+                              });
+                              setPreview(null);
                             });
-                            setPreview(null);
-                          });
-                        }
+                          },
+                        );
                       }}
                     >
                       Заменить ручные правки
@@ -2379,6 +2412,34 @@ export function CustdevWorkshop(
             <pre className="text-sm whitespace-pre-wrap break-words font-sans">{versionText}</pre>
           </DialogContent>
         </Dialog>
+        <AlertDialog
+          open={confirmation !== null}
+          onOpenChange={(open) => {
+            if (!open) setConfirmation(null);
+          }}
+        >
+          <AlertDialogContent className="max-w-[min(32rem,calc(100vw-2rem))] rounded-lg">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Подтвердите действие</AlertDialogTitle>
+              <AlertDialogDescription>
+                {confirmation?.message}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!w.canEdit || w.conflict || busy}
+                onClick={() => {
+                  const run = confirmation?.run;
+                  setConfirmation(null);
+                  run?.();
+                }}
+              >
+                Подтвердить
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   );
