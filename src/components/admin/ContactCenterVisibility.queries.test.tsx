@@ -3,6 +3,8 @@ import { cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { useCrmTaskTypes } from "@/hooks/useCrmTasks";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTariffOffers } from "@/hooks/useTariffOffers";
 import { TokenizedRichInput } from "./TokenizedRichInput";
 import { ContactFeedTab } from "./contact/ContactFeedTab";
@@ -35,14 +37,14 @@ afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear(
 describe("hidden contact-center panels", () => {
   it("keeps catalog hooks dormant until enabled, then uses their normal cache keys", async () => {
     const { wrapper, cache } = setup();
-    const view = renderHook(({ active }) => ({ products: useProductsV2(active), tariffs: useTariffs("product", active), offers: useTariffOffers("tariff", active) }), { wrapper, initialProps: { active: false } });
+    const view = renderHook(({ active }) => ({ products: useProductsV2(active), tariffs: useTariffs("product", active), offers: useTariffOffers("tariff", active), taskTypes: useCrmTaskTypes(active), staff: useStaffOptions(active) }), { wrapper, initialProps: { active: false } });
     expect(network.reads).toEqual([]);
     view.rerender({ active: true });
     await waitFor(() => expect(view.result.current.offers.isSuccess).toBe(true));
-    expect(network.reads).toEqual(["products_v2", "tariffs", "tariff_offers"]);
+    expect(network.reads).toEqual(["products_v2", "tariffs", "tariff_offers", "crm_task_types", "user_roles_v2"]);
     view.rerender({ active: false });
     await cache.invalidateQueries();
-    expect(network.reads).toHaveLength(3);
+    expect(network.reads).toHaveLength(5);
     expect(view.result.current.products.data).toEqual([]);
   });
 

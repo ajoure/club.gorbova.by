@@ -71,9 +71,10 @@ export interface CrmTaskListFilters {
   offset?: number;
 }
 
-export function useCrmTaskTypes() {
+export function useCrmTaskTypes(enabled = true) {
   return useQuery({
     queryKey: ["crm-task-types"],
+    enabled,
     queryFn: async (): Promise<CrmTaskType[]> => {
       const { data, error } = await (supabase as any)
         .from("crm_task_types")
