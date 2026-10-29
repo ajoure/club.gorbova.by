@@ -57,13 +57,15 @@ export function mergeTrainingProgress(
     // Preserve the canonical detail-view rule: a newer manual draft clears
     // completion; older manual answers cannot undo a newer completed state.
     const answerNewer = answer && (!state || millis(timestamp(answer)) > millis(timestamp(state)));
-    const completedAt = state
+    const interactiveCompletedAt = state
       ? answerNewer ? answer!.completed_at || null : state.completed_at || answer?.completed_at || null
       : (answer || fallback)!.completed_at || null;
-    // Legacy lesson completion is a fallback only. It must not resurrect a
-    // completed status after an interactive answer was reopened as a draft.
+    // lesson_progress is the explicit "mark lesson complete" flag. Autosaving
+    // an answer must not erase it. The canonical markIncomplete action deletes
+    // that flag; workshop draft/review status remains independent and unchanged.
+    const completedAt = fallback?.completed_at || interactiveCompletedAt;
     const sources: ProgressSource[] = state || answer
-      ? [...(state ? ["lesson_progress_state" as const] : []), ...(answer ? ["user_lesson_progress" as const] : [])]
+      ? [...(state ? ["lesson_progress_state" as const] : []), ...(answer ? ["user_lesson_progress" as const] : []), ...(fallback ? ["lesson_progress" as const] : [])]
       : ["lesson_progress"];
     result.push({
       id: state?.id || `manual:${base.lesson_id}:${base.user_id}`,

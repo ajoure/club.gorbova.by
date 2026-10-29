@@ -514,7 +514,9 @@ export function CustdevWorkshop(
           </div>
           {w.canEdit && (
             <p className="text-xs text-muted-foreground">
-              Ответы сохраняются автоматически. Готовую работу отправьте на проверку кнопкой внизу.
+              Ответы сохраняются автоматически.
+              {["draft", "changes_requested"].includes(w.workspace?.status ?? "draft") &&
+                " Готовую работу отправьте на проверку кнопкой внизу."}
             </p>
           )}
           {w.workspace?.review_notes && (

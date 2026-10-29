@@ -22,14 +22,22 @@ describe("canonical training progress", () => {
     expect(records.find(r => r.user_id === "older")?.progress_sources).toEqual(["lesson_progress"]);
   });
 
-  it("does not resurrect an old completion after a newer manual draft", () => {
+  it("clears interactive completion after a newer manual draft when no explicit lesson flag remains", () => {
     const [record] = mergeTrainingProgress(
       [row("s", "learner", { completed_at: done })],
       [row("a", "learner", { updated_at: "2026-10-29T10:00:00Z" })],
-      [row("legacy", "learner", { completed_at: done })],
     );
     expect(record.completed_at).toBeNull();
     expect(countTrainingProgress([record]).get("step5")?.completed).toBe(0);
+  });
+
+  it("preserves an explicit completed-lesson flag even when its worksheet is a draft", () => {
+    const draft = row("s", "learner", { state_json: { status: "draft", answers: "Сохранённый текст" } });
+    const [record] = mergeTrainingProgress([draft], [row("a")], [row("legacy", "learner", { completed_at: done })]);
+    expect(record.completed_at).toBe(done);
+    expect(record.state_json).toEqual(draft.state_json);
+    expect(record.progress_sources).toContain("lesson_progress");
+    expect(countTrainingProgress([record]).get("step5")).toEqual({ total: 1, completed: 1 });
   });
 
   it("preserves a newer completed state and its full answer payload", () => {
