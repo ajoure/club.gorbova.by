@@ -132,7 +132,7 @@ describe("custdev integrated lesson view", () => {
     mock.value.isAdmin = false;
     mock.value.workspace.status = "draft";
     render(<CustdevWorkshop lessonId="l" blockId="b" />);
-    expect(screen.getByText("Сохранено · в работе")).toBeInTheDocument();
+    expect(screen.getByText("Черновик")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: /1. Исходная ситуация/ }),
     );

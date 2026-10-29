@@ -28,6 +28,7 @@ import {
   type BlockMeta,
 } from "@/lib/blockProgressResolver";
 import { logTrainingEvent } from "@/lib/auditTrainingActions";
+import { loadTrainingProgress } from "@/lib/training-progress-loader";
 import { toast } from "sonner";
 
 type LessonProgressRecord = ModalRecord;
@@ -70,85 +71,27 @@ export default function AdminLessonProgress() {
     enabled: !!lessonId,
   });
 
-  // Fetch all progress records (batch, single query).
-  // Compatibility layer: kvest lessons write lesson_progress_state, manual lessons write user_lesson_progress.
-  const { data: progressRecords, isLoading: progressLoading } = useQuery({
+  // Same paginated, deduplicated progress sources as the training summary.
+  const { data: progressRecords, isLoading: progressLoading, isError: progressError, refetch: refetchProgress } = useQuery({
     queryKey: ["lesson-progress-admin", lessonId],
     queryFn: async () => {
-      const { data: stateRows, error: stateError } = await supabase
-        .from("lesson_progress_state")
-        .select("*")
-        .eq("lesson_id", lessonId)
-        .order("updated_at", { ascending: false });
+      const merged = await loadTrainingProgress([lessonId!], true);
 
-      if (stateError) throw stateError;
-
-      const { data: manualRows, error: manualError } = await supabase
-        .from("user_lesson_progress")
-        .select("id, user_id, lesson_id, response, completed_at, created_at, updated_at")
-        .eq("lesson_id", lessonId)
-        .not("response", "is", null)
-        .order("updated_at", { ascending: false });
-
-      if (manualError) throw manualError;
-
-      const byUser = new Map<string, LessonProgressRecord & { progress_sources?: string[] }>();
-
-      (stateRows || []).forEach((record: any) => {
-        byUser.set(record.user_id, {
-          ...record,
-          progress_sources: ["lesson_progress_state"],
-        });
-      });
-
-      (manualRows || []).forEach((row: any) => {
-        const existing = byUser.get(row.user_id);
-        const completedAt = row.completed_at || null;
-        if (existing) {
-          const manualNewer = new Date(row.updated_at) > new Date(existing.updated_at);
-          // «Свежее по updated_at побеждает» — снятие завершения в manual-блоке
-          // не должно оставлять старый completed_at от kvest-прогресса.
-          const nextCompletedAt = manualNewer
-            ? completedAt
-            : (existing.completed_at || completedAt);
-          byUser.set(row.user_id, {
-            ...existing,
-            updated_at: manualNewer ? row.updated_at : existing.updated_at,
-            completed_at: nextCompletedAt,
-            progress_sources: Array.from(
-              new Set([...(existing.progress_sources || []), "user_lesson_progress"])
-            ),
-          });
-          return;
-        }
-
-        byUser.set(row.user_id, {
-          id: `manual:${row.lesson_id}:${row.user_id}`,
-          user_id: row.user_id,
-          lesson_id: row.lesson_id,
-          state_json: {},
-          completed_at: completedAt,
-          created_at: row.created_at,
-          updated_at: row.updated_at,
-          profiles: null,
-          progress_sources: ["user_lesson_progress"],
-        } as LessonProgressRecord & { progress_sources?: string[] });
-      });
-
-      const merged = Array.from(byUser.values()).sort(
-        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-      );
-      
       const userIds = merged.map(r => r.user_id);
       if (userIds.length === 0) {
         return [] as LessonProgressRecord[];
       }
       
       // Batch fetch profiles
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("id, user_id, email, full_name, phone, telegram_username, telegram_user_id, avatar_url, status, created_at, last_seen_at")
-        .in("user_id", userIds);
+      const profiles = [];
+      for (let offset = 0; offset < userIds.length; offset += 100) {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id, user_id, email, full_name, phone, telegram_username, telegram_user_id, avatar_url, status, created_at, last_seen_at")
+          .in("user_id", userIds.slice(offset, offset + 100));
+        if (error) throw error;
+        profiles.push(...(data || []));
+      }
       
       const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
       
@@ -366,6 +309,16 @@ export default function AdminLessonProgress() {
         </div>
       </AdminLayout>
     );
+  }
+
+  if (progressError) {
+    return <AdminLayout>
+      <div role="alert" className="container mx-auto px-4 py-6 max-w-6xl space-y-3">
+        <h1 className="text-2xl font-bold">Прогресс учеников</h1>
+        <p>Не удалось загрузить прогресс. Счётчики временно недоступны.</p>
+        <Button variant="outline" onClick={() => void refetchProgress()}>Повторить загрузку</Button>
+      </div>
+    </AdminLayout>;
   }
 
   return (
