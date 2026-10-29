@@ -6,6 +6,8 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { CreditCard, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useContactInternalInstallments } from "@/hooks/useContactInstallmentsData";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Внутренняя рассрочка — блок для карточки сделки.
@@ -14,15 +16,21 @@ import { cn } from "@/lib/utils";
  *   order.meta.payment_method === 'internal_installment'
  *   && order.meta.installment.model === 'bepaid_finite_subscription'
  *
- * Все значения читаются из orders_v2.meta.installment_progress
- * (готовая проекция от Stage 3 backend-а). Никаких пересчётов по payments_v2.
+ * Shared factual projection with the contact installment menu.
+ * Rebill receipts stay on their own deals and count toward the original debt.
  */
 
 interface InternalInstallmentBlockProps {
-  order: any;
+  order: {
+    id: string;
+    profile_id?: string | null;
+    user_id: string | null;
+    bepaid_subscription_id?: string | null;
+    meta?: { payment_method?: unknown; installment?: Record<string, unknown>; installment_progress?: Record<string, unknown> } | null;
+  };
 }
 
-function isCanonicalInternalInstallment(order: any): boolean {
+function isCanonicalInternalInstallment(order: InternalInstallmentBlockProps['order'] | null | undefined): boolean {
   const meta = order?.meta;
   if (!meta || typeof meta !== "object") return false;
   const pm = meta.payment_method;
@@ -45,42 +53,23 @@ const formatAmount = (value: unknown, currency = "BYN") => {
 };
 
 export function InternalInstallmentBlock({ order }: InternalInstallmentBlockProps) {
-  if (!isCanonicalInternalInstallment(order)) return null;
+  const canonicalInstallment = isCanonicalInternalInstallment(order);
+  const query = useContactInternalInstallments(
+    canonicalInstallment ? order.profile_id : null,
+    canonicalInstallment ? order.user_id : null,
+  );
+  if (!canonicalInstallment) return null;
+  if (query.isLoading) return <Card><CardContent className="p-4"><Skeleton className="h-32 w-full" /></CardContent></Card>;
+  const plan = query.data?.find(candidate => candidate.orderId === order.id);
+  if (!plan) return <Card><CardContent className="p-4 text-sm text-amber-700">Расчёт рассрочки требует проверки платежей</CardContent></Card>;
 
-  const meta = order.meta as Record<string, any>;
-  const progress = (meta.installment_progress ?? null) as Record<string, any> | null;
-  const canonical = (meta.installment ?? {}) as Record<string, any>;
-  const manualReview = meta.manual_review === true;
-  const currency = order.currency || "BYN";
-
-  // Fallback (нет ещё installment_progress — ждём первого платежа)
-  const totalCycles = Number(
-    progress?.billing_cycles ?? canonical.billing_cycles ?? 0,
-  );
-  const paidCycles = Number(progress?.paid_billing_cycles ?? 0);
-  const remainingCycles = Number(
-    progress?.remaining_billing_cycles ??
-      (totalCycles > 0 ? totalCycles - paidCycles : 0),
-  );
-  const perPayment = Number(
-    progress?.per_payment_byn ?? canonical.per_payment_byn ?? 0,
-  );
-  const effectiveTotal = Number(
-    progress?.effective_total_byn ??
-      canonical.effective_total_byn ??
-      (perPayment && totalCycles ? perPayment * totalCycles : 0),
-  );
-  const paidTotal = Number(progress?.paid_total_byn ?? 0);
-  const remainingTotal = Number(
-    progress?.remaining_total_byn ??
-      Math.max(effectiveTotal - paidTotal, 0),
-  );
-  const nextChargeAt = progress?.next_charge_at ?? null;
-  const providerSubId =
-    progress?.provider_subscription_id ??
-    canonical.provider_subscription_id ??
-    null;
-  const rawStatus: string = progress?.status ?? "pending_first_charge";
+  const currency = plan.currency;
+  const { totalCycles, paidCycles, perPayment, effectiveTotal, paidTotal, remainingTotal, nextChargeAt } = plan;
+  const providerSubId = order.bepaid_subscription_id
+    ?? order.meta?.installment_progress?.provider_subscription_id
+    ?? order.meta?.installment?.provider_subscription_id ?? null;
+  const manualReview = plan.uiStatus === 'review';
+  const rawStatus = plan.uiStatus;
 
   // UI-status resolution (backend expired ≠ UI)
   let uiStatus: "pending" | "active" | "completed" | "review" = "pending";

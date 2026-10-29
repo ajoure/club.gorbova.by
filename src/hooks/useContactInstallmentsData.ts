@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { InstallmentPayment } from "./useInstallments";
 import { repaymentBalance } from "../../supabase/functions/_shared/installment-repayment-plan";
+import { installmentFamilyBalance, installmentPaymentFamily, readInstallmentFamilyRows, type InstallmentLedgerOrder } from "../../supabase/functions/_shared/installment-payment-family";
 
 /**
  * Единые data-hooks для вкладки «Рассрочки» контакта.
@@ -30,7 +31,7 @@ export interface UiPlan {
 // Supabase returns nested JSON/relationship fields that are not represented in
 // the generated client type for this legacy query.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function mapOrderToPlan(order: any): UiPlan | null {
+export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder[]): UiPlan | null {
   if (order?.is_deleted) return null;
   const meta = order?.meta ?? {};
   const canonical = meta.installment ?? {};
@@ -53,14 +54,21 @@ export function mapOrderToPlan(order: any): UiPlan | null {
   let paidTotal = Number.NaN;
   let remainingTotal = Number.NaN;
   const factualPaid = Number(order?.paid_amount ?? 0);
-  const ledger = Array.isArray(order.payments_v2) ? order.payments_v2 : [];
+  let ledger = Array.isArray(order.payments_v2) ? order.payments_v2 : [];
+  let lineageError = false;
+  if (familyOrders) {
+    try { ledger = installmentPaymentFamily(order, familyOrders).payments; }
+    catch { lineageError = true; manualReview = true; }
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hasLedgerPayment = ledger.some((p: any) => !p.is_deleted && ['succeeded', 'refunded', 'partially_refunded'].includes(p.status));
 
-  if (hasLedgerPayment) {
+  if (hasLedgerPayment && !lineageError) {
     try {
-      const balance = repaymentBalance({ orderId: order.id, userId: order.user_id,
-        currency: order.currency || 'BYN', total: effectiveTotal, payments: ledger });
+      const balance = familyOrders
+        ? installmentFamilyBalance(order, familyOrders, effectiveTotal)
+        : repaymentBalance({ orderId: order.id, userId: order.user_id,
+          currency: order.currency || 'BYN', total: effectiveTotal, payments: ledger });
       paidTotal = balance.paidMinor / 100;
       remainingTotal = balance.remainingMinor / 100;
       paidCycles = balance.paidCount;
@@ -74,7 +82,26 @@ export function mapOrderToPlan(order: any): UiPlan | null {
 
   // Ссылка/график без первого успешного взноса — checkout-заготовка, а не
   // рассрочка клиента. Такие записи видны только в диагностике автоплатежей.
-  if (!hasLedgerPayment && paidCycles <= 0 && factualPaid <= 0) return null;
+  if (!hasLedgerPayment && !lineageError && paidCycles <= 0 && factualPaid <= 0) return null;
+
+  let nextChargeAt = progress?.next_charge_at ?? null;
+  if (Array.isArray(order.provider_subscriptions)) {
+    type ProviderSchedule = { state: string; provider: string; order_id: string | null; user_id: string | null; next_charge_at?: string | null };
+    const terminal = new Set(['canceled', 'cancelled', 'failed', 'expired', 'completed', 'terminated']);
+    const supported = new Set(['active', 'trial', 'pending', 'past_due', 'unpaid', 'grace_period']);
+    const providers = (order.provider_subscriptions as ProviderSchedule[]).filter(p => !terminal.has(p.state));
+    if (providers.some(p => p.provider !== 'bepaid' || p.order_id !== order.id || p.user_id !== order.user_id)
+        || providers.some(p => !supported.has(p.state)) || providers.length > 1) {
+      manualReview = true;
+      nextChargeAt = null;
+    } else {
+      const value = providers[0]?.next_charge_at;
+      nextChargeAt = typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+    }
+  }
+  // Verified receipts remain visible during review. Disputed agreement terms
+  // are not a quoted amount available to collect.
+  if (manualReview) remainingTotal = Number.NaN;
 
   let uiStatus: UiPlan["uiStatus"] = "pending";
   if (manualReview) uiStatus = "review";
@@ -95,7 +122,7 @@ export function mapOrderToPlan(order: any): UiPlan | null {
     paidTotal,
     remainingTotal,
     effectiveTotal,
-    nextChargeAt: progress?.next_charge_at ?? null,
+    nextChargeAt,
     createdAt: order.created_at,
   };
 }
@@ -113,17 +140,15 @@ export function useContactInternalInstallments(
       if (userId) orFilters.push(`user_id.eq.${userId}`);
       if (orFilters.length === 0) return [];
 
+      const columns = `id, user_id, profile_id, order_number, currency, created_at, paid_amount, meta, product_id, tariff_id, is_deleted, bepaid_subscription_id,
+        payments_v2 (id, order_id, user_id, currency, provider, provider_payment_id, status, amount, refunded_amount, is_deleted, transaction_type),
+        provider_subscriptions!provider_subscriptions_order_id_fkey (id, order_id, user_id, provider, provider_subscription_id, state, next_charge_at),
+        products_v2:product_id ( name ), tariffs:tariff_id ( name )`;
       // Dynamic OR construction requires the PostgREST builder's evolving generic type.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let query: any = supabase
         .from("orders_v2")
-        .select(
-          `id, user_id, order_number, currency, created_at, paid_amount, meta, product_id, tariff_id, is_deleted,
-           payments_v2 (id, order_id, user_id, currency, provider, provider_payment_id, status, amount, refunded_amount, is_deleted, transaction_type),
-           products_v2:product_id ( name ),
-           tariffs:tariff_id ( name )`,
-        )
-        .eq("is_deleted", false)
+        .select(columns)
         .order("created_at", { ascending: false });
 
       if (orFilters.length === 1) {
@@ -136,18 +161,28 @@ export function useContactInternalInstallments(
       const { data, error } = await query;
       if (error) throw error;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const filtered = (data ?? []).filter((row: any) => {
-        const model = row?.meta?.installment?.model;
-        const progressModel = row?.meta?.installment_progress?.model;
+      const rows = (data ?? []) as InstallmentLedgerOrder[];
+      const filtered = rows.filter(row => {
+        if (row.is_deleted) return false;
+        const model = (row?.meta?.installment as Record<string, unknown> | undefined)?.model;
+        const progressModel = (row?.meta?.installment_progress as Record<string, unknown> | undefined)?.model;
         return (
           model === "bepaid_finite_subscription" ||
           progressModel === "bepaid_finite_subscription"
         );
       });
 
-      return filtered
-        .map(mapOrderToPlan)
+      const plans = await Promise.all(filtered.map(async order => {
+        const familyRows = await readInstallmentFamilyRows(order, async parents => {
+          const { data: children, error: childrenError } = await supabase.from('orders_v2')
+            .select(columns).in('meta->>parent_order_id', parents).limit(1001);
+          if (childrenError) throw childrenError;
+          if (!children) throw new Error('installment_family_incomplete');
+          return children as unknown as InstallmentLedgerOrder[];
+        });
+        return mapOrderToPlan(order, familyRows);
+      }));
+      return plans
         .filter((p: UiPlan | null): p is UiPlan => p !== null);
     },
   });

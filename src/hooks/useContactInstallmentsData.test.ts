@@ -32,4 +32,14 @@ describe('contact installment factual balance', () => {
     expect(mapOrderToPlan({ ...order, payments_v2: [] })).toMatchObject({ paidTotal: NaN, remainingTotal: NaN, uiStatus: 'review' });
     expect(mapOrderToPlan({ ...order, payments_v2: [{ ...payment, refunded_amount: 1 }] })).toMatchObject({ remainingTotal: NaN, uiStatus: 'review' });
   });
+  it('counts proved child deals and uses the current provider schedule on both screens', () => {
+    const parent = { ...order, product_id: 'course', tariff_id: 'tier', bepaid_subscription_id: 'bank-plan',
+      meta: { ...order.meta, manual_review: true, installment_progress: { paid_billing_cycles: 1, next_charge_at: '2026-08-22T08:45:00Z' } },
+      provider_subscriptions: [{ order_id: order.id, user_id: order.user_id, provider: 'bepaid', state: 'active', next_charge_at: '2026-11-20T08:40:00Z' }] };
+    const rebill = { ...parent, id: 'rebill', provider_subscriptions: [],
+      meta: { parent_order_id: parent.id, source: 'bepaid_rebill', payment_flow: 'bepaid_subscription_charge', materialized_from_payment_uid: 'uid-2' },
+      payments_v2: [{ ...payment, id: 'p2', order_id: 'rebill', provider_payment_id: 'uid-2' }] };
+    expect(mapOrderToPlan(parent, [parent, rebill])).toMatchObject({ paidCycles: 2, paidTotal: 884,
+      remainingTotal: NaN, uiStatus: 'review', nextChargeAt: '2026-11-20T08:40:00Z' });
+  });
 });
