@@ -87,9 +87,10 @@ export function useCrmTaskTypes() {
   });
 }
 
-export function useCrmTasks(filters: CrmTaskListFilters) {
+export function useCrmTasks(filters: CrmTaskListFilters, enabled = true) {
   return useQuery({
     queryKey: ["crm-tasks", filters],
+    enabled,
     queryFn: async (): Promise<CrmTask[]> => {
       const payload: Record<string, unknown> = {};
       Object.entries(filters).forEach(([k, v]) => {

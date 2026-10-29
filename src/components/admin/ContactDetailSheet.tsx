@@ -270,6 +270,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   const [banReason, setBanReason] = useState("");
   const [isBanning, setIsBanning] = useState(false);
 
+  // Tabs keep their per-contact query caches; only a visible consumer starts a read.
+  const visibleContact = open && !!contact?.id;
+  const profileVisible = visibleContact && activeTab === "profile";
+  const accessVisible = visibleContact && (activeTab === "access" || editSubscriptionOpen || chargeDialogOpen || !!selectedSubscription);
+  const dealsVisible = visibleContact && (activeTab === "deals" || !!selectedDealId || !!dealToEditId || !!refundDealId);
+  const feedVisible = visibleContact && activeTab === "feed";
+
   // Reset scroll position when tab changes
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -395,7 +402,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.id,
+    enabled: visibleContact,
   });
 
   // Reliable contact fields: prefer DB data (profileData) over potentially stale props
@@ -406,7 +413,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
   const linkedCompaniesQuery = useQuery({
     queryKey: ["contact-linked-companies", contact?.id],
-    enabled: !!contact?.id,
+    enabled: visibleContact && activeTab === "companies",
     queryFn: async () => {
       if (!contact?.id) return [];
 
@@ -476,7 +483,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (!data.success) return null;
       return data.user_info;
     },
-    enabled: !!resolvedUserId && !!resolvedTelegramUserId,
+    enabled: profileVisible && tgInfoExpanded && !!resolvedUserId && !!resolvedTelegramUserId,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
@@ -500,7 +507,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         return null;
       }
     },
-    enabled: !!contact?.id && !!contact?.telegram_user_id,
+    enabled: profileVisible && !!contact?.telegram_user_id,
     staleTime: 0,         // PATCH: всегда считать данные устаревшими
     refetchOnMount: true, // PATCH: перезапрашивать при каждом открытии карточки
   });
@@ -510,11 +517,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     contact?.id
       ? { contact_id: contact.id, status: ["open", "in_progress"] as any }
       : ({} as any),
+    visibleContact,
   );
   const openTasksCount = contact?.id ? (openTasksForContact?.length ?? 0) : 0;
 
   // Contact deals show settled money and explicitly confirmed historical purchases.
-  const { data: deals, isLoading: dealsLoading } = useQuery({
+  const { data: deals, isLoading: dealsLoading, isError: dealsError } = useQuery({
     queryKey: ["contact-deals", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
@@ -578,10 +586,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         };
       });
     },
-    enabled: !!contact?.id,
+    enabled: dealsVisible,
   });
 
-  const { data: moduleMetaMap } = useModuleDisplayMeta(deals);
+  const { data: moduleMetaMap } = useModuleDisplayMeta(deals, dealsVisible);
 
   const selectedDeal = useMemo(
     () => deals?.find(d => d.id === selectedDealId) ?? null,
@@ -598,11 +606,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     [deals, refundDealId]
   );
 
-  const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
+  const { data: productsWithRules = new Set<string>(), isLoading: rulesLoading, isError: rulesError } = useActiveAccessRuleProducts(accessVisible);
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
   // Use resolvedUserId (from DB) to ensure support-path also finds subscriptions
-  const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
+  const { data: subscriptions, isLoading: subsLoading, isError: subsError, refetch: refetchSubs } = useQuery({
     queryKey: ["contact-subscriptions", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
@@ -625,11 +633,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.id,
+    enabled: accessVisible,
   });
 
   // Fetch entitlements for order_based_only products (not covered by subscriptions)
-  const { data: entitlements, isLoading: entLoading } = useQuery({
+  const { data: entitlements, isLoading: entLoading, isError: entError } = useQuery({
     queryKey: ["contact-entitlements", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
@@ -648,13 +656,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.id,
+    enabled: accessVisible,
   });
 
   // Independent entitlement sources are displayed separately from the
   // aggregate entitlement and from paid subscriptions.  This makes a finite
   // bonus auditable without hiding or replacing the customer's paid access.
-  const { data: entitlementSources = [], isLoading: sourcesLoading } = useQuery({
+  const { data: entitlementSources = [], isLoading: sourcesLoading, isError: sourcesError } = useQuery({
     queryKey: ["contact-entitlement-sources", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
@@ -699,7 +707,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         tariff: row.tariff_id ? tariffById.get(row.tariff_id) || null : null,
       }));
     },
-    enabled: !!contact?.id,
+    enabled: accessVisible,
   });
 
   // Fetch products for grant access
@@ -714,7 +722,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: open,
+    enabled: accessVisible,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   // Fetch tariffs for selected product
@@ -731,7 +741,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!grantProductId,
+    enabled: accessVisible && !!grantProductId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   // Fetch offers for selected tariff (including inactive for history)
@@ -747,7 +759,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!grantTariffId,
+    enabled: accessVisible && !!grantTariffId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   // Fetch communication history (audit logs for this user) with actor profiles
@@ -781,7 +795,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       
       return logs.map(log => ({ ...log, actor_profile: null }));
     },
-    enabled: !!resolvedUserId,
+    enabled: feedVisible && !!resolvedUserId,
   });
 
   // Fetch notification events (telegram_logs + email_logs) for this contact
@@ -845,7 +859,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
     },
-    enabled: !!contact?.user_id,
+    enabled: feedVisible && !!contact?.user_id,
   });
 
   const { data: duplicateInfo } = useQuery({
@@ -868,7 +882,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) return null;
       return data;
     },
-    enabled: !!contact?.duplicate_flag,
+    enabled: visibleContact && activeTab === "duplicates" && !!contact?.duplicate_flag,
   });
 
   // Fetch consent data for this contact
@@ -884,11 +898,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) return null;
       return data;
     },
-    enabled: !!contact?.user_id,
+    enabled: visibleContact && !!contact?.user_id,
   });
 
   // Fetch consent history
-  const { data: consentHistory, isLoading: consentLoading } = useQuery({
+  const { data: consentHistory, isLoading: consentLoading, isError: consentError } = useQuery({
     queryKey: ["contact-consent-history", contact?.user_id],
     queryFn: async () => {
       if (!contact?.user_id) return [];
@@ -897,10 +911,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         .select("*")
         .eq("user_id", contact.user_id)
         .order("created_at", { ascending: false });
-      if (error) return [];
+      if (error) throw error;
       return data;
     },
-    enabled: !!contact?.user_id,
+    enabled: visibleContact && activeTab === "consent" && !!contact?.user_id,
   });
 
   // Fetch payment methods
@@ -921,7 +935,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.user_id,
+    enabled: (profileVisible || accessVisible) && !!contact?.user_id,
   });
 
   // PATCH-7: Fetch provider-managed subscriptions for contact
@@ -976,7 +990,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           .map((row: any) => [row.provider_subscription_id, row]),
       ).values());
     },
-    enabled: !!contact?.id,
+    enabled: profileVisible || accessVisible,
   });
 
   // PATCH-7: Admin cancel provider subscription mutation
@@ -1206,7 +1220,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       return merged;
     },
-    enabled: !!contact?.user_id,
+    enabled: profileVisible && !!contact?.user_id,
   });
 
   // Admin: reset trial usage for (product, tariff)
@@ -1296,7 +1310,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (error) return null;
       return data as any;
     },
-    enabled: !!contact?.user_id,
+    enabled: profileVisible && !!contact?.user_id,
   });
 
   // Update reentry penalty status
@@ -2347,7 +2361,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 clientEmail={contact.email}
                 clientPhone={contact.phone}
                 hidePhotoButton
-                isActive={activeTab === "telegram"}
+                isActive={open && activeTab === "telegram"}
               />
             </div>
           </TabsContent>
@@ -2360,7 +2374,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             forceMount
             className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
           >
-            <ContactFeedTab contactId={contact.id} embedded />
+            <ContactFeedTab contactId={contact.id} embedded isActive={feedVisible} />
           </TabsContent>
 
           {/* Все остальные вкладки — во внешнем скролле как раньше.
@@ -3522,7 +3536,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               </Card>
 
               {/* Current active access (subscriptions + entitlements) */}
-              {(subsLoading || entLoading || sourcesLoading) ? (
+              {(subsError || entError || sourcesError || rulesError) ? (
+                <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Не удалось обновить доступы. Закройте и снова откройте вкладку.</p>
+              ) : (subsLoading || entLoading || sourcesLoading || rulesLoading) ? (
                 <div className="space-y-3">
                   {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
                 </div>
@@ -4084,6 +4100,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
             {/* Deals Tab */}
             <TabsContent value="deals" className="m-0 space-y-3">
+              {dealsError ? <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Не удалось загрузить сделки. Закройте и снова откройте вкладку.</p> :
               <ContactDealsTab
                 deals={deals}
                 isLoading={dealsLoading}
@@ -4092,6 +4109,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 onEditDeal={(id) => setDealToEditId(id)}
                 onRefund={(id) => setRefundDealId(id)}
               />
+              }
             </TabsContent>
 
             {/* Tasks Tab */}
@@ -4166,6 +4184,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                         <Skeleton key={i} className="h-16 w-full" />
                       ))}
                     </div>
+                  ) : consentError ? (
+                    <p role="alert" className="text-sm text-destructive">Не удалось загрузить историю согласий.</p>
                   ) : !consentHistory || consentHistory.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-30" />

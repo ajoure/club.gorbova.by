@@ -36,7 +36,7 @@ function buildReactionsMap(
   return result;
 }
 
-export function useTelegramReactions(messageIds: string[], supportBotId?: string) {
+export function useTelegramReactions(messageIds: string[], supportBotId?: string, enabled = true) {
   const scopedPolling = !!supportBotId;
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -73,12 +73,12 @@ export function useTelegramReactions(messageIds: string[], supportBotId?: string
       if (error) throw error;
       return buildReactionsMap(data || [], user?.id);
     },
-    enabled: stableIds.length > 0 && !!user?.id,
-    refetchInterval: scopedPolling ? 15_000 : false,
+    enabled: enabled && stableIds.length > 0 && !!user?.id,
+    refetchInterval: enabled && scopedPolling ? 15_000 : false,
   });
 
   useEffect(() => {
-    if (!stableIdsCsv || scopedPolling) return;
+    if (!enabled || !stableIdsCsv || scopedPolling) return;
 
     const channel = supabase
       .channel(`telegram-reactions-rt-${viewerId}-${Math.random().toString(36).slice(2, 10)}`)
@@ -107,7 +107,7 @@ export function useTelegramReactions(messageIds: string[], supportBotId?: string
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [stableIdsCsv, viewerId, queryClient, scopedPolling]);
+  }, [stableIdsCsv, viewerId, queryClient, scopedPolling, enabled]);
 
   return query;
 }

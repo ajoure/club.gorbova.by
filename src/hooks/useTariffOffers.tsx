@@ -224,9 +224,10 @@ export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated
 };
 export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
-export function useTariffOffers(tariffId?: string) {
+export function useTariffOffers(tariffId?: string, enabled = true) {
   return useQuery({
     queryKey: ["tariff_offers", tariffId],
+    enabled,
     queryFn: async () => {
       // Canonical order: sort_order ASC, then id ASC (stable tie-break).
       let query = supabase

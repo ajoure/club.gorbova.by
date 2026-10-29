@@ -193,7 +193,7 @@ export function AdminPaymentLinkDialog({
 }: AdminPaymentLinkDialogProps) {
   const { user } = useAuth();
   const { hasPermission } = usePermissions();
-  const { data: staff = [] } = useStaffOptions();
+  const { data: staff = [] } = useStaffOptions(open);
   const canReassignSales = hasPermission("deals.reassign");
   const isPublicMode = mode === "public";
   // В public-режиме Telegram-цепочка и contact-блок не должны рендериться.
@@ -266,10 +266,10 @@ export function AdminPaymentLinkDialog({
   // Phase 5-D — super_admin может выбрать provider, даже если он не в offer.allowed_payment_providers.
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
 
-  const { data: products, isLoading: productsLoading } = useProductsV2();
-  const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
+  const { data: products, isLoading: productsLoading } = useProductsV2(open);
+  const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId, open && !!selectedProductId);
   const { data: loadedOffers, isLoading: offersLoading } = useTariffOffers(
-    selectedTariffId || undefined
+    selectedTariffId || undefined, open && !!selectedTariffId
   );
   const allOffers = useMemo(() => loadedOffers?.filter(offer => !offer.meta?.sales_legacy_only), [loadedOffers]);
 
@@ -307,7 +307,7 @@ export function AdminPaymentLinkDialog({
   // ронял весь select, из-за чего резолвер молча возвращал пустой массив → «нет карточек»).
   const { data: targetLegalDetails } = useQuery({
     queryKey: ["admin-payment-link-target-legal-details", userId],
-    enabled: !!userId && invoicePanelOpen,
+    enabled: open && !!userId && invoicePanelOpen,
     queryFn: async () => {
       const { data: profile } = await supabase
         .from("profiles").select("id").eq("user_id", userId!).maybeSingle();
@@ -442,7 +442,7 @@ export function AdminPaymentLinkDialog({
 
   const { data: composableQuote, isFetching: composableQuoteLoading } = useQuery({
     queryKey: ["composable-checkout-quote", effectiveOffer?.id, selectedAddonOfferIds],
-    enabled: !!effectiveOffer?.id,
+    enabled: open && !!effectiveOffer?.id,
     queryFn: async () => {
       const parentOfferId = effectiveOffer!.id;
       const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
@@ -484,7 +484,7 @@ export function AdminPaymentLinkDialog({
     error: siblingCatalogError,
   } = useQuery({
     queryKey: ["composable-checkout-sibling-catalog", siblingOfferForQuote?.id],
-    enabled: !!siblingOfferForQuote?.id,
+    enabled: open && !!siblingOfferForQuote?.id,
     queryFn: async () => {
       const parentOfferId = siblingOfferForQuote!.id;
       const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
@@ -525,7 +525,7 @@ export function AdminPaymentLinkDialog({
       siblingAddonMapping.addonOfferIds,
     ],
     enabled:
-      !!siblingOfferForQuote?.id &&
+      open && !!siblingOfferForQuote?.id &&
       siblingCatalogQuote?.__parentOfferId === siblingOfferForQuote.id &&
       siblingAddonMapping.missingAddonNames.length === 0,
     queryFn: async () => {
@@ -807,7 +807,7 @@ ${amountLine}
       if (error) throw error;
       return data?.[0] || null;
     },
-    enabled: !!selectedTariffId,
+    enabled: open && !!selectedTariffId,
   });
 
   // === Replace subscription mutation (PATCH E) ===
