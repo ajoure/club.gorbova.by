@@ -20,7 +20,7 @@ export interface PilotPlayer {
   destroy(): Promise<void> | void;
   on(event: string, callback: (event: { data?: { currentTime?: number } }) => void): void;
 }
-export interface PilotSnapshot { time: number; paused: boolean; speed: number; quality: unknown }
+export interface PilotSnapshot { time: number | null; paused: boolean | null; speed: number | null; quality: unknown }
 interface Options {
   getPermit: () => Promise<PilotPermit>;
   createPlayer: (permit: PilotPermit) => Promise<PilotPlayer>;
@@ -39,11 +39,26 @@ export function createDrmPilotController(options: Options) {
   let pending: Promise<void> | undefined;
   let deadline = 0;
   let generation = 0;
+  // SDK diagnostics may be unavailable before the first Play (preload=none).
+  // They are observations, never authorization conditions or renewal blockers.
+  async function observe<T>(read: () => Promise<T>): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(read),
+        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 300); }),
+      ]);
+    } catch { return null; }
+    finally { clearTimeout(timer); }
+  }
   const snapshot = async (p: PilotPlayer): Promise<PilotSnapshot> => {
     const [time, paused, speed, quality] = await Promise.all([
-      p.getCurrentTime(), p.isPaused(), p.getPlaybackRate(), p.getVideoQuality(),
+      observe(() => p.getCurrentTime()), observe(() => p.isPaused()),
+      observe(() => p.getPlaybackRate()), observe(() => p.getVideoQuality()),
     ]);
-    return { time, paused, speed, quality };
+    return { time: typeof time === "number" && Number.isFinite(time) ? time : null,
+      paused: typeof paused === "boolean" ? paused : null,
+      speed: typeof speed === "number" && Number.isFinite(speed) ? speed : null, quality };
   };
   function validate(p: PilotPermit) {
     if (!p || typeof p.token !== "string" || !p.token || p.token.length > 8192 ||

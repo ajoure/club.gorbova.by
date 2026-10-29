@@ -156,9 +156,9 @@ export default function VideoDrmPilot() {
     <p>Проверьте паузу, перемотку, скорость, качество и субтитры. После возвращения к записи должно сохраняться место остановки.</p>
     <details className="rounded border p-3"><summary>Результат обновления доступа</summary>
       <p>Обновлений без пересоздания плеера: {renewals}</p>
-      {lastRenewal && <p>Позиция: {lastRenewal.before.time.toFixed(1)} → {lastRenewal.after.time.toFixed(1)} с.
-        Пауза: {String(lastRenewal.before.paused)} → {String(lastRenewal.after.paused)}.
-        Скорость: {lastRenewal.before.speed} → {lastRenewal.after.speed}.</p>}
+      {lastRenewal && <p>Позиция: {lastRenewal.before.time?.toFixed(1) ?? "нет данных"} → {lastRenewal.after.time?.toFixed(1) ?? "нет данных"} с.
+        Пауза: {lastRenewal.before.paused === null ? "нет данных" : String(lastRenewal.before.paused)} → {lastRenewal.after.paused === null ? "нет данных" : String(lastRenewal.after.paused)}.
+        Скорость: {lastRenewal.before.speed ?? "нет данных"} → {lastRenewal.after.speed ?? "нет данных"}.</p>}
       <p>Субтитры, качество, полноэкранный режим и PiP проверяются также в самом плеере.</p>
     </details>
   </main>;

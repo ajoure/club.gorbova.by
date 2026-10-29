@@ -42,6 +42,27 @@ describe("isolated DRM controller renewal and cleanup", () => {
     expect(one).toBe(two); resolve(s.fresh()); await one;
     expect(s.getPermit).toHaveBeenCalledTimes(2); await s.controller.close();
   });
+  it("renews even when optional SDK diagnostics hang before the first Play", async () => {
+    const s = setup(); await s.controller.refresh();
+    vi.mocked(s.player.getVideoQuality).mockImplementation(() => new Promise(() => {}));
+    const renewal = s.controller.refresh();
+    await vi.advanceTimersByTimeAsync(601); await renewal;
+    expect(s.player.setPlaylistItemOptions).toHaveBeenCalledTimes(1);
+    expect(s.createPlayer).toHaveBeenCalledTimes(1);
+    expect(s.player.pause).not.toHaveBeenCalled();
+    expect(s.onStatus).toHaveBeenLastCalledWith("ready");
+    expect(s.onRenewed.mock.calls[0][0].quality).toBeNull();
+    await s.controller.close();
+  });
+  it("treats rejected or non-finite observations as unavailable, without denying access", async () => {
+    const s = setup(); await s.controller.refresh();
+    vi.mocked(s.player.getCurrentTime).mockResolvedValue(NaN);
+    vi.mocked(s.player.getPlaybackRate).mockRejectedValue(new Error("synthetic SDK unavailable"));
+    await s.controller.refresh();
+    expect(s.onRenewed.mock.calls[0][0]).toMatchObject({ time: null, speed: null, paused: true });
+    expect(s.onStatus).toHaveBeenLastCalledWith("ready");
+    expect(s.player.pause).not.toHaveBeenCalled(); await s.controller.close();
+  });
   it("pauses on expiry even when renewal hangs; no open iframe fallback", async () => {
     const s = setup(); await s.controller.refresh();
     s.getPermit.mockImplementationOnce(() => new Promise(() => {}));
