@@ -17,7 +17,7 @@ import { ExistingInstallmentRepaymentDialog } from "./ExistingInstallmentRepayme
 /**
  * Внутренние рассрочки контакта.
  * Одна карточка = одна исходная сделка (orders_v2). Filter — точный canonical marker.
- * UI-источник — orders_v2.meta.installment_progress.
+ * UI-источник — общий проверенный ledger исходной покупки.
  *
  * Data flow:
  * - Если передан prop `plans` — компонент чисто презентационный.
@@ -136,7 +136,7 @@ export function ContactInternalInstallments({
       {sorted.map((plan) => {
         const meta = STATUS_META[plan.uiStatus];
         const percent =
-          plan.totalCycles > 0
+          plan.totalCycles > 0 && Number.isFinite(plan.paidCycles)
             ? Math.min(
                 100,
                 Math.round((plan.paidCycles / plan.totalCycles) * 100),
@@ -168,9 +168,9 @@ export function ContactInternalInstallments({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">
-                    Оплачено {plan.paidCycles} из {plan.totalCycles || "—"}
+                    Оплачено {Number.isFinite(plan.paidCycles) ? plan.paidCycles : "—"} из {plan.totalCycles || "—"}
                   </span>
-                  <span className="font-medium">{percent}%</span>
+                  <span className="font-medium">{Number.isFinite(plan.paidCycles) ? `${percent}%` : "—"}</span>
                 </div>
                 <Progress value={percent} className="h-2" />
               </div>

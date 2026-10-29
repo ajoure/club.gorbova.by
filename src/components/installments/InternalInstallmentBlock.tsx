@@ -96,7 +96,7 @@ export function InternalInstallmentBlock({ order }: InternalInstallmentBlockProp
   }
 
   const percent =
-    totalCycles > 0 ? Math.min(100, Math.round((paidCycles / totalCycles) * 100)) : 0;
+    totalCycles > 0 && Number.isFinite(paidCycles) ? Math.min(100, Math.round((paidCycles / totalCycles) * 100)) : 0;
 
   return (
     <Card
@@ -122,9 +122,9 @@ export function InternalInstallmentBlock({ order }: InternalInstallmentBlockProp
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
-              Оплачено {paidCycles} из {totalCycles || "—"}
+              Оплачено {Number.isFinite(paidCycles) ? paidCycles : "—"} из {totalCycles || "—"}
             </span>
-            <span className="font-medium">{percent}%</span>
+            <span className="font-medium">{Number.isFinite(paidCycles) ? `${percent}%` : "—"}</span>
           </div>
           <Progress value={percent} className="h-2" />
         </div>

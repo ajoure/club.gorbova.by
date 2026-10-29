@@ -58,7 +58,7 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
   let lineageError = false;
   if (familyOrders) {
     try { ledger = installmentPaymentFamily(order, familyOrders).payments; }
-    catch { lineageError = true; manualReview = true; }
+    catch { lineageError = true; manualReview = true; paidCycles = Number.NaN; }
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hasLedgerPayment = ledger.some((p: any) => !p.is_deleted && ['succeeded', 'refunded', 'partially_refunded'].includes(p.status));
@@ -75,9 +75,11 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
     } catch {
       // Never display a stale cached balance as money available to collect.
       manualReview = true;
+      paidCycles = Number.NaN;
     }
   } else if (factualPaid > 0 || paidCycles > 0) {
     manualReview = true;
+    paidCycles = Number.NaN;
   }
 
   // Ссылка/график без первого успешного взноса — checkout-заготовка, а не

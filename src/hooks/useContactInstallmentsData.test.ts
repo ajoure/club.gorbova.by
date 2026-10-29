@@ -29,8 +29,8 @@ describe('contact installment factual balance', () => {
   });
   it('hides unpaid checkout drafts', () => expect(mapOrderToPlan({ ...order, paid_amount: 0, payments_v2: [] })).toBeNull());
   it('does not present cached money or refunded money as collectable', () => {
-    expect(mapOrderToPlan({ ...order, payments_v2: [] })).toMatchObject({ paidTotal: NaN, remainingTotal: NaN, uiStatus: 'review' });
-    expect(mapOrderToPlan({ ...order, payments_v2: [{ ...payment, refunded_amount: 1 }] })).toMatchObject({ remainingTotal: NaN, uiStatus: 'review' });
+    expect(mapOrderToPlan({ ...order, payments_v2: [] })).toMatchObject({ paidCycles: NaN, paidTotal: NaN, remainingTotal: NaN, uiStatus: 'review' });
+    expect(mapOrderToPlan({ ...order, payments_v2: [{ ...payment, refunded_amount: 1 }] })).toMatchObject({ paidCycles: NaN, remainingTotal: NaN, uiStatus: 'review' });
   });
   it('counts proved child deals and uses the current provider schedule on both screens', () => {
     const parent = { ...order, product_id: 'course', tariff_id: 'tier', bepaid_subscription_id: 'bank-plan',
@@ -41,5 +41,11 @@ describe('contact installment factual balance', () => {
       payments_v2: [{ ...payment, id: 'p2', order_id: 'rebill', provider_payment_id: 'uid-2' }] };
     expect(mapOrderToPlan(parent, [parent, rebill])).toMatchObject({ paidCycles: 2, paidTotal: 884,
       remainingTotal: NaN, uiStatus: 'review', nextChargeAt: '2026-11-20T08:40:00Z' });
+  });
+  it('does not show a stale paid count when a descendant belongs to another customer', () => {
+    const parent = { ...order, product_id: 'course', tariff_id: 'tier', bepaid_subscription_id: 'bank-plan',
+      meta: { ...order.meta, installment_progress: { paid_billing_cycles: 2 } } };
+    const rebound = { ...parent, id: 'rebill', user_id: 'other', meta: { parent_order_id: parent.id } };
+    expect(mapOrderToPlan(parent, [parent, rebound])).toMatchObject({ paidCycles: NaN, paidTotal: NaN, remainingTotal: NaN, uiStatus: 'review' });
   });
 });
