@@ -14,6 +14,8 @@ import { Users, ChevronRight, ChevronDown, BookOpen, Eye, ArrowDownAZ, ArrowDown
 import { LessonViewersModal } from "./LessonViewersModal";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
+import { loadTrainingProgress } from "@/lib/training-progress-loader";
+import { countTrainingProgress } from "@/lib/training-progress";
 import {
   buildModuleTree,
   sortItems,
@@ -218,7 +220,7 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
     });
   }, [moduleIdsKey]);
 
-  const { data: allLessons, isLoading } = useQuery({
+  const { data: allLessons, isLoading, isError, refetch } = useQuery({
     queryKey: ["all-lessons-progress", moduleIdsKey],
     queryFn: async () => {
       if (moduleIds.length === 0) return [];
@@ -234,43 +236,9 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
       const lessonIds = lessons?.map((l) => l.id) || [];
       if (lessonIds.length === 0) return [];
 
-      const kvestLessonIds = lessons?.filter((l) => l.completion_mode === "kvest").map((l) => l.id) || [];
-      const normalLessonIds = lessons?.filter((l) => l.completion_mode !== "kvest").map((l) => l.id) || [];
-
-      const kvestProgressMap = new Map<string, { total: number; completed: number }>();
-      const normalProgressMap = new Map<string, { total: number; completed: number }>();
-
-      if (kvestLessonIds.length > 0) {
-        const { data: kvestData } = await supabase
-          .from("lesson_progress_state")
-          .select("lesson_id, completed_at")
-          .in("lesson_id", kvestLessonIds);
-
-        kvestData?.forEach((p) => {
-          const current = kvestProgressMap.get(p.lesson_id) || { total: 0, completed: 0 };
-          current.total++;
-          if (p.completed_at) current.completed++;
-          kvestProgressMap.set(p.lesson_id, current);
-        });
-      }
-
-      if (normalLessonIds.length > 0) {
-        const { data: normalData } = await supabase
-          .from("lesson_progress")
-          .select("lesson_id, completed_at")
-          .in("lesson_id", normalLessonIds);
-
-        normalData?.forEach((p) => {
-          const current = normalProgressMap.get(p.lesson_id) || { total: 0, completed: 0 };
-          current.total++;
-          if (p.completed_at) current.completed++;
-          normalProgressMap.set(p.lesson_id, current);
-        });
-      }
+      const progressMap = countTrainingProgress(await loadTrainingProgress(lessonIds));
 
       return lessons?.map((lesson) => {
-        const isKvest = lesson.completion_mode === "kvest";
-        const progressMap = isKvest ? kvestProgressMap : normalProgressMap;
         return {
           id: lesson.id,
           title: lesson.title,
@@ -323,6 +291,13 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
     // CSV-экспорт и StudentProgressModal с полными ответами учеников.
     navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
   };
+
+  if (isError) {
+    return <div role="alert" className="space-y-2 mt-4">
+      <p>Не удалось загрузить прогресс. Счётчики временно недоступны.</p>
+      <Button variant="outline" onClick={() => void refetch()}>Повторить загрузку</Button>
+    </div>;
+  }
 
   if (isLoading) {
     return (

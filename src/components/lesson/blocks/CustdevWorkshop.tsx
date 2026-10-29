@@ -168,7 +168,7 @@ const typeOptions = TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }));
 const rowClass = "rounded-lg border p-4 space-y-3 min-w-0";
 const buttonClass = "h-auto min-h-10 whitespace-normal text-left";
 const statusLabels = {
-  draft: "Сохранено · в работе",
+  draft: "Черновик",
   submitted: "Завершено · ожидает проверки",
   approved: "Проверено администратором",
   changes_requested: "Нужны доработки",
@@ -512,6 +512,11 @@ export function CustdevWorkshop(
               Скопировать ответ
             </Button>
           </div>
+          {w.canEdit && (
+            <p className="text-xs text-muted-foreground">
+              Ответы сохраняются автоматически. Готовую работу отправьте на проверку кнопкой внизу.
+            </p>
+          )}
           {w.workspace?.review_notes && (
             <p className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
               Комментарий администратора: {w.workspace.review_notes}
