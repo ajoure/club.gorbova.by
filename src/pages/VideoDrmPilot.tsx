@@ -58,7 +58,7 @@ export default function VideoDrmPilot() {
     };
     const controller = createDrmPilotController({
       async getPermit() {
-        const { data, error } = await supabase.functions.invoke("video-pilot-token", { body: { mediaKey } });
+        const { data, error } = await supabase.functions.invoke("video-pilot-token", { body: { mediaKey }, timeout: 8000 });
         if (error || !data || data.mediaKey !== mediaKey) throw new Error("pilot_denied");
         return data as PilotPermit;
       },
