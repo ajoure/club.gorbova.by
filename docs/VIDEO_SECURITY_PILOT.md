@@ -296,10 +296,19 @@ npx tsc --noEmit -p tsconfig.app.json
 Первый прогон: 26 offline callback contracts + 6 mock-SDK regression tests PASS.
 Расширенный прогон 29.10.2026: 76 целевых Vitest PASS (33 real-JWT handler,
 26 контрактов, 8 контроллера обновления, 3 resume страницы, 6 существующего
-SDK-хука); 2 PGlite проверки реальной SQL-миграции PASS. TypeScript, целевой
+SDK-хука); 3 PGlite проверки реальной SQL-миграции PASS, включая одинаковый
+результат при UTC, Europe/Warsaw, America/New_York и Asia/Tokyo. TypeScript, целевой
 ESLint, Deno check двух endpoint и production build PASS. Контрактный сканер:
 373 исходника функций / 231 literal reference, отсутствующих исходников нет.
 Это не инвентаризация фактически развёрнутых функций и не live-проверка ролей.
+
+Read-only сверка Lovable 29.10.2026 подтвердила deployed тип
+`auth.sessions.refreshed_at = timestamp without time zone`. Миграция теперь
+явно интерпретирует его как UTC, а тестовая схема соответствует этому типу.
+Транзакцией владеет managed migration runner; вложенных BEGIN/COMMIT нет.
+Фактические Auth inactivity/timebox/single-session настройки пока UNKNOWN:
+отсутствие этих полей в интерфейсе Cloud или NULL в строках сессий не разрешает
+считать политику отключённой. До подтверждения config остаётся выключенным.
 
 ```sh
 npx vitest run tests/edge/videoPilotRuntime.test.ts tests/edge/videoPlaybackAuthorization.test.ts src/lib/video/drmPilotController.test.ts src/pages/VideoDrmPilot.test.tsx src/hooks/useKinescopePlayer.test.tsx

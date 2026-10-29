@@ -12,11 +12,11 @@ async function setup() {
     CREATE SCHEMA auth;
     CREATE TABLE auth.users(id uuid PRIMARY KEY, deleted_at timestamptz, banned_until timestamptz);
     CREATE TABLE public.profiles(user_id uuid,status text,is_archived boolean,merged_to_profile_id uuid);
-    CREATE TABLE auth.sessions(id uuid PRIMARY KEY,user_id uuid,created_at timestamptz,refreshed_at timestamptz,not_after timestamptz);
+    CREATE TABLE auth.sessions(id uuid PRIMARY KEY,user_id uuid,created_at timestamptz,refreshed_at timestamp without time zone,not_after timestamptz);
     INSERT INTO auth.users VALUES('${uid}',NULL,NULL);
     INSERT INTO public.profiles VALUES('${uid}','active',false,NULL);
-    INSERT INTO auth.sessions VALUES('${sid}','${uid}',now()-interval '1 minute',now()-interval '10 seconds',NULL);`);
-  await db.exec(sql);
+    INSERT INTO auth.sessions VALUES('${sid}','${uid}',now()-interval '1 minute',(now() AT TIME ZONE 'UTC')-interval '10 seconds',NULL);`);
+  await db.exec(`BEGIN;\n${sql}\nCOMMIT;`);
   return db;
 }
 const allowed = async (db, user = uid, idle = 300, age = 1800, single = false) =>
@@ -41,6 +41,23 @@ test('service-only RPC reads live session without exposing auth tables or allowi
   } finally { await db.close(); }
 });
 
+test('UTC refresh timestamps retain the same validity in different database time zones', async () => {
+  const db = await setup();
+  try {
+    for (const zone of ['UTC', 'Europe/Warsaw', 'America/New_York', 'Asia/Tokyo']) {
+      await db.exec(`SET TIME ZONE '${zone}'`);
+      await db.exec("UPDATE auth.sessions SET refreshed_at=(now() AT TIME ZONE 'UTC')-interval '10 seconds'");
+      assert.equal(await allowed(db), true, `${zone}: recent UTC refresh`);
+      await db.exec("UPDATE auth.sessions SET refreshed_at=(now() AT TIME ZONE 'UTC')-interval '6 minutes'");
+      assert.equal(await allowed(db), false, `${zone}: expired UTC refresh`);
+      await db.exec("UPDATE auth.sessions SET refreshed_at=(now() AT TIME ZONE 'UTC')+interval '1 minute'");
+      assert.equal(await allowed(db), false, `${zone}: future UTC refresh`);
+      await db.exec('UPDATE auth.sessions SET refreshed_at=NULL');
+      assert.equal(await allowed(db), true, `${zone}: falls back to creation instant`);
+    }
+  } finally { await db.close(); }
+});
+
 test('mismatched subject, expired timebox/inactivity, revoked or banned/deleted users fail closed', async () => {
   const db = await setup();
   try {
@@ -52,8 +69,8 @@ test('mismatched subject, expired timebox/inactivity, revoked or banned/deleted 
     for (const mutation of [
       "not_after=now()-interval '1 second'",
       "created_at=now()-interval '31 minutes'",
-      "refreshed_at=now()-interval '6 minutes'",
-      "refreshed_at=now()+interval '1 minute'",
+      "refreshed_at=(now() AT TIME ZONE 'UTC')-interval '6 minutes'",
+      "refreshed_at=(now() AT TIME ZONE 'UTC')+interval '1 minute'",
       "created_at=now()+interval '1 minute'",
     ]) {
       await db.exec('BEGIN');
@@ -69,7 +86,7 @@ test('mismatched subject, expired timebox/inactivity, revoked or banned/deleted 
       await db.exec('BEGIN'); await db.exec(`UPDATE public.profiles SET ${mutation}`);
       assert.equal(await allowed(db), false, mutation); await db.exec('ROLLBACK');
     }
-    await db.exec(`INSERT INTO auth.sessions VALUES('${uid}','${uid}',now(),now(),NULL)`);
+    await db.exec(`INSERT INTO auth.sessions VALUES('${uid}','${uid}',now(),now() AT TIME ZONE 'UTC',NULL)`);
     assert.equal(await allowed(db, uid, 300, 1800, true), false);
     assert.equal(await allowed(db, uid, 300, 1800, false), true);
     await db.exec('DELETE FROM auth.sessions');
