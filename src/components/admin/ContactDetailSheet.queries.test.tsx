@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-const network = vi.hoisted(() => ({ reads: [] as Array<{ table: string; columns: string; filters: unknown[][] }>, failDeals: false }));
+const network = vi.hoisted(() => ({ reads: [] as Array<{ table: string; columns: string; filters: unknown[][] }>, failDeals: false, telegramId: null as number | null }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "operator" }, role: "admin" }) }));
 vi.mock("@/hooks/usePermissions", () => ({ usePermissions: () => ({ hasPermission: () => false, isSuperAdmin: () => false, isAdmin: () => true, canWrite: () => true }) }));
 vi.mock("@/hooks/useAdminAccess", () => ({ useAdminAccess: () => ({ canAccessSection: () => false }) }));
@@ -18,15 +18,15 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
     builder.then = (resolve: (value: unknown) => unknown) => {
       network.reads.push(query);
       const isDeals = table === "orders_v2" && query.columns.includes("payments_v2");
-      const data = table === "profiles" ? { user_id: "auth-user", status: "active", telegram_user_id: null }
+      const data = table === "profiles" ? { user_id: "auth-user", status: "active", telegram_user_id: network.telegramId }
         : isDeals ? [{ id: "deal", status: "paid", paid_amount: 339, final_price: 339, payments_v2: [], purchase_snapshot: null }] : [];
       return Promise.resolve(resolve({ data, error: isDeals && network.failDeals ? new Error("synthetic read failure") : null }));
     };
     return builder;
   },
-  rpc: async (name: string) => { network.reads.push({ table: `rpc:${name}`, columns: "", filters: [] }); return { data: [], error: null }; },
+  rpc: async (name: string) => { network.reads.push({ table: `rpc:${name}`, columns: "", filters: [] }); return { data: name === "admin_get_club_membership" ? [{ in_chat: true }] : [], error: null }; },
   channel: () => { const channel = { on: () => channel, subscribe: () => channel }; return channel; },
-  removeChannel: vi.fn(), functions: { invoke: vi.fn() }, auth: { getUser: vi.fn() },
+  removeChannel: vi.fn(), functions: { invoke: async (name: string) => { network.reads.push({ table: `function:${name}`, columns: "", filters: [] }); return { data: { success: true, user_info: { bio: "Synthetic Telegram bio" } }, error: null }; } }, auth: { getUser: vi.fn() },
 } }));
 
 // Keep this test about the sheet's own reads; dialogs and independent panels
@@ -57,7 +57,7 @@ const renderSheet = (open = true) => {
   return { ...render(tree(open)), cache, tree };
 };
 const selectTab = (name: RegExp) => fireEvent.mouseDown(screen.getByRole("tab", { name }), { button: 0, ctrlKey: false });
-beforeEach(() => { network.reads.length = 0; network.failDeals = false; });
+beforeEach(() => { network.reads.length = 0; network.failDeals = false; network.telegramId = null; });
 afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear()); });
 
 describe("contact sheet visible query scopes", () => {
@@ -72,6 +72,23 @@ describe("contact sheet visible query scopes", () => {
       expect(tables).not.toContain(table);
     expect(network.reads.some((read) => read.columns.includes("payments_v2"))).toBe(false);
     expect(tables).toContain("provider_subscriptions"); // Visible profile card is preserved.
+  });
+
+  it("loads Telegram membership on its tab and expanded Telegram details only on demand", async () => {
+    network.telegramId = 123;
+    const view = renderSheet();
+    await waitFor(() => expect(screen.getByText("ID 123")).toBeInTheDocument());
+    expect(network.reads.some((read) => read.table === "rpc:admin_get_club_membership")).toBe(false);
+    selectTab(/^Telegram$/);
+    await waitFor(() => expect(screen.getByText("В клубе")).toBeInTheDocument());
+    expect(network.reads.some((read) => read.table === "function:telegram-admin-chat")).toBe(false);
+    fireEvent.click(view.container.querySelector('[aria-controls="tg-info-body"]') ?? document.querySelector('[aria-controls="tg-info-body"]')!);
+    await waitFor(() => expect(screen.getByText("Synthetic Telegram bio")).toBeInTheDocument());
+    selectTab(/^Профиль/);
+    await waitFor(() => expect(view.cache.isFetching()).toBe(0));
+    const before = network.reads.length;
+    await view.cache.invalidateQueries({ predicate: (query) => ["contact-telegram-info", "contact-club-membership"].includes(String(query.queryKey[0])) });
+    expect(network.reads.slice(before)).toEqual([]);
   });
 
   it("reads deals only on demand, reuses the contact cache, and stops reads when closed", async () => {

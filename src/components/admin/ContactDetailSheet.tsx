@@ -273,6 +273,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   // Tabs keep their per-contact query caches; only a visible consumer starts a read.
   const visibleContact = open && !!contact?.id;
   const profileVisible = visibleContact && activeTab === "profile";
+  const telegramVisible = visibleContact && activeTab === "telegram";
   const accessVisible = visibleContact && (activeTab === "access" || editSubscriptionOpen || chargeDialogOpen || !!selectedSubscription);
   const dealsVisible = visibleContact && (activeTab === "deals" || !!selectedDealId || !!dealToEditId || !!refundDealId);
   const feedVisible = visibleContact && activeTab === "feed";
@@ -483,7 +484,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (!data.success) return null;
       return data.user_info;
     },
-    enabled: profileVisible && tgInfoExpanded && !!resolvedUserId && !!resolvedTelegramUserId,
+    enabled: telegramVisible && tgInfoExpanded && !!resolvedUserId && !!resolvedTelegramUserId,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
@@ -507,7 +508,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         return null;
       }
     },
-    enabled: profileVisible && !!contact?.telegram_user_id,
+    enabled: telegramVisible && !!resolvedTelegramUserId,
     staleTime: 0,         // PATCH: всегда считать данные устаревшими
     refetchOnMount: true, // PATCH: перезапрашивать при каждом открытии карточки
   });
@@ -2282,7 +2283,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                         <div className="pt-1">
                           <ContactClubMembershipsList
                             profileId={contact?.id ?? null}
-                            enabled={!!contact?.id && tgInfoExpanded}
+                            enabled={telegramVisible && tgInfoExpanded}
                           />
                         </div>
                         {telegramUserInfo && (
@@ -2361,7 +2362,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 clientEmail={contact.email}
                 clientPhone={contact.phone}
                 hidePhotoButton
-                isActive={open && activeTab === "telegram"}
+                isActive={telegramVisible}
               />
             </div>
           </TabsContent>
