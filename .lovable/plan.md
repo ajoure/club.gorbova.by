@@ -14,19 +14,23 @@
 - `entitlements` у пользователя: cb_2_step и club активны, одна запись expired. По product `2b7bf6d4…` или code `prd_8649986b7c9e` записи нет — это подтверждено.
 - Правило `557bc290…`: active, training_content, partial, product `2b7bf6d4…`, tariff `ce13a0b5…`, `b298240c…` в allowed_module_ids. Без entitlement по product bypass в `useMonthGate`/`useModuleMonthGate` не срабатывает, поэтому `/library/01082025` закрыт. Причина подтверждена кодом (useMonthGate ~176–215).
 - Масштаб (обезличенно): активных order-источников без активного entitlement — 3, из них по этому product — 1 (этот случай).
-- В БД нет SQL-функции-проектора sources → entitlements. Запись делает только edge-логика: `grant-access-for-order` (полный fulfillment) и `_shared/product-access-grants.ts` (rule-engine, бонусы).
+- Поправка: мой поиск пропустил штатную `public.recalculate_entitlement_aggregate(uuid,uuid)`. Прежние варианты A/B (ручной INSERT, новый проектор) сняты.
 
-Предложение (выполнять только после отдельного одобрения Codex, сейчас не выполняется):
-- Не использовать `grant-access-for-order`, retroapply и nightly reconcile: это replay fulfillment, бонусы, периоды, Telegram.
-- Вариант A (предпочтительный): одна exact-row идемпотентная вставка одной строки `entitlements` из существующего order-источника:
-  - user_id/profile_id/order_id/product_id/product_code — из источника и заказа; status active; expires_at = expires_at источника (не позже окна подписки); meta с provenance (source id, reason, ticket), без новых периодов.
-  - Guard `WHERE NOT EXISTS` по (user, product или code, active), повторный запуск → already_applied.
-  - Перед вставкой drift guards: заказ paid, подписка active с тем же tariff/order, источник active и не revoked, entitlement отсутствует; иначе STOP.
-  - Dry-run: ожидаемо 1 строка. Apply один раз. Read-back: 1 entitlement, прочие entitlements, источники, подписка и заказ не изменились.
-  - Rollback: точечное удаление только вставленной строки по id из read-back (или status=revoked с причиной — по решению Codex).
-- Вариант B: Codex-PR с узким проектором «entitlement из order-source» и тестами, затем тот же exact-row прогон.
-- Остальные 2 случая из 3 не трогать без отдельной задачи. Сиротский платёж 250 (28 авг, Club) не трогать и не использовать как обход.
-- Проверка результата: Codex на опубликованной версии под тестовой ролью или скриншот администратора без PII; реального входа под ученицей нет.
+Живая сверка функции (только чтение, без вызова):
+- md5(pg_get_functiondef) = `ccb755edbf89e5a07cdf5c8fef494afa` — совпадает. SECURITY DEFINER, search_path = public, pg_temp.
+- Execute: authenticated=false, anon=false, service_role=true (плюс postgres и managed executor).
+- Что пишет: только `public.entitlements` — UPDATE meta, INSERT … ON CONFLICT (user_id, product_code) DO UPDATE, UPDATE status/expires/meta. Заказы, платежи, подписки, sources, бонусы, Telegram, http/net не трогает. Читает sources, subscriptions_v2, products_v2, profiles.
+- Срок: CASE perpetual → NULL, иначе MAX(expires_at) по активным sources и subscriptions. Здесь это 2027-06-25 10:38:59.336016 (ES) > 10:38:44.486 (подписка): берётся канонический максимум, ни один срок не меняется.
+- Триггеров на `entitlements` нет (non-internal = 0). Триггеры subscriptions_v2 (включая telegram grant) не срабатывают: функция subscriptions не пишет.
+
+Bounded execute (только после отдельного одобрения Codex):
+1. Drift guards (SELECT): заказ dc6… paid, tariff ce13…; ES `67f7b2d3…` active, не revoked, fingerprint `43da201b…`; подписка `8e17…` active, fingerprint `6ca47c18…`; E по product или code `prd_8649986b7c9e` отсутствует; md5 функции `ccb755ed…`; на entitlements 0 триггеров. Любое расхождение → STOP.
+2. Снимок (count + md5) прочих E, всех ES и subscriptions пользователя, его payments и Club-записей.
+3. Один вызов `select public.recalculate_entitlement_aggregate('e296da5b-…','2b7bf6d4-…')` под service_role. Повторов нет.
+4. Ожидаемый результат: status active, profile `3c148831…`, product `2b7bf6d4…`, tariff ce13…, active_sources 1, active_subscriptions 1, perpetual false, expiry 2027-06-25T10:38:59.336016Z. order_id NULL (штатно), provenance в meta.effective_source_ref/type. Иное → STOP и доклад.
+5. Read-back: ровно 1 новая E; снимки п.2 неизменны; ES и подписка — те же fingerprints.
+6. Ручного INSERT нет, rollback через DELETE нет, новых периодов и августовской сделки нет. Сиротский платёж 250 (Club) не трогать. Остальные 2 случая из 3 не трогать.
+7. Проверку открытия `/library/01082025` делает Codex на опубликованной версии, без PII.
 
 
 ## 0. Очередь и чистота — PASS
