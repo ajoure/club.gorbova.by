@@ -1,7 +1,8 @@
 /**
  * OFFLINE PILOT ONLY. No Edge entrypoint, secrets, database or provider changes.
  * This checks entitlement, NOT possession of the viewer's device. A bearer URL
- * can be replayed; do not deploy until the device-binding release gate passes.
+ * can be replayed. That residual risk was accepted for an isolated pilot on
+ * 2026-10-29; production still requires runtime acceptance and separate approval.
  */
 export type VideoMediaType = "vod" | "live";
 
