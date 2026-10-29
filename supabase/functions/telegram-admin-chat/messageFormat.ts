@@ -49,6 +49,27 @@ export function contactUrlKeyboard(buttons: TelegramUrlButton[]): TelegramUrlKey
   return buttons.length ? { inline_keyboard: buttons.map((button) => [button]) } : undefined;
 }
 
+/** Sentence punctuation is outside an auto-link; balanced URL brackets stay inside. */
+function splitBareUrl(value: string): { url: string; suffix: string } {
+  let end = value.length;
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  while (end > 0) {
+    const last = value[end - 1];
+    if (".,;:!?…\"'»”’".includes(last)) { end--; continue; }
+    const opening = pairs[last];
+    if (opening) {
+      let balance = 0;
+      for (const character of value.slice(0, end)) {
+        if (character === opening) balance++;
+        if (character === last) balance--;
+      }
+      if (balance < 0) { end--; continue; }
+    }
+    break;
+  }
+  return { url: value.slice(0, end), suffix: value.slice(end) };
+}
+
 /** The editor's small Markdown dialect, not arbitrary HTML/Markdown execution. */
 export function contactMarkdownToTelegramHtml(value: string): string {
   const render = (text: string, depth = 0, autoLink = true): string => {
@@ -59,8 +80,9 @@ export function contactMarkdownToTelegramHtml(value: string): string {
       // Keep bare URLs whole: underscores in paths are not italic delimiters.
       const bareUrl = text.slice(i).match(/^https?:\/\/[^\s<>]+/i)?.[0];
       if (bareUrl) {
-        const href = autoLink ? safeUrl(bareUrl) : null;
-        out += href ? `<a href="${escapeHtml(href)}">${escapeHtml(bareUrl)}</a>` : escapeHtml(bareUrl);
+        const { url, suffix } = splitBareUrl(bareUrl);
+        const href = autoLink ? safeUrl(url) : null;
+        out += (href ? `<a href="${escapeHtml(href)}">${escapeHtml(url)}</a>` : escapeHtml(url)) + escapeHtml(suffix);
         i += bareUrl.length; continue;
       }
       const char = text[i];

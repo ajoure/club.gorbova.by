@@ -22,6 +22,18 @@ describe("operator Telegram message format", () => {
       .toBe('<a href="https://gorbova.by/">https://gorbova.by/</a>');
   });
 
+  it.each([
+    ["Откройте https://gorbova.by/library/course.", 'Откройте <a href="https://gorbova.by/library/course">https://gorbova.by/library/course</a>.'],
+    ["Ссылка: (https://gorbova.by/library/course)", 'Ссылка: (<a href="https://gorbova.by/library/course">https://gorbova.by/library/course</a>)'],
+    ["https://gorbova.by/a_(b)", '<a href="https://gorbova.by/a_(b)">https://gorbova.by/a_(b)</a>'],
+    ["(https://gorbova.by/a_(b)).", '(<a href="https://gorbova.by/a_(b)">https://gorbova.by/a_(b)</a>).'],
+    ["https://gorbova.by/course, далее", '<a href="https://gorbova.by/course">https://gorbova.by/course</a>, далее'],
+    ['«https://gorbova.by/course»!', '«<a href="https://gorbova.by/course">https://gorbova.by/course</a>»!'],
+    ["https://gorbova.by/course?a=1&b=2;", '<a href="https://gorbova.by/course?a=1&amp;b=2">https://gorbova.by/course?a=1&amp;b=2</a>;'],
+  ])("keeps surrounding punctuation outside a standalone link: %s", (source, expected) => {
+    expect(contactMarkdownToTelegramHtml(source)).toBe(expected);
+  });
+
   it("does not execute HTML or turn unsafe Markdown links into HTML links", () => {
     const result = contactMarkdownToTelegramHtml('<script>bad()</script>\n[Жми](javascript:alert(1))');
     expect(result).toContain("&lt;script&gt;bad()&lt;/script&gt;");
