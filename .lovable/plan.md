@@ -1,5 +1,34 @@
 План: read-only ревизия PR692 / PR693 / PR694 (ничего не внедрено)
 
+## Сверка консолидированной ревизии Codex PLAN11423 (внесено / не внесено)
+1. Dry-run PR694 — внесено. Codex выполнил exact helper: family 3 / 4 receipts, 1356/2034/678; mapOrderToPlan 4/6, status review, remaining NaN, next 2026-11-20T08:40:17Z. Моя трассировка (раздел 3) даёт то же. Ограничение sandbox остаётся: helper я не исполнял, обходов не было, новых harness нет.
+2. PR694, новый head `ee48e5eb…` — внесено, дельта проверена. Compare `11209a34…ee48e5eb` = 2 файла: RELEASE.md и `_shared/cb21-release.ts`. В последнем меняется только `CB21_RELEASE_DIGEST` `8d80164c…` → `0afe3e97…`. Четыре CB21 функции (telegram-webhook, telegram-media-worker, sales-runtime-control, sales-runtime-worker) и instagram-monitor installment-модули напрямую не импортируют. Guard: не деплоить их, deploy только 3 финансовых функций. Опубликованный digest не объявлять аттестацией CB21. Ограничение: транзитивный граф импортов я сверил только на прямом уровне; полную проверку подтверждает CI Codex.
+3. Порядок 692/693 и smoke — внесено. Порядок: merge 692 → rebase 693 на main → новый exact CI → merge; старый SHA не принимать. Лимит 4096 считается после разбора entities, длина escaped-текста ≠ видимой длине; при ошибке retry=false и черновик сохраняется. HTTP-ссылки в тексте допустимы, кнопки только HTTPS (моё замечание 5 снято). Smoke по фактическим контрактам: `public-checkout` публичный, 401 не ожидать. Только OPTIONS и заведомо invalid read без создания checkout, ссылок и сообщений. Автоматического retry deploy нет.
+4. Случай Мацкевич — внесено отдельным разделом 10 (preflight только на чтение).
+
+## 10. Случай Мацкевич: read-only preflight (отдельный scope, не связан с PR692–694)
+Факты (живой read-only SQL):
+- Заказ `dc6b8419…`: paid, product `2b7bf6d4…` (code `prd_8649986b7c9e`), tariff `ce13a0b5…`, владелец = auth `e296da5b…`.
+- Подписка `8e17a0b4…`: active, тот же product/tariff, order = `dc6b8419…`, доступ до 2027-06-25 10:38:44.486+00.
+- `entitlement_sources`: source `order` (status active, тот же product/tariff/order, expires 2027-06-25 10:38:59, revoked_at NULL) и отдельно `bonus` (Club, до 2026-09-28).
+- `entitlements` у пользователя: cb_2_step и club активны, одна запись expired. По product `2b7bf6d4…` или code `prd_8649986b7c9e` записи нет — это подтверждено.
+- Правило `557bc290…`: active, training_content, partial, product `2b7bf6d4…`, tariff `ce13a0b5…`, `b298240c…` в allowed_module_ids. Без entitlement по product bypass в `useMonthGate`/`useModuleMonthGate` не срабатывает, поэтому `/library/01082025` закрыт. Причина подтверждена кодом (useMonthGate ~176–215).
+- Масштаб (обезличенно): активных order-источников без активного entitlement — 3, из них по этому product — 1 (этот случай).
+- В БД нет SQL-функции-проектора sources → entitlements. Запись делает только edge-логика: `grant-access-for-order` (полный fulfillment) и `_shared/product-access-grants.ts` (rule-engine, бонусы).
+
+Предложение (выполнять только после отдельного одобрения Codex, сейчас не выполняется):
+- Не использовать `grant-access-for-order`, retroapply и nightly reconcile: это replay fulfillment, бонусы, периоды, Telegram.
+- Вариант A (предпочтительный): одна exact-row идемпотентная вставка одной строки `entitlements` из существующего order-источника:
+  - user_id/profile_id/order_id/product_id/product_code — из источника и заказа; status active; expires_at = expires_at источника (не позже окна подписки); meta с provenance (source id, reason, ticket), без новых периодов.
+  - Guard `WHERE NOT EXISTS` по (user, product или code, active), повторный запуск → already_applied.
+  - Перед вставкой drift guards: заказ paid, подписка active с тем же tariff/order, источник active и не revoked, entitlement отсутствует; иначе STOP.
+  - Dry-run: ожидаемо 1 строка. Apply один раз. Read-back: 1 entitlement, прочие entitlements, источники, подписка и заказ не изменились.
+  - Rollback: точечное удаление только вставленной строки по id из read-back (или status=revoked с причиной — по решению Codex).
+- Вариант B: Codex-PR с узким проектором «entitlement из order-source» и тестами, затем тот же exact-row прогон.
+- Остальные 2 случая из 3 не трогать без отдельной задачи. Сиротский платёж 250 (28 авг, Club) не трогать и не использовать как обход.
+- Проверка результата: Codex на опубликованной версии под тестовой ролью или скриншот администратора без PII; реального входа под ученицей нет.
+
+
 ## 0. Очередь и чистота — PASS
 - HEAD = origin/main = `d299e5f853f72e8e85bba2682529f1fc22d3e338`, рабочее дерево чистое, других задач в Lovable нет.
 - Exact heads в managed mirror недоступны (`not our ref`). Diff прочитан из публичного GitHub compare `d299e5f…...<head>` по каждому head:
