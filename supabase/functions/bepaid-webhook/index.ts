@@ -8,6 +8,8 @@
 // meta.bepaid_subscription_id, meta.bepaid_activated_at. Любая новая запись в
 // access-поля из webhook должна быть отвергнута на code-review.
 import { historicalWebhookReplay, inspectHistoricalReceipt } from './historical-receipt-guard.ts';
+import { loadInstallmentPaymentFamily } from '../_shared/installment-payment-family-context.ts';
+import { repaymentBalance } from '../_shared/installment-repayment-plan.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
@@ -2739,15 +2741,20 @@ Deno.serve(async (req) => {
             const perPaymentByn = Number(orderBlk?.per_payment_byn ?? orderBlk?.per_payment_amount ?? 0);
             const effectiveTotalByn = Number(orderBlk?.effective_total_byn ?? orderBlk?.total_installment_amount ?? 0);
 
-            // Dedup succeeded payments_v2 on the original order (bepaid) by
-            // provider_payment_id. Used for paid_total_byn (source of truth
-            // for money) and as DB fallback for paid cycles count.
-            const { data: paidRows, error: paidRowsError } = await supabase
-              .from('payments_v2')
-              .select('id, provider_payment_id, amount, paid_at')
-              .eq('order_id', originalOrderIdForGuard)
-              .eq('provider', 'bepaid')
-              .eq('status', 'succeeded');
+            // Rebill receipts remain on separate child deals. Read the strict
+            // purchase family instead of counting only rows still on the parent.
+            let factualBalance: ReturnType<typeof repaymentBalance> | null = null;
+            let paidRowsError: unknown = null;
+            try {
+              const { data: original, error: originalError } = await supabase.from('orders_v2')
+                .select('id,user_id,product_id,tariff_id,currency,bepaid_subscription_id,is_deleted,meta')
+                .eq('id', originalOrderIdForGuard).maybeSingle();
+              if (originalError || !original) throw originalError || new Error('installment_family_root_missing');
+              const family = await loadInstallmentPaymentFamily(supabase, original);
+              factualBalance = repaymentBalance({ orderId: original.id, userId: original.user_id,
+                currency: original.currency, total: effectiveTotalByn,
+                payments: family.payments.map(payment => ({ ...payment, order_id: original.id })) });
+            } catch (error) { paidRowsError = error; }
 
             if (paidRowsError) {
               console.error('[WEBHOOK-SUBSCRIPTION] installment_progress payments query failed', paidRowsError);
@@ -2759,25 +2766,14 @@ Deno.serve(async (req) => {
                 meta: {
                   original_order_id: originalOrderIdForGuard,
                   subscription_v2_id: subscriptionV2Id,
-                  error: String(paidRowsError?.message || paidRowsError),
+                  error: String((paidRowsError as Error)?.message || paidRowsError),
                   severity: 'WARN',
                 },
               });
               // Skip progress write: paid_total would be incorrect (=0).
             } else {
 
-            const dedup = new Map<string, { amount: number; paid_at: string | null }>();
-            if (Array.isArray(paidRows)) {
-              for (const r of paidRows as any[]) {
-                const key = String(r.provider_payment_id || r.id);
-                if (!dedup.has(key)) {
-                  dedup.set(key, { amount: Number(r.amount) || 0, paid_at: r.paid_at || null });
-                }
-              }
-            }
-
-            const uniquePaid = Array.from(dedup.values());
-            const dbPaidCount = uniquePaid.length;
+            const dbPaidCount = factualBalance!.paidCount;
 
             // Provider counter priority for cycle count, clamped to [0, N].
             // DB fallback when provider counter absent/zero.
@@ -2789,10 +2785,8 @@ Deno.serve(async (req) => {
             );
             const cycleSource = providerPaidCycles > 0 ? 'provider' : 'db_fallback';
 
-            // paid_total_byn = sum of unique succeeded payments (not per*cycles)
-            const paidTotalByn = Number(
-              uniquePaid.reduce((s, p) => s + (Number(p.amount) || 0), 0).toFixed(2),
-            );
+            // Money comes only from deduplicated verified receipts.
+            const paidTotalByn = factualBalance!.paidMinor / 100;
             const remainingCycles = Math.max(0, guardBillingCycles - paidCyclesEffective);
             const remainingTotalByn = Number(Math.max(0, effectiveTotalByn - paidTotalByn).toFixed(2));
             const progressStatus = finiteFinalCycle || paidCyclesEffective >= guardBillingCycles

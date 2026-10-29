@@ -1,11 +1,12 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { moneyMinor, repaymentBalance, RepaymentPlanError, splitRemainingDebt } from './installment-repayment-plan.ts';
+import { loadInstallmentPaymentFamily } from './installment-payment-family-context.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export async function loadInstallmentRepaymentContext(db: SupabaseClient, orderId: string) {
   if (!UUID.test(orderId)) throw new RepaymentPlanError('invalid_order_id');
   const { data: order, error: orderError } = await db.from('orders_v2')
-    .select('id,user_id,profile_id,product_id,tariff_id,status,currency,meta,updated_at,responsible_user_id')
+    .select('id,user_id,profile_id,product_id,tariff_id,status,currency,bepaid_subscription_id,meta,updated_at,responsible_user_id')
     .eq('id', orderId).maybeSingle();
   if (orderError) throw new RepaymentPlanError('repayment_read_failed');
   if (!order?.user_id || !order.product_id || !order.tariff_id || !['paid', 'partial'].includes(order.status)) {
@@ -46,15 +47,15 @@ export async function loadInstallmentRepaymentContext(db: SupabaseClient, orderI
   if (liveProviders.some(p => !p.provider_subscription_id)) {
     throw new RepaymentPlanError('installment_live_mandate_identity_missing');
   }
-  const { data: payments, error: paymentsError } = await db.from('payments_v2')
-    .select('id,order_id,user_id,currency,provider,provider_payment_id,status,amount,refunded_amount,is_deleted,transaction_type,updated_at')
-    .eq('order_id', order.id);
-  if (paymentsError) throw new RepaymentPlanError('repayment_read_failed');
+  const family = await loadInstallmentPaymentFamily(db, order);
+  if (family.orders[0]?.meta?.manual_review) throw new RepaymentPlanError('installment_agreement_requires_review');
+  const payments = family.payments;
   const balance = repaymentBalance({ orderId: order.id, userId: order.user_id, currency: order.currency,
-    total: agreement.effective_total_byn, payments: payments ?? [] });
+    total: agreement.effective_total_byn, payments: payments.map(payment => ({ ...payment, order_id: order.id })) });
   const fingerprintInput = JSON.stringify({ order: order.updated_at, sub: sub.updated_at,
     providers: providers.map(p => [p.id, p.updated_at, p.state]).sort(),
-    payments: (payments ?? []).map(p => [p.id, p.updated_at, p.status, p.amount, p.refunded_amount, p.is_deleted]).sort() });
+    family: family.orders.map(row => [row.id, row.meta?.parent_order_id, row.is_deleted]).sort(),
+    payments: payments.map(p => [p.id, p.order_id, p.updated_at, p.status, p.amount, p.refunded_amount, p.is_deleted]).sort() });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintInput));
   const fingerprint = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
   return { order, sub, providers, liveProviders, agreement, balance, fingerprint };
