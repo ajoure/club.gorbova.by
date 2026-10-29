@@ -8,7 +8,8 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invo
 let handlers: Record<string, (event: { data?: { currentTime?: number } }) => void>;
 let player: ReturnType<typeof makePlayer>;
 function makePlayer() {
-  return { on: vi.fn((name: string, callback: (e: { data?: { currentTime?: number } }) => void) => { handlers[name] = callback; }),
+  return { Events: { Loaded: "loaded", TimeUpdate: "time", Pause: "pause", Seeked: "seek" },
+    on: vi.fn((name: string, callback: (e: { data?: { currentTime?: number } }) => void) => { handlers[name] = callback; }),
     destroy: vi.fn(async () => {}), pause: vi.fn(async () => {}), getDuration: vi.fn(async () => 300),
     seekTo: vi.fn(async () => {}), getCurrentTime: vi.fn(async () => 125),
     isPaused: vi.fn(async () => true), getPlaybackRate: vi.fn(async () => 1),
@@ -20,7 +21,7 @@ beforeEach(() => {
   mocks.invoke.mockResolvedValue({ data: { token: "synthetic-token", expiresAt: Math.floor(Date.now() / 1000) + 60,
     renewAfterSeconds: 36, mediaKey: "synthetic-vod", mediaType: "vod", playerId: "syntheticPlayer" }, error: null });
   window.Kinescope = { IframePlayer: { create: vi.fn(async () => player),
-    Events: { Loaded: "loaded", TimeUpdate: "time", Pause: "pause", Seeked: "seek" } } } as unknown as typeof window.Kinescope;
+    Events: { Created: "created" } } } as unknown as typeof window.Kinescope;
 });
 afterEach(() => { cleanup(); delete window.Kinescope; vi.clearAllMocks(); });
 

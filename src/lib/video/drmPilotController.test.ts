@@ -4,6 +4,7 @@ import { createDrmPilotController, type PilotPermit, type PilotPlayer } from "./
 function setup() {
   vi.useFakeTimers(); vi.setSystemTime(1_700_000_000_000);
   const player: PilotPlayer = {
+    Events: { Loaded: "loaded", TimeUpdate: "time", Pause: "pause", Seeked: "seek" },
     setPlaylistItemOptions: vi.fn(async () => {}), getCurrentTime: vi.fn(async () => 195),
     getDuration: vi.fn(async () => 300), isPaused: vi.fn(async () => true), getPlaybackRate: vi.fn(async () => 1.5),
     getVideoQuality: vi.fn(async () => ({ height: 360 })), seekTo: vi.fn(async () => {}),

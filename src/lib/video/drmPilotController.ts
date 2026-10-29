@@ -8,6 +8,7 @@ export interface PilotPermit {
   playerId: string;
 }
 export interface PilotPlayer {
+  Events: Record<"Loaded" | "TimeUpdate" | "Pause" | "Seeked", string>;
   setPlaylistItemOptions(options: { drm: { auth: { token: string } } }): Promise<void>;
   getCurrentTime(): Promise<number>;
   getDuration(): Promise<number>;

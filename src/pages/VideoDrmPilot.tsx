@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { createDrmPilotController, type PilotPermit, type PilotPlayer, type PilotSnapshot } from "@/lib/video/drmPilotController";
 
 interface PilotFactory {
-  Events: Record<"Loaded" | "TimeUpdate" | "Pause" | "Seeked", string>;
   create(id: string, options: Record<string, unknown>): Promise<PilotPlayer>;
 }
 let loadingFactory: Promise<PilotFactory> | undefined;
@@ -66,7 +65,6 @@ export default function VideoDrmPilot() {
       async createPlayer(permit) {
         const factory = await loadFactory();
         if (!alive) throw new Error("pilot_closed");
-        if (!factory.Events?.Loaded || !factory.Events.TimeUpdate || !factory.Events.Pause) throw new Error("pilot_sdk_unavailable");
         const iframe = document.createElement("iframe");
         iframe.id = `video-drm-pilot-${crypto.randomUUID()}`;
         iframe.title = "Тестовое защищённое видео";
@@ -81,6 +79,10 @@ export default function VideoDrmPilot() {
             localStorage: { time: false, quality: "item", textTrack: "item" } },
           playlist: [{ drm: { auth: { token: permit.token } } }],
         });
+        if (!player.Events?.Loaded || !player.Events.TimeUpdate || !player.Events.Pause) {
+          await player.destroy();
+          throw new Error("pilot_sdk_unavailable");
+        }
         if (permit.mediaType === "vod") {
           // The position belongs to this user AND this asset. Never use max(time).
           resumeKey = `video-drm-pilot:${userId}:${permit.playerId}`;
@@ -88,7 +90,7 @@ export default function VideoDrmPilot() {
             const saved = Number(localStorage.getItem(resumeKey));
             lastPosition = Number.isFinite(saved) && saved >= 0 ? saved : 0;
           } catch { lastPosition = 0; }
-          player.on(factory.Events.Loaded, () => {
+          player.on(player.Events.Loaded, () => {
             void (async () => {
               if (restored || restoring || !alive) return;
               restoring = true;
@@ -102,7 +104,7 @@ export default function VideoDrmPilot() {
               if (alive) { setStatus("denied"); void player.pause().catch(() => {}); }
             });
           });
-          player.on(factory.Events.TimeUpdate, event => {
+          player.on(player.Events.TimeUpdate, event => {
             if (!restored || !alive || !Number.isFinite(event.data?.currentTime)) return;
             lastPosition = Math.max(0, event.data!.currentTime!);
             if (Date.now() - lastSave >= 5000) { save(); lastSave = Date.now(); }
@@ -112,8 +114,8 @@ export default function VideoDrmPilot() {
               if (alive && restored && Number.isFinite(time)) { lastPosition = Math.max(0, time); save(); }
             }).catch(() => {});
           };
-          player.on(factory.Events.Pause, persistCurrent);
-          if (factory.Events.Seeked) player.on(factory.Events.Seeked, persistCurrent);
+          player.on(player.Events.Pause, persistCurrent);
+          if (player.Events.Seeked) player.on(player.Events.Seeked, persistCurrent);
         }
         return player;
       },
