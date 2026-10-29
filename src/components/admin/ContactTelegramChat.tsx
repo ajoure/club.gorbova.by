@@ -1988,7 +1988,7 @@ function TelegramChannelChat({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
+      <div className="flex flex-col h-full min-h-0 overflow-hidden" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
           <div className="contact-chat-photo-control contact-chat-optional-controls flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
@@ -2139,11 +2139,10 @@ function TelegramChannelChat({
           </div>
         )}
 
-        {/* Input — shrink-0 в нижней части flex-контейнера. Без sticky:
-            родитель уже ограничен по высоте (Telegram-вкладка),
-            поэтому композер всегда виден внизу карточки. */}
+        {/* A short chat pane bounds one composer scroll area independently
+            of the message history. URL fields and their preview scroll together. */}
         <div
-          className="contact-chat-composer shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]"
+          className="contact-chat-composer min-h-0 max-h-[75%] shrink overflow-y-auto overscroll-contain border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]"
           data-testid="telegram-composer"
         >
         <div className="contact-chat-optional-controls">
