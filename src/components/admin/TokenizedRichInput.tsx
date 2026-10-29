@@ -369,6 +369,8 @@ interface TokenizedRichInputProps {
    * - "documents:annual_meeting" — documents + Package roles + Arrays + Agenda + Decisions
    */
   tokenContext?: TokenContext;
+  /** Pause registry reads while an editor stays mounted in a hidden panel. */
+  isActive?: boolean;
   /**
    * @deprecated Use tokenContext instead. Kept only for backward compatibility.
    * Additional token groups to show in picker.
@@ -395,6 +397,7 @@ export function TokenizedRichInput({
   className,
   allowAlign = false,
   tokenContext,
+  isActive = true,
   extraTokenGroups,
   onSubmit,
   onPaste,
@@ -421,8 +424,8 @@ export function TokenizedRichInput({
   // Hydrate legacy label caches so existing chips render labels via tokenStringToLabel().
   const effectiveContext = tokenContext ?? "messages";
   useEffect(() => {
-    if (effectiveContext !== "messages") void loadTokensForContext(effectiveContext);
-  }, [effectiveContext]);
+    if (isActive && effectiveContext !== "messages") void loadTokensForContext(effectiveContext);
+  }, [effectiveContext, isActive]);
 
   // Suppress @deprecated extraTokenGroups (kept for API compat with existing call sites).
   void extraTokenGroups;
@@ -431,18 +434,20 @@ export function TokenizedRichInput({
   const { data: registryRefs = [] } = useQuery<RegistryFieldRef[]>({
     queryKey: ["token-registry-refs"],
     queryFn: loadRegistryRefs,
+    enabled: isActive,
     staleTime: 60_000,
   });
   const { data: canonicalTokenRefs = [] } = useQuery<RegistryFieldRef[]>({
     queryKey: ["canonical-document-token-refs"],
     queryFn: loadCanonicalTokenRefs,
+    enabled: isActive,
     staleTime: 60_000,
   });
   const { data: productFields = [] } = useQuery({
     queryKey: ["message-product-token-refs"],
     queryFn: loadProductFields,
     staleTime: 60_000,
-    enabled: effectiveContext === "messages",
+    enabled: isActive && effectiveContext === "messages",
   });
   useEffect(() => {
     if (productFields.length > 0) setProductFieldsCache(productFields);

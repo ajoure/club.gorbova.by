@@ -115,12 +115,12 @@ function renderDialog(onOpenChange = vi.fn()) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  const result = render(
+  const tree = (open: boolean) => (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <PullToRefresh>
         <AdminPaymentLinkDialog
-          open
+          open={open}
           onOpenChange={onOpenChange}
           userId="user-1"
           userName="Марина Колейчик"
@@ -128,10 +128,11 @@ function renderDialog(onOpenChange = vi.fn()) {
         />
         </PullToRefresh>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(tree(true));
 
-  return { ...result, onOpenChange };
+  return { ...result, onOpenChange, queryClient, tree };
 }
 
 function selectNativeByValue(accessibleName: string, value: string) {
@@ -148,6 +149,26 @@ function selectProductByName(name: string) {
 describe("AdminPaymentLinkDialog product selection", () => {
   beforeEach(() => {
     invoke.mockClear();
+  });
+
+  it("pauses quote reads while closed and preserves the normal new-link flow when reopened", async () => {
+    const view = renderDialog();
+    selectProductByName("Gorbova Club");
+    selectNativeByValue("Тариф", "tariff-club");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("composable-checkout-quote", expect.anything()));
+    view.rerender(view.tree(false));
+    await waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    invoke.mockClear();
+    await view.queryClient.invalidateQueries();
+    expect(invoke).not.toHaveBeenCalled();
+    view.rerender(view.tree(true));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Выберите продукт"));
+    selectProductByName("Gorbova Club");
+    selectNativeByValue("Тариф", "tariff-club");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("composable-checkout-quote", expect.anything()));
+    expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Gorbova Club");
+    expect(screen.getByRole("combobox", { name: "Тариф" })).toHaveTextContent("FULL");
+    expect(invoke.mock.calls.every(([name]) => name === "composable-checkout-quote")).toBe(true);
   });
 
   it("preserves product/tariff after blur, focus return and a downward gesture in the portalled form", async () => {

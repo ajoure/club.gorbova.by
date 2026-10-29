@@ -780,12 +780,14 @@ export function ContactFeedTab({
   dealId,
   embedded = false,
   readOnly = false,
+  isActive = true,
 }: {
   contactId?: string;
   companyId?: string;
   dealId?: string;
   embedded?: boolean;
   readOnly?: boolean;
+  isActive?: boolean;
 }) {
   const entityId = dealId ?? companyId ?? contactId ?? "";
   const isDeal = Boolean(dealId);
@@ -835,7 +837,7 @@ export function ContactFeedTab({
     isFetching,
   } = useQuery({
     queryKey: ["contact_feed", entityId, types, debounced],
-    enabled: !!entityId,
+    enabled: isActive && !!entityId,
     placeholderData: (previousData) => previousData ?? [],
     queryFn: async () => {
       const { data, error } = isDeal
@@ -1144,7 +1146,7 @@ export function ContactFeedTab({
           </div>
 
         ) : (
-          visibleFeedEvents.map((evt) => {
+          (isActive ? visibleFeedEvents : []).map((evt) => {
             const M = KIND_META[evt.kind] ?? KIND_META.event;
             const Icon = M.icon;
             const canDelete = evt.meta?.can_delete === true;

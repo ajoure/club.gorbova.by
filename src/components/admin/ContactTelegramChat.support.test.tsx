@@ -12,8 +12,32 @@ vi.mock('@/integrations/supabase/client',()=>({ supabase:{
   functions:{invoke:mocks.invoke},
 } }));
 vi.mock('@/integrations/supabase/operational-client',()=>({operationalSupabase:{rpc:mocks.operational}}));
-afterEach(()=>{cleanup();vi.clearAllMocks();});
+afterEach(()=>{cleanup();vi.clearAllMocks();sessionStorage.clear();});
 describe('service-bot chat mount',()=>{
+  it('does not fetch inactive history and refreshes the same scoped cache on return without losing the draft',async()=>{
+    mocks.rpc.mockImplementation(async(name:string)=>({data:name==='support_bot_messages_v1' ? [{id:'incoming',direction:'incoming',message_text:'Synthetic scoped history',message_id:10,created_at:'2026-10-22T10:20:41Z',bot_id:'service-bot',transport:'bot',meta:{}}] : [],error:null}));
+    const cache=new QueryClient({defaultOptions:{queries:{retry:false}}});
+    const props={userId:'synthetic-user',telegramUserId:123,telegramUsername:null,supportChannel:{transport:'bot' as const,channel_ref:'service-bot',channel_key:'bot:service-bot',bot_id:'service-bot',label:'Service',username:'service',first_name:null,last_name:null,business_connection_id:null,is_primary:true,can_reply:true,message_count:1,incoming_count:1,unanswered_count:1}};
+    const tree=(active:boolean)=><QueryClientProvider client={cache}><ContactTelegramChat {...props} isActive={active}/></QueryClientProvider>;
+    const view=render(tree(false));
+    await new Promise(resolve=>setTimeout(resolve,100));
+    expect(mocks.rpc.mock.calls.some(([name])=>name==='support_bot_messages_v1')).toBe(false);
+    view.rerender(tree(true));
+    await waitFor(()=>expect(screen.getAllByText('Synthetic scoped history').length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByRole('textbox',{name:'Message'}),{target:{value:'Synthetic saved draft'}});
+    view.rerender(tree(false));
+    const calls=mocks.rpc.mock.calls.filter(([name])=>name==='support_bot_messages_v1').length;
+    window.dispatchEvent(new Event('pageshow'));
+    await new Promise(resolve=>setTimeout(resolve,1100));
+    expect(mocks.rpc.mock.calls.filter(([name])=>name==='support_bot_messages_v1')).toHaveLength(calls);
+    expect(screen.getByRole('textbox',{name:'Message'})).toHaveValue('Synthetic saved draft');
+    expect(screen.getByRole('button',{name:'Отправить сообщение'})).toBeDisabled();
+    view.rerender(tree(true));
+    await waitFor(()=>expect(mocks.rpc.mock.calls.filter(([name])=>name==='support_bot_messages_v1').length).toBeGreaterThan(calls));
+    expect(screen.getByRole('textbox',{name:'Message'})).toHaveValue('Synthetic saved draft');
+    expect(mocks.channel).not.toHaveBeenCalled();
+    view.unmount();cache.clear();
+  });
   it('loads only scoped history, never subscribes to combined messages or clears unread on view',async()=>{
     mocks.rpc.mockImplementation(async(name:string)=>{
       if(['get_user_permissions','get_admin_access','support_bot_reactions_v1'].includes(name)) return {data:[],error:null};

@@ -60,10 +60,10 @@ export function AdminChargeDialog({
   const [selectedMethodId, setSelectedMethodId] = useState<string>("");
 
   // Fetch products
-  const { data: products, isLoading: productsLoading } = useProductsV2();
+  const { data: products, isLoading: productsLoading } = useProductsV2(open);
   
   // Fetch tariffs for selected product
-  const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
+  const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId, open && !!selectedProductId);
 
   // Fetch tariff prices
   const { data: tariffPrices } = useQuery({
@@ -80,7 +80,7 @@ export function AdminChargeDialog({
       if (error) throw error;
       return data?.[0] || null;
     },
-    enabled: !!selectedTariffId,
+    enabled: open && !!selectedTariffId,
   });
 
   // Fetch user's payment methods
