@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { assertSupportAction } from "./supportScope.ts";
 import { createSupportSendGate, loadSupportUpload } from "./supportSend.ts";
+import { prepareContactTelegramMessage, type TelegramUrlKeyboard } from "./messageFormat.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -42,6 +43,8 @@ interface ChatAction {
   action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification" | "sync_telegram_reaction";
   user_id?: string;
   message?: string;
+  message_format?: "contact_markdown_v1";
+  url_buttons?: unknown;
   file?: FileData;
   bot_id?: string;
   sender_type?: "bot" | "business";
@@ -260,6 +263,8 @@ async function telegramSendFile(
   businessConnectionId?: string | null,
   supportSend?: (form: FormData) => Promise<any>,
   preparedBytes?: Uint8Array,
+  replyMarkup?: TelegramUrlKeyboard,
+  parseMode?: "HTML",
 ) {
   // Load bytes from base64 (small files) or storage (large files)
   const bytes = preparedBytes ?? await loadFileBytes(supabase, file);
@@ -288,6 +293,7 @@ async function telegramSendFile(
   formData.append("chat_id", chatId.toString());
   if (businessConnectionId) formData.append("business_connection_id", businessConnectionId);
   if (caption) formData.append("caption", caption);
+  if (replyMarkup) formData.append("reply_markup", JSON.stringify(replyMarkup));
   if (replyToMessageId) {
     formData.append("reply_parameters", JSON.stringify({
       message_id: replyToMessageId,
@@ -312,6 +318,7 @@ async function telegramSendFile(
     // result.voice for all three real recorder formats. Renaming would break
     // duration metadata and produce a "0:00" voice bubble.
   }
+  if (parseMode && formData.has("caption")) formData.append("parse_mode", parseMode);
 
   formData.append(fieldName, blob, fileName);
 
@@ -482,7 +489,16 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "send_message": {
-        const { user_id, message, file, bot_id, sender_type, business_account_id } = payload;
+        const { user_id, file, bot_id, sender_type, business_account_id } = payload;
+        let preparedMessage;
+        try { preparedMessage = prepareContactTelegramMessage(payload); }
+        catch (error) {
+          return new Response(JSON.stringify({ success: false, error: error instanceof Error ? error.message : "invalid_message_format" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const message = preparedMessage.text;
+        const replyMarkup = preparedMessage.replyMarkup;
         const replyToMessageId = (payload as any).reply_to_message_id as number | null | undefined;
 
         if (!user_id || (!message && !file)) {
@@ -611,6 +627,12 @@ Deno.serve(async (req) => {
           businessConnectionId = legacyConnection.connection_id;
           businessAccountId = legacyConnection.id;
           businessBotId = legacyConnection.bot_id;
+        }
+
+        if (businessConnectionId && replyMarkup) {
+          return new Response(JSON.stringify({ success: false, error: "Кнопки со ссылками доступны при отправке от бота" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
 
 
@@ -759,6 +781,8 @@ Deno.serve(async (req) => {
                 return await response.json();
               }) : undefined,
               preparedSupportBytes,
+              replyMarkup,
+              payload.message_format === "contact_markdown_v1" ? "HTML" : undefined,
             );
           } catch (fileErr) {
             const fileErrorMessage = fileErr instanceof Error ? fileErr.message : String(fileErr);
@@ -797,6 +821,7 @@ Deno.serve(async (req) => {
             parse_mode: "HTML",
           };
           if (businessConnectionId) sendBody.business_connection_id = businessConnectionId;
+          if (replyMarkup) sendBody.reply_markup = replyMarkup;
           if (replyToMessageId) {
             sendBody.reply_parameters = {
               message_id: replyToMessageId,
@@ -986,6 +1011,8 @@ Deno.serve(async (req) => {
             mime_type: file ? guessMimeType(file.name, file.type) : null,
             source: businessConnectionId ? "telegram_business" : "contact_center",
             message_origin: "crm_operator",
+            reply_markup: replyMarkup ?? null,
+            message_format: payload.message_format ?? null,
           },
           transport: businessConnectionId ? "business" : "bot",
           business_connection_id: businessConnectionId,

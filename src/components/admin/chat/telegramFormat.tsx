@@ -1,16 +1,18 @@
 import type { ReactNode } from "react";
 
 export const TELEGRAM_HTML_TAG_PATTERN = /<\/?(b|strong|i|em|u|s|strike|del|code|pre|a|tg-spoiler|br)\b/i;
+const TELEGRAM_HTML_ENTITY_PATTERN = /&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/i;
+const hasTelegramHtml = (value: string) => TELEGRAM_HTML_TAG_PATTERN.test(value) || TELEGRAM_HTML_ENTITY_PATTERN.test(value);
 
 export function getTelegramPlainText(text: string | null | undefined): string {
   const value = text || "";
-  if (!TELEGRAM_HTML_TAG_PATTERN.test(value) || typeof DOMParser === "undefined") return value;
+  if (!hasTelegramHtml(value) || typeof DOMParser === "undefined") return value;
   const doc = new DOMParser().parseFromString(`<div>${value}</div>`, "text/html");
   return doc.body.textContent || "";
 }
 
 export function renderTelegramFormattedText(text: string): ReactNode {
-  if (!TELEGRAM_HTML_TAG_PATTERN.test(text) || typeof DOMParser === "undefined") return text;
+  if (!hasTelegramHtml(text) || typeof DOMParser === "undefined") return text;
 
   const doc = new DOMParser().parseFromString(`<div>${text}</div>`, "text/html");
   const root = doc.body.firstElementChild;
@@ -60,9 +62,9 @@ export function renderTelegramFormattedText(text: string): ReactNode {
 /** Pure preview builder — safe to call in precompute (no DOM state, no closures). */
 export function buildQuotePreview(m: {
   message_text?: string | null;
-  meta?: any;
+  meta?: Record<string, unknown>;
 }): string {
-  const meta: any = m.meta || {};
+  const meta = m.meta || {};
   const fileType = meta.file_type;
   if (fileType === "photo") return "📷 Фото";
   if (fileType === "video") return "🎬 Видео";

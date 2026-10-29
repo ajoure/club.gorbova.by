@@ -30,6 +30,7 @@ import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
 import Link from "@tiptap/extension-link";
 import { PlaceholderLinkProtection } from "@/lib/tokens/placeholderLinkProtection";
+import { MessageHardBreak } from "@/lib/tokens/messageHardBreak";
 import TextAlign from "@tiptap/extension-text-align";
 import {
   loadProductFields,
@@ -241,6 +242,7 @@ function serializeDoc(editor: Editor): string {
 function serializeInline(nodes: any[]): string {
   return nodes
     .map((node) => {
+      if (node.type === "hardBreak") return "\n";
       if (node.type === "token") {
         return node.attrs?.tokenString || "";
       }
@@ -502,6 +504,8 @@ export function TokenizedRichInput({
     ];
     if (singleLine) {
       exts.push(SingleLine);
+    } else {
+      exts.push(MessageHardBreak);
     }
     return exts;
   }, [singleLine]);
