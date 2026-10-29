@@ -4,6 +4,8 @@ import { SalesRuntimeControls } from './chat/SalesRuntimeControls';
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTelegramDraft } from "@/hooks/useTelegramDraft";
+import { TelegramUrlButtonEditor } from "./chat/TelegramUrlButtonEditor";
+import { contactMarkdownToTelegramHtml, contactUrlKeyboard, validateContactUrlButtons, type TelegramUrlButton } from "../../../supabase/functions/telegram-admin-chat/messageFormat";
 import { useChatResumeRefresh } from "@/hooks/useChatResumeRefresh";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -248,7 +250,11 @@ function TelegramChannelChat({
   const queryClient = useQueryClient();
   const [selectedSenderKey, setSelectedSenderKey] = useState<string | null>(null);
   const channel = channels.find(c => c.channel_key === selectedSenderKey) ?? channels.find(c => c.is_primary) ?? channels[0];
-  const { message, setMessage, selectedFile, setSelectedFile, selectedFileType, setSelectedFileType } = useTelegramDraft(user?.id, userId, supportBotId ? `support:${channel.channel_key}` : channel.channel_key);
+  const { message, setMessage, selectedFile, setSelectedFile, selectedFileType, setSelectedFileType, urlButtons, setUrlButtons } = useTelegramDraft(user?.id, userId, supportBotId ? `support:${channel.channel_key}` : channel.channel_key);
+  const urlButtonsInvalid = useMemo(() => {
+    try { validateContactUrlButtons(urlButtons); return false; }
+    catch { return true; }
+  }, [urlButtons]);
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
@@ -1383,11 +1389,13 @@ function TelegramChannelChat({
       file,
       fileType,
       replyToMessageId,
+      urlButtons: buttons,
     }: {
       text?: string;
       file?: File;
       fileType?: string;
       replyToMessageId?: number | null;
+      urlButtons?: TelegramUrlButton[];
     }) => {
       let fileData:
         | { type: string; name: string; storage_path: string; storage_bucket: string }
@@ -1422,6 +1430,8 @@ function TelegramChannelChat({
           support_observed_incoming_id: supportBotId ? pendingSupportIncomingRef.current : undefined,
           user_id: userId,
           message: text || "",
+          message_format: selectedBusinessAccountId ? undefined : "contact_markdown_v1",
+          url_buttons: buttons,
           file: fileData,
           bot_id: selectedBotId || undefined,
           sender_type: selectedBusinessAccountId ? "business" : "bot",
@@ -1433,7 +1443,7 @@ function TelegramChannelChat({
       if (!data.success) throw new Error(data.error || "Не удалось отправить сообщение");
       return data;
     },
-    onMutate: ({ text }) => {
+    onMutate: ({ text, urlButtons: buttons }) => {
       // === Observed boundary capture BEFORE send ===
       // Фиксируем границу до фактической отправки, чтобы incoming, пришедший
       // во время отправки, НЕ попал в эту boundary, даже если realtime уже
@@ -1470,7 +1480,7 @@ function TelegramChannelChat({
         id: `temp-${Date.now()}`,
         type: "message",
         direction: "outgoing",
-        message_text: text?.trim() || null,
+        message_text: text ? (selectedBusinessAccountId ? text.trim() : contactMarkdownToTelegramHtml(text.trim())) : null,
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
@@ -1481,14 +1491,17 @@ function TelegramChannelChat({
         business_connection_id: selectedBusinessAccountId ? businessContext?.business_connection_id || null : null,
         business_account_id: selectedBusinessAccountId,
         message_origin: "crm_operator",
-        meta: selectedFile ? {
-          file_type: selectedFileType,
-          file_name: selectedFile.name,
-          mime_type: selectedFile.type || null,
-          file_url: localUrl,
-          upload_status: "ok",
-          source: "local_preview",
-        } : null,
+        meta: {
+          ...(selectedFile ? {
+            file_type: selectedFileType,
+            file_name: selectedFile.name,
+            mime_type: selectedFile.type || null,
+            file_url: localUrl,
+            upload_status: "ok",
+            source: "local_preview",
+          } : {}),
+          reply_markup: contactUrlKeyboard(buttons || []) ?? null,
+        },
       };
       queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) =>
         [...(old || []), tempMessage]
@@ -1503,6 +1516,7 @@ function TelegramChannelChat({
       );
 
       setMessage("");
+      setUrlButtons([]);
       setSelectedFile(null);
       setSelectedFileType(null);
       setIsUploading(false);
@@ -1814,11 +1828,19 @@ function TelegramChannelChat({
       telegramUsername,
     }).trim();
     if (!trimmed && !selectedFile) return;
+    let buttons: TelegramUrlButton[];
+    try { buttons = validateContactUrlButtons(urlButtons); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "Проверьте кнопки со ссылками"); return; }
+    if (selectedBusinessAccountId && buttons.length) {
+      toast.error("Кнопки со ссылками доступны при отправке от бота");
+      return;
+    }
     sendMutation.mutate({
       text: trimmed,
       file: selectedFile || undefined,
       fileType: selectedFileType || undefined,
       replyToMessageId: replyingTo?.message_id ?? undefined,
+      urlButtons: buttons,
     });
   };
 
@@ -2333,7 +2355,7 @@ function TelegramChannelChat({
             <Button
               onClick={handleSend}
               aria-label="Отправить сообщение"
-              disabled={!channel.can_reply || (supportBotId && !scopedHistoryReady) || (!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
+              disabled={!channel.can_reply || (supportBotId && !scopedHistoryReady) || (!message.trim() && !selectedFile) || urlButtonsInvalid || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="contact-chat-send h-11 w-11 p-0 shrink-0"
               title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >
@@ -2341,6 +2363,8 @@ function TelegramChannelChat({
             </Button>
           </div>
           </div>
+          {!selectedBusinessAccountId && <TelegramUrlButtonEditor value={urlButtons} onChange={setUrlButtons}
+            disabled={sendMutation.isPending || isUploading || !channel.can_reply} />}
           <p className="hidden sm:block text-[11px] leading-none text-muted-foreground mt-0.5">
             Enter для отправки, Shift+Enter для новой строки
           </p>
