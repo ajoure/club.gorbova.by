@@ -19,7 +19,7 @@ export function TelegramUrlButtonEditor({ value, onChange, disabled = false }: {
   const update = (index: number, field: keyof TelegramUrlButton, text: string) => {
     onChange(value.map((button, i) => i === index ? { ...button, [field]: text } : button));
   };
-  return <div className="mt-2 max-h-[35dvh] space-y-2 overflow-y-auto overscroll-contain" data-testid="telegram-url-button-editor">
+  return <div className="mt-2 space-y-2" data-testid="telegram-url-button-editor">
     <Button type="button" variant="ghost" size="sm" className="h-8 text-xs"
       disabled={disabled || value.length >= MAX_CONTACT_URL_BUTTONS}
       onClick={() => onChange([...value, { text: "", url: "" }])}>

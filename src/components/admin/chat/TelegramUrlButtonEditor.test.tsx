@@ -27,6 +27,25 @@ describe("operator URL button editor", () => {
     expect(screen.getByRole("link", { name: "Материалы" })).toBeInTheDocument();
   });
 
+  it("keeps all five rows and previews editable and restores add after removing a row", () => {
+    render(<ComposerButtons />);
+    const add = screen.getByRole("button", { name: "Кнопка со ссылкой" });
+    for (let index = 1; index <= 5; index++) {
+      fireEvent.click(add);
+      fireEvent.change(screen.getByLabelText(`Название кнопки ${index}`), { target: { value: `Материалы ${index}` } });
+      fireEvent.change(screen.getByLabelText(`Ссылка кнопки ${index}`), { target: { value: `https://gorbova.by/library/fixture-${index}` } });
+    }
+    expect(add).toBeDisabled();
+    expect(screen.getAllByRole("link")).toHaveLength(5);
+    fireEvent.change(screen.getByLabelText("Название кнопки 5"), { target: { value: "Последняя кнопка" } });
+    expect(screen.getByRole("link", { name: "Последняя кнопка" })).toHaveAttribute("href", "https://gorbova.by/library/fixture-5");
+    fireEvent.click(screen.getByRole("button", { name: "Удалить кнопку 3" }));
+    expect(add).toBeEnabled();
+    expect(screen.getAllByRole("link")).toHaveLength(4);
+    expect(screen.getByLabelText("Название кнопки 3")).toHaveValue("Материалы 4");
+    expect(screen.getByLabelText("Название кнопки 4")).toHaveValue("Последняя кнопка");
+  });
+
   it("shows invalid addresses without exposing an executable preview", () => {
     render(<ComposerButtons />);
     fireEvent.click(screen.getByRole("button", { name: "Кнопка со ссылкой" }));
