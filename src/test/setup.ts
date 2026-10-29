@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, "localStorage", {
   value: memoryStorage,
 });
 
-Object.defineProperty(window, "matchMedia", {
+if (typeof window !== "undefined") Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({
     matches: false,
@@ -41,12 +41,12 @@ const globalsWithResizeObserver = globalThis as typeof globalThis & {
 };
 globalsWithResizeObserver.ResizeObserver ??= ResizeObserverStub;
 
-if (!Element.prototype.hasPointerCapture) {
+if (typeof Element !== "undefined" && !Element.prototype.hasPointerCapture) {
   (Element.prototype as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => false;
 }
-if (!Element.prototype.scrollIntoView) {
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
 }
-if (!document.elementFromPoint) {
+if (typeof document !== "undefined" && !document.elementFromPoint) {
   document.elementFromPoint = () => null;
 }

@@ -30,6 +30,7 @@ const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
+const VideoDrmPilot = lazy(() => import("./pages/VideoDrmPilot"));
 // Native ЦБ landing. /cb-native-preview remains as a noindex acceptance route.
 const CbNativePreview = lazy(() => import("./pages/CbNativePreview"));
 
@@ -223,6 +224,8 @@ const App = () => {
                 <Route path="/__slot-fixture" element={<LazyRoute><SlotFixturePage /></LazyRoute>} />
               )}
               <Route path="/connect" element={<LazyRoute><ConnectAgent /></LazyRoute>} />
+              {/* No navigation link. Server permits only configured pilot subjects/media/origins. */}
+              <Route path="/pilot/video-drm" element={<ProtectedRoute><LazyRoute><VideoDrmPilot /></LazyRoute></ProtectedRoute>} />
               <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
               <Route path="/pricing/:productSlug" element={<LazyRoute><ProductPricing /></LazyRoute>} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />

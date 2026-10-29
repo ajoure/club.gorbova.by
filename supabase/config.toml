@@ -290,3 +290,12 @@ verify_jwt = false
 verify_jwt = false
 [functions.training-custdev]
 verify_jwt = false
+
+# Isolated synthetic-media pilot: both default to 404 without verified config.
+# Issuer cryptographically verifies Supabase claims AND checks the live session.
+[functions.video-pilot-token]
+verify_jwt = false
+
+# Provider Basic authentication + short signed permit + live session, fail closed.
+[functions.video-pilot-drm-callback]
+verify_jwt = false

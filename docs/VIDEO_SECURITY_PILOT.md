@@ -9,16 +9,64 @@
 
 **DRAFT / NO-GO для production. Полное исправление ещё не реализовано.**
 
-Подготовлены чистое ядро проверки callback в `scripts/video-security` (вне deploy-пакета), локальный пилот его контракта,
-регрессионные тесты текущего SDK-хука и этот план. Из работающего кода изменены
-только диагностические сообщения: они больше не печатают URL и SDK-исключения,
-которые могут содержать токен. Управление воспроизведением не изменено.
+Подготовлены два пилотных endpoint, проверка настоящей подписи JWT, миграция
+серверной проверки сессии, отдельная страница `/pilot/video-drm` и контроллер
+обновления токена без замены iframe. Без полного отдельного конфига и двух
+независимых секретов endpoint отвечают 404. Миграция пока не применена, функции
+не развёрнуты, конфиг и секреты не установлены; Publish не выполнялся.
 
-Ядро не импортируется ни одной Edge Function, нет endpoint, миграции, новых
-credentials или включающего флага. Верификатор подписанного разрешения и реальные
-ACL-адаптеры ещё не подключены: тесты используют только синтетические зависимости.
-Никакой онлайн-проверки DRM, изменения Kinescope, deploy или Publish этот PR не
-выполняет. Зелёные unit-тесты не означают защищённое видео в production.
+Пилотный ACL — явный серверный список контролируемых тестовых субъектов и
+синтетических media UUID. Это НЕ подключение реальных lesson/live ACL и НЕ
+приёмка всех ролей. Production consumers не подключаются к пилоту. В существующем
+SDK-хуке изменены только диагностические сообщения, чтобы не печатать URL и
+SDK-исключения с токеном. Управление существующим воспроизведением не изменено.
+
+В Kinescope отдельно создан `Codex DRM Pilot 2026-10-29` с включённым DRM,
+встраивание пока «Нигде». Загружен один синтетический пятиминутный ролик, без
+материалов клиентов. Callback ещё не настроен, защищённое воспроизведение не
+проверено. Зелёные unit-тесты не означают защищённое видео в production.
+
+## Реализация изолированного пилота и оставшиеся условия включения
+
+- `video-pilot-token`: проверяет подпись Supabase JWT через `getClaims`, issuer,
+  audience, роль authenticated, sub/session_id/exp; анонимная Auth-сессия запрещена.
+  Media выбирается по серверному mapping, клиент не выбирает произвольный UUID.
+- `video-pilot-drm-callback`: Basic auth провайдера, проверка HS256 JWT библиотекой
+  jose 6.2.3, issuer/audience/typ/subject/session/media/context/сроки, затем живая
+  серверная проверка при каждом запросе лицензии. Повторные лицензии разрешены.
+  Оба handler ограничивают тело 16 KiB и весь запрос 3,5 секунды. Ошибки не
+  раскрывают исключения или токены, ответы no-store. Открытого fallback нет.
+- `video_pilot_session_is_live`: только service_role; PUBLIC/anon/authenticated
+  EXECUTE отозван. Проверяет пару user/session, auth-ban/deletion, активный не
+  архивный/не слитый профиль, not_after, настройки timebox/inactivity и single
+  session. `search_path=pg_catalog`, таблицы квалифицированы. Это SELECT без
+  изменения пользователей, сессий и учебных прав.
+- `VIDEO_DRM_PILOT_CONFIG`: enabled, sessionPolicyVerified, subjects (1–5 UUID),
+  media (1–4 записи key/id/type/playerId), origins (1–4 точных HTTPS origin),
+  ttlSeconds (30–300), sessionIdleSeconds/sessionMaxAgeSeconds и
+  singleSessionPerUser. Два срока — положительные секунды либо **явный** null
+  только если соответствующее ограничение отключено в проверенной Auth policy.
+  Отсутствующие поля запрещены. Наличие not_after=null у сессий НЕ доказывает,
+  что настройки Auth отключены. До проверки реальных настроек enabled=false.
+- `VIDEO_DRM_PILOT_SIGNING_KEY` и `VIDEO_DRM_PILOT_PROVIDER_PASSWORD`: разные
+  случайные значения по 32 байта (64 hex), только серверные secrets. Имя Basic
+  пользователя `pilot-provider`. Kinescope API key этим endpoint не нужен.
+- Страница пилота доступна через штатный вход, без ссылки в навигации. Проверка
+  допуска всегда серверная. Использовать только preview и его точный origin,
+  не добавлять production origin. Токен передаётся через playlist DRM options,
+  не в URL. Смена токена вызывает только `setPlaylistItemOptions`.
+- При ошибке/истечении доступа контроллер ставит паузу и предлагает повторить
+  проверку, не включает видео автоматически. Resume VOD хранит последнее время
+  по паре user/asset, не максимум, и не наследуется другим пользователем или
+  другим asset. Для live сохранённая позиция не применяется. Субтитры/качество
+  и поведение после фонового режима требуют отдельного runtime-proof.
+
+До merge/deploy необходимо получить точные UUID пилотных объектов, сверить
+Auth policy и deployed schema (включая auth.users/profiles), закончить CI,
+проверить callback strict=true и подготовить точный перечень применения.
+Развёртывание — только Lovable с точным merged SHA и только двух названных
+функций/одной названной миграции; сначала с выключенным конфигом. Боевой Publish
+и подключение реальных consumers запрещены до отдельной приёмки и согласования.
 
 ## Подтверждённые исходные проблемы
 
@@ -243,5 +291,19 @@ npx tsc --noEmit -p tsconfig.app.json
 ```
 
 Первый прогон: 26 offline callback contracts + 6 mock-SDK regression tests PASS.
+Расширенный прогон 29.10.2026: 74 целевых Vitest PASS (33 real-JWT handler,
+26 контрактов, 6 контроллера обновления, 3 resume страницы, 6 существующего
+SDK-хука); 2 PGlite проверки реальной SQL-миграции PASS. TypeScript, целевой
+ESLint, Deno check двух endpoint и production build PASS. Контрактный сканер:
+373 исходника функций / 231 literal reference, отсутствующих исходников нет.
+Это не инвентаризация фактически развёрнутых функций и не live-проверка ролей.
+
+```sh
+npx vitest run tests/edge/videoPilotRuntime.test.ts tests/edge/videoPlaybackAuthorization.test.ts src/lib/video/drmPilotController.test.ts src/pages/VideoDrmPilot.test.tsx src/hooks/useKinescopePlayer.test.tsx
+node --test scripts/video-security/session-guard.test.mjs
+node scripts/verify-edge-function-contracts.mjs
+npm run build
+```
+
 Проверки anti-sharing реального провайдера, реального resume, долгого эфира и
 mobile DRM ещё НЕ выполнены. До онлайн-приёмки и отдельного согласования времени боевой rollout запрещён.
