@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { authorizePlayback, type PlaybackDependencies, type PlaybackPermit } from "../../supabase/functions/_shared/video-playback-authorization";
+import { authorizePlayback, type PlaybackDependencies, type PlaybackPermit } from "../../scripts/video-security/video-playback-authorization";
 
 const mediaId = "11111111-1111-4111-8111-111111111111";
 const request = { id: mediaId, type: "vod", token: "synthetic-pilot-token" };
