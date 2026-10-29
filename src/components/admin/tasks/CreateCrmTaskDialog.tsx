@@ -54,8 +54,8 @@ export function CreateCrmTaskDialog({
   defaultCompanyId,
   defaultDealId,
 }: Props) {
-  const { data: types = [] } = useCrmTaskTypes();
-  const { data: staff = [] } = useStaffOptions();
+  const { data: types = [] } = useCrmTaskTypes(open);
+  const { data: staff = [] } = useStaffOptions(open);
   const create = useCreateCrmTask();
 
   const [typeId, setTypeId] = useState<string>("");

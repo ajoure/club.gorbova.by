@@ -15,9 +15,10 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 /** Набор product_id, для которых есть хотя бы одно активное правило доступа */
-export function useActiveAccessRuleProducts() {
+export function useActiveAccessRuleProducts(enabled = true) {
   return useQuery({
     queryKey: ["active-access-rule-product-ids"],
+    enabled,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("access_rules")

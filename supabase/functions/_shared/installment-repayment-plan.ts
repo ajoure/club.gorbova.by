@@ -17,6 +17,7 @@ export type RepaymentPayment = {
   provider: string | null; provider_payment_id: string | null; status: string;
   amount: number | string; refunded_amount?: number | string | null;
   is_deleted?: boolean; transaction_type?: string | null;
+  updated_at?: string;
 };
 
 /** Fail closed on disputed duplicates, refunds or foreign money; no inferred payments. */

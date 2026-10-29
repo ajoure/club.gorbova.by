@@ -11,9 +11,10 @@ type PaymentPlan = Database["public"]["Tables"]["payment_plans"]["Row"];
 type Flow = Database["public"]["Tables"]["flows"]["Row"];
 
 // Products
-export function useProductsV2() {
+export function useProductsV2(enabled = true) {
   return useQuery({
     queryKey: ["products_v2"],
+    enabled,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products_v2")
@@ -105,9 +106,10 @@ export function useDeleteProductV2() {
 }
 
 // Tariffs
-export function useTariffs(productId?: string) {
+export function useTariffs(productId?: string, enabled = true) {
   return useQuery({
     queryKey: ["tariffs", productId],
+    enabled,
     queryFn: async () => {
       let query = supabase
         .from("tariffs")

@@ -7,7 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import { resolveModuleDisplayMetaBatch, type ModuleDisplayMeta } from "@/lib/deals/resolveModuleDisplayMeta";
 
 export function useModuleDisplayMeta(
-  deals: Array<{ id: string; purchase_snapshot: unknown }> | null | undefined
+  deals: Array<{ id: string; purchase_snapshot: unknown }> | null | undefined,
+  enabled = true,
 ) {
   return useQuery({
     queryKey: [
@@ -18,7 +19,7 @@ export function useModuleDisplayMeta(
       if (!deals || deals.length === 0) return new Map<string, ModuleDisplayMeta>();
       return resolveModuleDisplayMetaBatch(deals);
     },
-    enabled: !!deals && deals.length > 0,
+    enabled: enabled && !!deals && deals.length > 0,
     staleTime: 5 * 60 * 1000,
   });
 }
