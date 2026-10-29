@@ -51,14 +51,18 @@ export function contactUrlKeyboard(buttons: TelegramUrlButton[]): TelegramUrlKey
 
 /** The editor's small Markdown dialect, not arbitrary HTML/Markdown execution. */
 export function contactMarkdownToTelegramHtml(value: string): string {
-  const render = (text: string, depth = 0): string => {
+  const render = (text: string, depth = 0, autoLink = true): string => {
     if (depth > 8) return escapeHtml(text);
     let out = "";
     let i = 0;
     while (i < text.length) {
       // Keep bare URLs whole: underscores in paths are not italic delimiters.
       const bareUrl = text.slice(i).match(/^https?:\/\/[^\s<>]+/i)?.[0];
-      if (bareUrl) { out += escapeHtml(bareUrl); i += bareUrl.length; continue; }
+      if (bareUrl) {
+        const href = autoLink ? safeUrl(bareUrl) : null;
+        out += href ? `<a href="${escapeHtml(href)}">${escapeHtml(bareUrl)}</a>` : escapeHtml(bareUrl);
+        i += bareUrl.length; continue;
+      }
       const char = text[i];
       if (char === "`") {
         const end = text.indexOf("`", i + 1);
@@ -76,7 +80,7 @@ export function contactMarkdownToTelegramHtml(value: string): string {
           if (!balance) {
             const href = safeUrl(text.slice(labelEnd + 2, end - 1));
             if (href) {
-              out += `<a href="${escapeHtml(href)}">${render(text.slice(i + 1, labelEnd), depth + 1)}</a>`;
+              out += `<a href="${escapeHtml(href)}">${render(text.slice(i + 1, labelEnd), depth + 1, false)}</a>`;
               i = end; continue;
             }
           }
@@ -86,7 +90,7 @@ export function contactMarkdownToTelegramHtml(value: string): string {
         const end = text.indexOf(char, i + 1);
         if (end > i + 1 && !/\s/.test(text[end - 1]) && !text.slice(i + 1, end).includes("\n")) {
           const tag = char === "*" ? "b" : "i";
-          out += `<${tag}>${render(text.slice(i + 1, end), depth + 1)}</${tag}>`;
+          out += `<${tag}>${render(text.slice(i + 1, end), depth + 1, autoLink)}</${tag}>`;
           i = end + 1; continue;
         }
       }

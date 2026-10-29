@@ -15,9 +15,11 @@ describe("operator Telegram message format", () => {
 
   it("preserves standalone URLs, empty lines, literal code and balanced URL parentheses", () => {
     expect(contactMarkdownToTelegramHtml("https://gorbova.by/long_module_name\r\n\r\n`x < y & z`"))
-      .toBe("https://gorbova.by/long_module_name\n\n<code>x &lt; y &amp; z</code>");
+      .toBe('<a href="https://gorbova.by/long_module_name">https://gorbova.by/long_module_name</a>\n\n<code>x &lt; y &amp; z</code>');
     expect(contactMarkdownToTelegramHtml("[Статья](https://example.com/a_(b))"))
       .toBe('<a href="https://example.com/a_(b)">Статья</a>');
+    expect(contactMarkdownToTelegramHtml("[https://gorbova.by/](https://gorbova.by/)"))
+      .toBe('<a href="https://gorbova.by/">https://gorbova.by/</a>');
   });
 
   it("does not execute HTML or turn unsafe Markdown links into HTML links", () => {
