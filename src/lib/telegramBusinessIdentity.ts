@@ -35,6 +35,13 @@ export function getTelegramPersonalChannelLabel(
   return name ? `${name} · личный Telegram` : "Личный Telegram";
 }
 
+/** Compact destination label; keep the full identity in the accessible title. */
+export function getTelegramSourceBadgeText(label?: string | null): string {
+  const name = label?.trim();
+  if (!name) return "TG · канал не определён";
+  return `TG · ${name.replace(/\s*·\s*личный Telegram$/i, "")}`;
+}
+
 export function getTelegramMessageIdentityLabel({
   direction,
   transport,
