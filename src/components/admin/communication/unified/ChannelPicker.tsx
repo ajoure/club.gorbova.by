@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getTelegramSourceBadgeText } from "@/lib/telegramBusinessIdentity";
 import type { UnifiedContactRow, UnifiedSource } from "@/hooks/useUnifiedInbox";
 
 /**
@@ -45,6 +46,9 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
           const present = !!contact.channels[source];
           const isActive = source === activeSource;
           const ch = contact.channels[source];
+          const destinationLabel = source === "telegram"
+            ? ch ? getTelegramSourceBadgeText(ch.sourceRow.sourceLabel) : "TG"
+            : source === "support" ? "Поддержка" : label;
           const isCreate = source === "support" && !present && canCreateSupport;
           const disabled = !present && !isCreate;
 
@@ -63,6 +67,7 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
               disabled={disabled}
               data-source={source}
               data-create={isCreate || undefined}
+              title={source === "telegram" ? ch?.sourceRow.sourceLabel || destinationLabel : undefined}
               onClick={() => {
                 if (isCreate) {
                   onRequestCreateSupport?.(contact);
@@ -71,8 +76,8 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
                 if (present && !isActive) onChange(source);
               }}
             >
-              <Icon className="hidden xl:block h-3 w-3 shrink-0" />
-              <span>{source === "support" ? "Поддержка" : label}</span>
+              <Icon className={cn("h-3 w-3 shrink-0", source !== "telegram" && "hidden xl:block")} aria-hidden="true" />
+              <span className="min-w-0 truncate">{destinationLabel}</span>
               {isCreate && <Plus className="h-3 w-3 shrink-0" />}
               {ch && ch.unread > 0 && (
                 <span className="shrink-0 inline-flex items-center justify-center min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
