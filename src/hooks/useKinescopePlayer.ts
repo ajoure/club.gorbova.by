@@ -186,7 +186,7 @@ export function useKinescopePlayer({
       onSeekApplied?.(seconds, nonce);
       
     } catch (err) {
-      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Seek+play FAILED:`, err);
+      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Seek+play failed`);
       
       // Show autoplay blocked banner
       setAutoplayBlocked(true);
@@ -228,7 +228,7 @@ export function useKinescopePlayer({
       await player.play();
       setAutoplayBlocked(false);
     } catch (err) {
-      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Manual play failed:`, err);
+      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Manual play failed`);
     }
   }, []);
 
@@ -338,18 +338,19 @@ export function useKinescopePlayer({
           if (!isMounted) return;
           
           try {
-            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Trying URL format:`, playerUrl);
+            // URLs and SDK error objects may contain playback authorization tokens.
+            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Creating player`);
             player = await factory.create(containerId, {
               url: playerUrl,
               size: { width: "100%", height: "100%" },
             });
             
             // Успех — выходим из цикла
-            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player created successfully with:`, playerUrl);
+            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player created successfully`);
             lastError = null;
             break;
           } catch (createError) {
-            console.warn(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Failed with URL:`, playerUrl, createError);
+            console.warn(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player creation attempt failed`);
             lastError = createError as Error;
             // Продолжаем к следующему формату URL
           }
@@ -482,7 +483,7 @@ export function useKinescopePlayer({
         // play event cannot be overwritten by a later `ready` state in consumers.
         await applyPendingSeek();
       } catch (err) {
-        console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player init error:`, err);
+        console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player initialization failed`);
         onError?.(err as Error);
       }
     };
