@@ -137,6 +137,22 @@ describe("live room block visibility", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("shares one polling read across under-video and sidebar placements", async () => {
+    server.blocks = [block(), block({ id: "sidebar", position: "sidebar", config: { text: "Sidebar offer", target_url: "https://example.com/sidebar" } })];
+    const { Provider } = wrapper();
+    render(<>{viewer}<LiveEventRoomBlocks liveEventId="synthetic-live" displayContext="live" position="sidebar" /></>, { wrapper: Provider });
+    await settle();
+    expect(server.reads).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Synthetic offer" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sidebar offer" })).toBeInTheDocument();
+    await settle(5_000);
+    expect(server.reads).toHaveLength(2);
+    server.blocks[0].position = "sidebar";
+    await settle(5_000);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(server.reads).toHaveLength(3);
+  });
+
   it("refetches immediately when realtime is restored and on later changes", async () => {
     const { Provider } = wrapper();
     render(viewer, { wrapper: Provider });
@@ -156,7 +172,11 @@ describe("live room block visibility", () => {
     render(viewer, { wrapper: Provider });
     await settle();
     server.blocks[0].is_active = false;
-    await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
+    await act(async () => { focusManager.setFocused(false); });
+    const reads = server.reads.length;
+    await settle(5_000);
+    expect(server.reads).toHaveLength(reads);
+    await act(async () => { focusManager.setFocused(true); });
     await settle();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     server.blocks[0].is_active = true;

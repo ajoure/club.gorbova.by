@@ -26,7 +26,8 @@ interface LiveEventRoomBlocksProps {
 
 export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: LiveEventRoomBlocksProps) {
   const queryClient = useQueryClient();
-  const queryKey = ["room-blocks", liveEventId, position];
+  // Both placements share one authorized snapshot and one polling request.
+  const queryKey = ["room-blocks", liveEventId];
 
   const { data: blocks } = useQuery({
     queryKey,
@@ -43,7 +44,6 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
         .select("*")
         .eq("live_event_id", liveEventId)
         .eq("is_active", true)
-        .eq("position", position)
         .order("sort_order", { ascending: true });
       if (error) throw error;
       return (data || []) as RoomBlock[];
@@ -51,7 +51,7 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
   });
 
   // Realtime show/hide: подписка на INSERT/UPDATE/DELETE для этого эфира.
-  // Любое изменение → invalidate, фильтрация active+position происходит в queryFn.
+  // Любое изменение → invalidate; позиции используют общий список активных блоков.
   useEffect(() => {
     if (!liveEventId) return;
     const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
@@ -66,13 +66,13 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
           filter: `live_event_id=eq.${liveEventId}`,
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId, position] });
+          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId] }, { cancelRefetch: false });
         }
       )
       .subscribe((status) => {
         // Catch changes missed before the initial subscription or on reconnect.
         if (status === "SUBSCRIBED") {
-          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId, position] });
+          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId] }, { cancelRefetch: false });
         }
       });
     return () => {
@@ -83,6 +83,7 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
   if (!blocks?.length) return null;
 
   const visible = blocks.filter((b) => {
+    if (b.position !== position) return false;
     if (b.display_scope === "always") return true;
     if (b.display_scope === "live_only" && displayContext === "live") return true;
     if (b.display_scope === "replay_only" && displayContext === "replay") return true;
