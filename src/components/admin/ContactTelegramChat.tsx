@@ -495,7 +495,7 @@ function TelegramChannelChat({
   //   2) `refetchOnMount: false` on both — warm reopens must NOT round-trip
   //      to the server when data is still fresh. Realtime + background
   //      refresh (see fullEnabled effect below) keep the cache honest.
-  const { data: leanData, isLoading: leanLoading, isError: leanError, isFetching: leanFetching, isFetchedAfterMount: leanFetched, refetch: refetchLean } = useQuery({
+  const { data: leanData, isLoading: leanLoading, isError: leanError, isFetchedAfterMount: leanFetched, refetch: refetchLean } = useQuery({
     queryKey: ["telegram-messages-lean", userId, cacheScope],
     queryFn: async () => {
       const data = await readHistory({ p_limit: 20, p_text_limit: 4096 });
@@ -513,7 +513,9 @@ function TelegramChannelChat({
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    refetchInterval: isActive && supportBotId ? 15_000 : false,
+    // The full stage owns healthy polling. Retry a failed lean read so a
+    // first-load/resume error can recover without a page reload.
+    refetchInterval: (query) => isActive && supportBotId && query.state.status === "error" ? 15_000 : false,
     refetchOnReconnect: false,
   });
 
@@ -550,7 +552,7 @@ function TelegramChannelChat({
     return () => cancel(handle);
   }, [userId, leanData, supportBotId, isActive]);
 
-  const { data: fullData, isError: fullError, isFetching: fullFetching, isFetchedAfterMount: fullFetched, refetch: refetchMessages } = useQuery({
+  const { data: fullData, isError: fullError, isFetchedAfterMount: fullFetched, refetch: refetchMessages } = useQuery({
     queryKey: chatCacheKey,
     queryFn: async () => {
       const data = await readHistory({ p_limit: 200 });
@@ -585,7 +587,9 @@ function TelegramChannelChat({
   // Rendered messages: prefer full (enriched) if available, otherwise lean.
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
   const messages = fullData ?? leanData;
-  const scopedHistoryReady = isActive && !!messages && (leanFetched || fullFetched) && !leanError && !fullError && !leanFetching && !fullFetching;
+  // A background read does not invalidate already verified scoped history.
+  // Initial loading, another scope, inactivity and actual errors still block.
+  const scopedHistoryReady = isActive && !!messages && (leanFetched || fullFetched) && !leanError && !fullError;
   const wasQueryActiveRef = useRef(isActive);
   useEffect(() => {
     const resumed = isActive && !wasQueryActiveRef.current;

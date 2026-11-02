@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import SupportWorkspace from './SupportWorkspace';
@@ -54,7 +54,7 @@ beforeEach(() => {
   f.invoke.mockResolvedValue({ data: { success: true }, error: null });
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
 });
-afterEach(() => { cleanup(); cache.clear(); });
+afterEach(() => { cleanup(); cache.clear(); vi.useRealTimers(); });
 function open() {
   render(<QueryClientProvider client={cache}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[
     `/admin/communication?support_mode=1&bot=${f.bot}&chat=${f.client}`,
@@ -69,6 +69,32 @@ async function choose() {
 }
 
 describe('scoped assignment through existing support controls', () => {
+  it('opens and closes mobile management actions without changing assignment or channel', async () => {
+    open();
+    const toggle = await screen.findByRole('button', { name: 'Действия' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('Служебный бот')).toHaveValue(f.bot);
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(f.assign).not.toHaveBeenCalled();
+    expect(f.invoke).not.toHaveBeenCalled();
+  });
+  it('searches only the final term after rapid typing without assignments or notifications', async () => {
+    open();
+    await screen.findByLabelText('Передать менеджеру');
+    const input = screen.getByLabelText('Поиск обращений');
+    vi.useFakeTimers();
+    for (const value of ['t','te','test']) fireEvent.change(input, { target:{ value } });
+    const searches = () => f.rpc.mock.calls.filter(([name,args]) => name === 'support_bot_dialogs_v1' && ['t','te','test'].includes(args.p_search));
+    expect(searches()).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(searches()).toHaveLength(1);
+    expect(searches()[0][1].p_search).toBe('test');
+    expect(f.assign).not.toHaveBeenCalled();
+    expect(f.invoke).not.toHaveBeenCalled();
+  });
   it('allows an explicit confirmed handoff while keeping foreign-owner replies and unread controls blocked', async () => {
     open();
     await screen.findByLabelText('Передать менеджеру');

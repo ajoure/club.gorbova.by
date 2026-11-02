@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ContactTelegramChat } from './ContactTelegramChat';
 const mocks = vi.hoisted(() => ({ rpc:vi.fn(), channel:vi.fn(), operational:vi.fn(), invoke:vi.fn() }));
 vi.mock('@/components/admin/TokenizedRichInput',()=>({TokenizedRichInput:({value,onChange}:{value:string;onChange:(s:string)=>void})=><textarea aria-label="Message" value={value} onChange={e=>onChange(e.target.value)} />}));
@@ -12,7 +12,92 @@ vi.mock('@/integrations/supabase/client',()=>({ supabase:{
   functions:{invoke:mocks.invoke},
 } }));
 vi.mock('@/integrations/supabase/operational-client',()=>({operationalSupabase:{rpc:mocks.operational}}));
-afterEach(()=>{cleanup();vi.clearAllMocks();sessionStorage.clear();});
+afterEach(()=>{cleanup();vi.useRealTimers();focusManager.setFocused(undefined);vi.clearAllMocks();sessionStorage.clear();});
+
+function mountPerformanceChat(onReady = vi.fn()) {
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(<QueryClientProvider client={cache}><ContactTelegramChat
+    userId="synthetic-user" telegramUserId={123} telegramUsername={null} onHistoryReadyChange={onReady}
+    supportChannel={{ transport:'bot', channel_ref:'service-bot', channel_key:'bot:service-bot',
+      bot_id:'service-bot', label:'Service', username:'service', first_name:null, last_name:null,
+      business_connection_id:null, is_primary:true, can_reply:true, message_count:1,
+      incoming_count:1, unanswered_count:1 }} /></QueryClientProvider>);
+  return { cache, view, onReady };
+}
+
+const performanceRows = [{ id:'incoming', direction:'incoming', message_text:'Synthetic scoped history',
+  message_id:10, created_at:'2026-10-22T10:20:41Z', bot_id:'service-bot', transport:'bot', meta:{} }];
+
+describe('service-bot background refresh', () => {
+  it('polls the complete history once per interval without repeating the initial lean read', async () => {
+    mocks.rpc.mockImplementation(async (name:string) => ({ data:name === 'support_bot_messages_v1' ? performanceRows : [], error:null }));
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    const { cache, view, onReady } = mountPerformanceChat();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(onReady).toHaveBeenLastCalledWith(true);
+    expect(mocks.rpc.mock.calls.some(([name,args]) => name === 'support_bot_messages_v1' && args.p_limit === 200)).toBe(true);
+    const count = (limit:number) => mocks.rpc.mock.calls.filter(([name,args]) => name === 'support_bot_messages_v1' && args.p_limit === limit).length;
+    const initialLean = count(20), initialFull = count(200);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_100); });
+    expect(count(20)).toBe(initialLean);
+    expect(count(200)).toBe(initialFull + 2);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    view.unmount(); cache.clear();
+  });
+
+  it('keeps the draft, focus and send readiness during a pending healthy background read', async () => {
+    let delay = false;
+    let release: (() => void) | undefined;
+    mocks.rpc.mockImplementation((name:string,args:Record<string,unknown>) => {
+      if (name === 'support_bot_messages_v1' && args.p_limit === 200 && delay) {
+        return new Promise(resolve => { release = () => resolve({ data:performanceRows, error:null }); });
+      }
+      return Promise.resolve({ data:name === 'support_bot_messages_v1' ? performanceRows : [], error:null });
+    });
+    const { cache, view, onReady } = mountPerformanceChat();
+    await waitFor(() => expect(onReady).toHaveBeenLastCalledWith(true));
+    await waitFor(() => expect(cache.isFetching()).toBe(0));
+    const input = screen.getByRole('textbox', { name:'Message' });
+    fireEvent.change(input, { target:{ value:'Synthetic unsent draft' } });
+    input.focus();
+    delay = true;
+    let pending: Promise<void>;
+    act(() => { pending = cache.invalidateQueries({ queryKey:['telegram-messages','synthetic-user','support-bot:service-bot'] }); });
+    await waitFor(() => expect(release).toBeDefined());
+    try {
+      expect(onReady).toHaveBeenLastCalledWith(true);
+      expect(screen.getByRole('button', { name:'Отправить сообщение' })).toBeEnabled();
+      expect(input).toHaveValue('Synthetic unsent draft');
+      expect(input).toHaveFocus();
+      expect(mocks.invoke).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => { release?.(); await pending!; });
+      view.unmount(); cache.clear();
+    }
+  });
+
+  it('retries an initial lean failure and unlocks only after scoped history succeeds', async () => {
+    let fail = true;
+    mocks.rpc.mockImplementation(async (name:string) => name === 'support_bot_messages_v1'
+      ? { data:fail ? null : performanceRows, error:fail ? new Error('Synthetic initial read failure') : null }
+      : { data:[], error:null });
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    const { cache, view, onReady } = mountPerformanceChat();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(onReady).toHaveBeenLastCalledWith(false);
+    expect(screen.getByRole('button', { name:'Отправить сообщение' })).toBeDisabled();
+    fail = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(onReady).toHaveBeenLastCalledWith(true);
+    expect(mocks.rpc.mock.calls.some(([name,args]) => name === 'support_bot_messages_v1' && args.p_limit === 200)).toBe(true);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    view.unmount(); cache.clear();
+  });
+});
 describe('service-bot chat mount',()=>{
   it('does not fetch inactive history and refreshes the same scoped cache on return without losing the draft',async()=>{
     mocks.rpc.mockImplementation(async(name:string)=>({data:name==='support_bot_messages_v1' ? [{id:'incoming',direction:'incoming',message_text:'Synthetic scoped history',message_id:10,created_at:'2026-10-22T10:20:41Z',bot_id:'service-bot',transport:'bot',meta:{}}] : [],error:null}));

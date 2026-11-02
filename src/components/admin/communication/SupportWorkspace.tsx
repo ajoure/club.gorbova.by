@@ -1,5 +1,6 @@
 import SupportWebWorkspace from "./SupportWebWorkspace";
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -39,10 +40,12 @@ function SupportBotWorkspace() {
   const access = useAdminAccess();
   const { user } = useAuth();
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [assignee, setAssignee] = useState('');
+  const [actionsExpanded, setActionsExpanded] = useState(false);
   const [historyScope, setHistoryScope] = useState<string | null>(null);
   const [assignmentToConfirm, setAssignmentToConfirm] = useState<AssignmentRequest | null>(null);
   // Retain a request after an unknown result; a retry reconciles that same
@@ -62,8 +65,8 @@ function SupportBotWorkspace() {
   const assignees = useQuery({ queryKey: ['contact-center-assignees'],
     queryFn: () => rpc<Array<{ user_id: string; display_name: string }>>('get_contact_center_assignees_v1'), staleTime: 60_000 });
   const dialogs = useQuery({
-    queryKey: ['support-bot-dialogs', bot?.id, search, unreadOnly, offset], enabled: !!bot,
-    queryFn: () => rpc<Dialog[]>('support_bot_dialogs_v1', { p_bot_id: bot!.id, p_search: search || null, p_unread_only: unreadOnly, p_limit: 50, p_offset: offset }),
+    queryKey: ['support-bot-dialogs', bot?.id, debouncedSearch, unreadOnly, offset], enabled: !!bot,
+    queryFn: () => rpc<Dialog[]>('support_bot_dialogs_v1', { p_bot_id: bot!.id, p_search: debouncedSearch || null, p_unread_only: unreadOnly, p_limit: 50, p_offset: offset }),
     refetchInterval: 15_000,
   });
   const detail = useQuery({
@@ -77,7 +80,10 @@ function SupportBotWorkspace() {
   const notReady = !currentScope || historyScope !== currentScope || !dialog?.can_reply || !access.canAccessSection('communication', 'manage') || channels.isError || detail.isError;
   const foreignAssigned = !!(dialog?.assignee_user_id && dialog.assignee_user_id !== user?.id);
   const blocked = notReady || foreignAssigned;
-  const updateRoute = (botId?: string, userId?: string) => setParams({ tab: 'inbox', support_mode: '1', ...(botId ? { bot: botId } : {}), ...(userId ? { chat: userId } : {}) });
+  const updateRoute = (botId?: string, userId?: string) => {
+    setActionsExpanded(false);
+    setParams({ tab: 'inbox', support_mode: '1', ...(botId ? { bot: botId } : {}), ...(userId ? { chat: userId } : {}) });
+  };
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: ['support-bot-dialogs'] }),
     cache.invalidateQueries({ queryKey: ['support-bot-dialog'] }),
@@ -156,7 +162,7 @@ function SupportBotWorkspace() {
     finally { setBusy(false); }
   };
   return <div className="flex h-full min-h-0 flex-col p-2 md:p-4 gap-2" data-testid="support-workspace">
-    <header className="flex flex-wrap items-center gap-2 shrink-0">
+    <header className={`${selectedUser ? 'hidden md:flex' : 'flex'} flex-wrap items-center gap-2 shrink-0`}>
       <h1 className="text-base font-semibold">Служебная поддержка</h1>
       <select aria-label="Служебный бот" className="max-w-full rounded border bg-background p-2 text-sm" value={bot?.id || ''} onChange={e => { setOffset(0); updateRoute(e.target.value); }}>
         {!bot && <option value="">Выберите разрешённый канал</option>}
@@ -165,7 +171,7 @@ function SupportBotWorkspace() {
       <Button variant="outline" size="sm" onClick={() => setParams({ tab: 'inbox', support_mode: '1', channel: 'web' })}>Тикеты сайта</Button>
       <Button variant="ghost" size="sm" onClick={() => setParams({ tab: 'inbox' })}>Общий контакт-центр</Button>
     </header>
-    <p className="text-xs text-muted-foreground shrink-0">Только служебные боты. Просмотр и отправка ответа сохраняют вопрос открытым до явного решения.</p>
+    <p className={`${selectedUser ? 'hidden md:block' : ''} text-xs text-muted-foreground shrink-0`}>Только служебные боты. Просмотр и отправка ответа сохраняют вопрос открытым до явного решения.</p>
     {(channels.isError || dialogs.isError || detail.isError) && <p role="alert" className="text-sm text-destructive">Не удалось проверить канал или загрузить обращения. Отправка недоступна до повторной проверки.</p>}
     <div className="flex min-h-0 flex-1 gap-3">
       <aside className={`${selectedUser ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 min-h-0 flex-col gap-2`}>
@@ -185,9 +191,15 @@ function SupportBotWorkspace() {
         <Button variant="ghost" size="sm" className="md:hidden self-start" onClick={() => updateRoute(bot?.id)}>К списку</Button>
         {dialog && bot ? <>
           <div className="flex flex-wrap gap-2 items-center border-b pb-2 mb-2 shrink-0">
-            <span className="font-medium break-words">{dialog.display_name}</span>
+            <span className="min-w-0 flex-1 font-medium break-words">{dialog.display_name}</span>
             <span className="text-xs">{dialog.unread_count ? 'Требует ответа' : 'Решён'}</span>
             {dialog.assignee_name && <span className="text-xs">Ответственный: {dialog.assignee_name}</span>}
+            <Button size="sm" variant="outline" className="md:hidden" aria-expanded={actionsExpanded}
+              aria-controls="support-dialog-actions" onClick={() => setActionsExpanded(value => !value)}>Действия</Button>
+          </div>
+          {/* Keep management controls reachable without consuming the mobile
+              conversation height, especially while the keyboard is open. */}
+          <div id="support-dialog-actions" className={`${actionsExpanded ? 'flex' : 'hidden'} md:flex flex-wrap gap-2 items-center max-h-32 md:max-h-none overflow-y-auto shrink-0 mb-2`}>
             <select aria-label="Передать менеджеру" className="max-w-full rounded border bg-background p-1 text-xs" value={assignee} disabled={busy || notReady} onChange={e => setAssignee(e.target.value)}>
               <option value="">Выберите менеджера</option>
               {assignees.data?.map(person => <option key={person.user_id} value={person.user_id}>{person.display_name}</option>)}
