@@ -53,8 +53,17 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
     config: {} as Record<string, any>,
   });
 
+  const refreshBlocks = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin-room-blocks", liveEventId] });
+    queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId] });
+  };
+
   const { data: blocks, isLoading } = useQuery({
     queryKey: ["admin-room-blocks", liveEventId],
+    enabled: !!liveEventId,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
     queryFn: async () => {
       const { data, error } = await (supabase
         .from("live_event_room_blocks") as any)
@@ -81,7 +90,7 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-room-blocks", liveEventId] });
+      refreshBlocks();
       setAdding(false);
       setNewBlock({ block_type: "button", display_scope: "always", position: "under_video", config: {} });
       toast.success("Блок добавлен");
@@ -93,10 +102,13 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
       const { error } = await (supabase.from("live_event_room_blocks") as any)
         .update({ is_active, updated_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", id)
+        .select("id")
+        .single();
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-room-blocks", liveEventId] }),
+    onSuccess: refreshBlocks,
+    onError: (e: Error) => toast.error("Не удалось изменить видимость блока: " + e.message),
   });
 
   const deleteMutation = useMutation({
@@ -105,7 +117,7 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-room-blocks", liveEventId] });
+      refreshBlocks();
       toast.success("Блок удалён");
     },
     onError: (e: any) => toast.error("Ошибка: " + e.message),
@@ -137,6 +149,7 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
               <div className="flex items-center gap-2">
                 <Switch
                   checked={block.is_active}
+                  disabled={toggleMutation.isPending}
                   onCheckedChange={(v) => toggleMutation.mutate({ id: block.id, is_active: v })}
                 />
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => deleteMutation.mutate(block.id)}>

@@ -30,6 +30,13 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
 
   const { data: blocks } = useQuery({
     queryKey,
+    enabled: !!liveEventId,
+    // RLS hides inactive rows, so a viewer may never receive the UPDATE that
+    // turns a block off. Re-read the authorized list without reloading the room.
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
     queryFn: async () => {
       const { data, error } = await (supabase
         .from("live_event_room_blocks") as any)
@@ -59,10 +66,15 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
           filter: `live_event_id=eq.${liveEventId}`,
         },
         () => {
-          queryClient.invalidateQueries({ queryKey });
+          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId, position] });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Catch changes missed before the initial subscription or on reconnect.
+        if (status === "SUBSCRIBED") {
+          queryClient.invalidateQueries({ queryKey: ["room-blocks", liveEventId, position] });
+        }
+      });
     return () => {
       supabase.removeChannel(channel);
     };
