@@ -14,7 +14,7 @@ service="SELECT set_config('request.jwt.claim.role','service_role',false),set_co
 unlink="SELECT public.crm_company_unlink_billing_contact('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000041','Fixture race');"
 backfill="SELECT public.crm_company_backfill_billing_cld('00000000-0000-4000-8000-000000000021');"
 node scripts/company-billing-unlink/fixture.mjs --emit-fixture | psql -X -q -v ON_ERROR_STOP=1 >/dev/null
-psql -X -q -v ON_ERROR_STOP=1 -f supabase/migrations/20261103125859_crm_company_billing_contact_unlink.sql >/dev/null
+psql -X -q -v ON_ERROR_STOP=1 --single-transaction -f scripts/company-billing-unlink/schema-asset.sql >/dev/null
 
 wait_for_first_lock() {
   for _ in {1..100}; do

@@ -1,5 +1,4 @@
 -- Schema/API only. No existing contact or business data is changed on install.
-BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '60s';
 
@@ -45,6 +44,30 @@ BEGIN
     RAISE EXCEPTION 'canonical writer ACL drift';
   END IF;
 END $preflight$;
+
+-- Exact existing edit writers are dependencies, not replacements.
+DO $edit_preflight$
+DECLARE v_signature text; v_expected text; v_proc pg_catalog.pg_proc%ROWTYPE;
+BEGIN
+  FOR v_signature, v_expected IN VALUES
+    ('public.crm_company_update(uuid,text,text,text,text)', 'd4987d78874f7836916b6101d5d77d93'),
+    ('public.crm_company_update(uuid,text,text,text,text,text)', 'd7a545e6a38134ed2773e1a38c44a798')
+  LOOP
+    SELECT * INTO v_proc FROM pg_catalog.pg_proc WHERE oid = pg_catalog.to_regprocedure(v_signature);
+    IF NOT FOUND OR md5(v_proc.prosrc) IS DISTINCT FROM v_expected
+       OR NOT v_proc.prosecdef OR NOT COALESCE('search_path=public' = ANY(v_proc.proconfig), false) THEN
+      RAISE EXCEPTION 'canonical company edit writer drift: %', v_signature;
+    END IF;
+    IF NOT has_function_privilege('authenticated',v_signature,'EXECUTE')
+       OR has_function_privilege('anon',v_signature,'EXECUTE')
+       OR has_function_privilege('service_role',v_signature,'EXECUTE') THEN
+      RAISE EXCEPTION 'canonical company edit writer ACL drift: %', v_signature;
+    END IF;
+  END LOOP;
+  IF pg_catalog.to_regprocedure('public.crm_company_update(uuid,text,text,text,text,text,text,text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'company address overload already exists; inspect deployment before repeating';
+  END IF;
+END $edit_preflight$;
 
 -- The existing UI already names employee, but the registered-profile relation
 -- rejected it. Extend only its taxonomy; billing guards and all RLS/ACL stay.
@@ -600,4 +623,53 @@ BEGIN
 END
 $fn$;
 
-COMMIT;
+
+-- Admin-only address edit. The existing 5/6-argument writers remain unchanged.
+-- Expected old address prevents a stale list/dialog from overwriting fresh data.
+CREATE FUNCTION public.crm_company_update(
+  _id uuid, _full_name text, _short_name text, _email text, _phone text,
+  _legal_form text, _legal_address text, _expected_legal_address text
+) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_actor uuid := auth.uid();
+  v_row public.companies%ROWTYPE;
+  v_address text := NULLIF(btrim(_legal_address), '');
+  v_changed jsonb;
+  v_key text;
+BEGIN
+  IF v_actor IS NULL OR NOT COALESCE(
+    public.has_role_v2(v_actor,'admin') OR public.has_role_v2(v_actor,'super_admin'),false) THEN
+    RAISE EXCEPTION 'forbidden' USING ERRCODE='42501';
+  END IF;
+  IF v_address IS NULL OR length(v_address) > 2000 THEN
+    RAISE EXCEPTION 'legal address required (1..2000 characters)' USING ERRCODE='22023';
+  END IF;
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = pg_catalog.to_regprocedure('public.crm_company_update(uuid,text,text,text,text)')) IS DISTINCT FROM 'd4987d78874f7836916b6101d5d77d93'
+     OR (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = pg_catalog.to_regprocedure('public.crm_company_update(uuid,text,text,text,text,text)')) IS DISTINCT FROM 'd7a545e6a38134ed2773e1a38c44a798' THEN
+    RAISE EXCEPTION 'canonical company edit writer drift; review before editing' USING ERRCODE='23514';
+  END IF;
+  SELECT * INTO v_row FROM public.companies WHERE id=_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'company not found' USING ERRCODE='23503'; END IF;
+  IF v_row.status IS DISTINCT FROM 'active' OR v_row.merged_into_company_id IS NOT NULL THEN
+    RAISE EXCEPTION 'company is not active' USING ERRCODE='23514';
+  END IF;
+  IF v_row.legal_address IS DISTINCT FROM _expected_legal_address THEN
+    RAISE EXCEPTION 'company address changed; reload before editing' USING ERRCODE='23514';
+  END IF;
+  PERFORM public.crm_company_update(_id,_full_name,_short_name,_email,_phone,_legal_form);
+  IF v_row.legal_address IS NOT DISTINCT FROM v_address THEN RETURN _id; END IF;
+  v_changed := jsonb_build_object('legal_address',jsonb_build_object('from',v_row.legal_address,'to',v_address));
+  v_key := 'company.updated:' || _id::text || ':' || md5(v_changed::text);
+  UPDATE public.companies SET legal_address=v_address,updated_at=now(),updated_by=v_actor WHERE id=_id;
+  INSERT INTO public.audit_logs(actor_user_id,action,actor_type,entity_type,entity_id,meta)
+    VALUES(v_actor,'company.update','user','company',_id::text,jsonb_build_object('changed_fields',v_changed));
+  INSERT INTO public.crm_activity_log(activity_type,source_entity_id,source_entity_type,user_id,idempotency_key,metadata)
+    VALUES('company.updated',_id,'company',v_actor,v_key,jsonb_build_object('changed_fields',v_changed))
+    ON CONFLICT(idempotency_key) DO NOTHING;
+  PERFORM public._crm_company_emit_domain_event('company.updated.v1',_id,v_key,
+    jsonb_build_object('version',1,'company_id',_id,'changed_fields',v_changed,'occurred_at',now(),'actor_user_id',v_actor,'idempotency_key',v_key));
+  RETURN _id;
+END $$;
+REVOKE ALL ON FUNCTION public.crm_company_update(uuid,text,text,text,text,text,text,text) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.crm_company_update(uuid,text,text,text,text,text,text,text) TO authenticated;
+NOTIFY pgrst, 'reload schema';

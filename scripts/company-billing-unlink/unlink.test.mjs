@@ -45,7 +45,7 @@ try {
   same(executableLines(deployedBody),executableLines(documentedBody),'both explicitly accepted bodies have identical executable lines');
   await db.exec(fixtureSql());
   const beforeInstall = await snapshot([...protectedTables,'companies','client_legal_details_company_map','company_contacts','company_sync_queue','crm_activity_log','domain_events']);
-  await db.exec(read(migrationPath));
+  await db.exec('BEGIN;\n' + read(migrationPath) + '\nCOMMIT;');
   same(await snapshot(Object.keys(beforeInstall)), beforeInstall, 'schema install does not mutate existing rows');
 
   // Canonical ACLs are retained, including the deliberately service-only writer.
@@ -172,12 +172,46 @@ try {
   same(await scalar('SELECT count(*)::int AS value FROM public.company_contacts WHERE company_id=$1',[i.company]),2,'managed correction retains the two registered target profiles');
   same(await snapshot(protectedTables),beforeRestore,'managed unlink/restore preserves business data');
 
+  // The admin address overload is atomic with canonical name updates and never touches CLD/business rows.
+  const addressSignature = 'public.crm_company_update(uuid,text,text,text,text,text,text,text)';
+  same(await scalar("SELECT has_function_privilege('anon',$1,'EXECUTE') AS value",[addressSignature]),false,'anon cannot edit address');
+  same(await scalar("SELECT has_function_privilege('service_role',$1,'EXECUTE') AS value",[addressSignature]),false,'service cannot impersonate owner for address edit');
+  const protectedBeforeAddress = await snapshot([...protectedTables,'client_legal_details_company_map']);
+  const initialAddress = await scalar('SELECT legal_address AS value FROM companies WHERE id=$1',[i.company]);
+  const editAddress = (name='Renamed fixture',address='Fixture district, street 3',expected=initialAddress) =>
+    scalar('SELECT public.crm_company_update($1,$2,$3,$4,$5,$6,$7,$8) AS value',[i.company,name,'Short fixture',null,null,'ЧУП',address,expected]);
+  await reject(() => role('authenticated',null,() => editAddress()),/forbidden/,'missing actor is rejected');
+  await db.query("INSERT INTO fixture_roles VALUES ($1,'menedzher')",[i.otherUser]);
+  await reject(() => role('authenticated',i.otherUser,() => editAddress()),/forbidden/,'manager cannot use admin address overload');
+  await reject(() => admin(() => editAddress('Should not rename','new address','stale address')),/address changed/,'stale address rejected before name update');
+  await reject(() => admin(() => editAddress('Should not rename','  ')),/legal address required/,'blank address rejected');
+  await reject(() => admin(() => editAddress('','new address')),/full_name required/,'canonical failure rolls address back');
+  same(await admin(() => editAddress()),i.company,'admin edits address with actual session');
+  same(await scalar('SELECT legal_address AS value FROM companies WHERE id=$1',[i.company]),'Fixture district, street 3','address is saved');
+  same(await scalar('SELECT short_name AS value FROM companies WHERE id=$1',[i.company]),'Short fixture','canonical short name saved atomically');
+  same(await snapshot(Object.keys(protectedBeforeAddress)),protectedBeforeAddress,'address/name edit preserves CLD and protected business data');
+  await reject(() => admin(() => editAddress('Second rename','second address')),/address changed/,'replay with old address cannot overwrite new address');
+  await db.query("UPDATE companies SET status='archived' WHERE id=$1",[i.company]);
+  await reject(() => admin(() => editAddress('Archived rename','new address','Fixture district, street 3')),/not active/,'archived company rejects address edit');
+  await db.query("UPDATE companies SET status='active' WHERE id=$1",[i.company]);
+  same(await role('authenticated',i.otherUser,() => scalar('SELECT public.crm_company_update($1,$2,$3,$4,$5,$6) AS value',[i.company,'Manager edit','Short fixture',null,null,'ЧУП'])),i.company,'existing manager six-argument editor remains available');
+
+  const repeatedSync = await service(() => backfill());
+  same(repeatedSync.contact_suppressed,true,'repeat worker still suppresses payer after manual edits');
+  same(await scalar('SELECT legal_address AS value FROM companies WHERE id=$1',[i.company]),'Fixture district, street 3','repeat worker preserves manual district/address override');
+  same(await scalar('SELECT short_name AS value FROM companies WHERE id=$1',[i.company]),'Short fixture','repeat worker preserves manual short name override');
+  same(await snapshot(Object.keys(protectedBeforeAddress)),protectedBeforeAddress,'repeat worker preserves protected business rows after edits');
+
   // A drifted hosted schema must fail BEFORE creating any correction objects.
   await db.close();
   db = new PGlite();
   await db.exec(fixtureSql());
   const driftBaseline = await snapshot([...protectedTables,'companies','client_legal_details_company_map','company_contacts']);
   for (const [change, expected, reset] of [
+    ["GRANT EXECUTE ON FUNCTION public.crm_company_update(uuid,text,text,text,text) TO anon", /edit writer ACL drift/,
+      "REVOKE EXECUTE ON FUNCTION public.crm_company_update(uuid,text,text,text,text) FROM anon"],
+    ["ALTER FUNCTION public.crm_company_update(uuid,text,text,text,text,text) SECURITY INVOKER", /edit writer drift/,
+      "ALTER FUNCTION public.crm_company_update(uuid,text,text,text,text,text) SECURITY DEFINER"],
     ["GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) TO anon", /ACL drift/,
       "REVOKE EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) FROM anon"],
     ["ALTER FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) SECURITY INVOKER", /security configuration drift/,
@@ -189,7 +223,7 @@ try {
     [definition('20260719231416_b9fa502e-0849-4336-9bab-b9414eddc501.sql','crm_company_link_contact').replace('BEGIN\n','BEGIN\n  -- Fixture body drift.\n'), /canonical writer drift/, null]
   ]) {
     await db.exec(change);
-    await assert.rejects(() => db.exec(read(migrationPath)), expected); checks++;
+    await assert.rejects(() => db.exec('BEGIN;\n' + read(migrationPath) + '\nCOMMIT;'), expected); checks++;
     await db.exec('ROLLBACK');
     same(await scalar("SELECT to_regclass('public.crm_company_billing_link_suppressions')::text AS value"), null, 'drift leaves no partial schema');
     same(await snapshot(Object.keys(driftBaseline)), driftBaseline, 'drift leaves business rows unchanged');
