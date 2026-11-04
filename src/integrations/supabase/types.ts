@@ -6488,6 +6488,80 @@ export type Database = {
           },
         ]
       }
+      crm_company_billing_link_suppressions: {
+        Row: {
+          client_legal_details_id: string
+          company_id: string
+          contact_id: string
+          contact_snapshot: Json
+          created_at: string
+          created_by: string
+          id: string
+          map_id: string
+          profile_id: string
+          reason: string
+          revoked_at: string | null
+          revoked_by: string | null
+        }
+        Insert: {
+          client_legal_details_id: string
+          company_id: string
+          contact_id: string
+          contact_snapshot: Json
+          created_at?: string
+          created_by: string
+          id?: string
+          map_id: string
+          profile_id: string
+          reason: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Update: {
+          client_legal_details_id?: string
+          company_id?: string
+          contact_id?: string
+          contact_snapshot?: Json
+          created_at?: string
+          created_by?: string
+          id?: string
+          map_id?: string
+          profile_id?: string
+          reason?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_company_billing_link_suppressi_client_legal_details_id_fkey"
+            columns: ["client_legal_details_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_company_billing_link_suppressions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_company_billing_link_suppressions_map_id_fkey"
+            columns: ["map_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details_company_map"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_company_billing_link_suppressions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_deal_action_batches: {
         Row: {
           action: string
@@ -26221,6 +26295,10 @@ export type Database = {
         Returns: Json
       }
       crm_company_restore: { Args: { _id: string }; Returns: string }
+      crm_company_restore_billing_contact: {
+        Args: { _initiator_user_id?: string; _suppression_id: string }
+        Returns: Json
+      }
       crm_company_sheet_import_batch_apply: {
         Args: {
           _assignee_name?: string
@@ -26284,6 +26362,17 @@ export type Database = {
         Args: { _error?: string; _id: string; _status: string }
         Returns: undefined
       }
+      crm_company_unlink_billing_contact: {
+        Args: {
+          _client_legal_details_id: string
+          _company_id: string
+          _expected_contact_id: string
+          _initiator_user_id?: string
+          _profile_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
       crm_company_unlink_order: {
         Args: { _link_id: string; _reason: string }
         Returns: boolean
@@ -26304,6 +26393,19 @@ export type Database = {
               _email: string
               _full_name: string
               _id: string
+              _legal_form: string
+              _phone: string
+              _short_name: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              _email: string
+              _expected_legal_address: string
+              _full_name: string
+              _id: string
+              _legal_address: string
               _legal_form: string
               _phone: string
               _short_name: string
