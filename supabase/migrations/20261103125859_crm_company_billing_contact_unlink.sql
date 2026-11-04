@@ -12,8 +12,19 @@ BEGIN
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = pg_catalog.to_regprocedure('public.crm_company_backfill_billing_cld(uuid)')) IS DISTINCT FROM '4790edf5b068b8e3db32e0ed6571aa19' THEN
     RAISE EXCEPTION 'canonical writer drift: crm_company_backfill_billing_cld; review before installation';
   END IF;
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = pg_catalog.to_regprocedure('public.crm_company_upsert_from_billing(uuid)')) IS DISTINCT FROM 'bca55d5657e53ad4beab03ac9af9b983' THEN
+  -- Both repository bodies have identical executable lines. The deployed
+  -- 20260719221105 body omits comments present in 20260719235959; do not
+  -- overwrite it or accept an arbitrary new body on that basis.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc
+     WHERE oid = pg_catalog.to_regprocedure('public.crm_company_upsert_from_billing(uuid)')
+       AND md5(prosrc) IN ('bca55d5657e53ad4beab03ac9af9b983', '25975fbe8e69295d21c311df4a33844b')) THEN
     RAISE EXCEPTION 'canonical writer drift: crm_company_upsert_from_billing; review before installation';
+  END IF;
+  IF (SELECT pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
+       WHERE conrelid = 'public.company_contacts'::regclass
+         AND conname = 'company_contacts_relationship_type_check') IS DISTINCT FROM
+     $check$CHECK ((relationship_type = ANY (ARRAY['billing_contact'::text, 'signatory'::text, 'director'::text, 'representative'::text, 'external_contact'::text, 'other'::text])))$check$ THEN
+    RAISE EXCEPTION 'registered company contact role constraint drift';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid IN (
@@ -34,6 +45,15 @@ BEGIN
     RAISE EXCEPTION 'canonical writer ACL drift';
   END IF;
 END $preflight$;
+
+-- The existing UI already names employee, but the registered-profile relation
+-- rejected it. Extend only its taxonomy; billing guards and all RLS/ACL stay.
+-- No profile/contact is created by this migration.
+ALTER TABLE public.company_contacts
+  DROP CONSTRAINT company_contacts_relationship_type_check,
+  ADD CONSTRAINT company_contacts_relationship_type_check CHECK (relationship_type IN (
+    'billing_contact', 'signatory', 'director', 'representative', 'external_contact', 'other', 'employee'
+  ));
 
 -- Retain the map and the legal details. Archive only the mistaken CRM edge.
 -- RESTRICT deliberately prevents deletion/retargeting of its audit lineage.

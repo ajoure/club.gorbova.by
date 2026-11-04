@@ -4,7 +4,7 @@ const base = new URL('../../', import.meta.url);
 export const migrationPath = 'supabase/migrations/20261103125859_crm_company_billing_contact_unlink.sql';
 export const read = path => readFileSync(new URL(path, base), 'utf8');
 export const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-export const ids = { company: id(1), otherCompany: id(2), profile: id(11), otherProfile: id(12),
+export const ids = { company: id(1), otherCompany: id(2), profile: id(11), otherProfile: id(12), employeeProfile: id(13),
   actor: id(101), otherUser: id(102), cld: id(21), otherCld: id(22), map: id(31), otherMap: id(32),
   contact: id(41), otherContact: id(42) };
 
@@ -23,7 +23,9 @@ const phase1 = '20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql';
 const phase2 = '20260719214544_9aa2edb0-c9dc-4636-a1b4-711accf867c5.sql';
 const linker = '20260719231416_b9fa502e-0849-4336-9bab-b9414eddc501.sql';
 const backfill = '20260719230948_1f3e25ec-612e-4540-b2df-a216ed784464.sql';
-const upsert = '20260719235959_crm_company_billing_array_append_fix.sql';
+export const deployedUpsert = '20260719221105_7ba01396-e921-4be5-b180-2a770a98d708.sql';
+export const documentedUpsert = '20260719235959_crm_company_billing_array_append_fix.sql';
+const upsert = process.env.BILLING_UPSERT_VARIANT === 'documented' ? documentedUpsert : deployedUpsert;
 const enqueue = '20260721110000_crm_company_sync_enqueue_concurrency.sql';
 const trigger = '20260720070323_0c1bcc84-e47d-448a-b43d-72ea10d52ec9.sql';
 const table = (file, name) => read(`supabase/migrations/${file}`).match(
@@ -48,7 +50,7 @@ export function fixtureSql() {
       LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
       SELECT EXISTS (SELECT 1 FROM public.fixture_roles WHERE user_id = _uid AND role = _role) $$;
     CREATE TABLE public.profiles(id uuid PRIMARY KEY, user_id uuid);
-    INSERT INTO public.profiles VALUES ('${i.profile}', '${i.actor}'), ('${i.otherProfile}', '${i.otherUser}');
+    INSERT INTO public.profiles VALUES ('${i.profile}', '${i.actor}'), ('${i.otherProfile}', '${i.otherUser}'), ('${i.employeeProfile}','${id(103)}');
     INSERT INTO fixture_roles VALUES ('${i.actor}', 'admin');
     ${table('20260108223929_57f04b68-7af4-4037-a437-2b85491a5b80.sql', 'client_legal_details')}
     ALTER TABLE public.client_legal_details ADD COLUMN purpose text NOT NULL DEFAULT 'billing';

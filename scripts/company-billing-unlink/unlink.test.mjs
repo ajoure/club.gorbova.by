@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-import { definition, fixtureSql, ids as i, id, migrationPath, protectedTables, read } from './fixture.mjs';
+import { createHash } from 'node:crypto';
+import { definition, deployedUpsert, documentedUpsert, fixtureSql, ids as i, id, migrationPath, protectedTables, read } from './fixture.mjs';
 
 const { PGlite } = await import(process.env.PGLITE_MODULE
   ? pathToFileURL(process.env.PGLITE_MODULE).href : '@electric-sql/pglite');
@@ -31,6 +32,17 @@ const backfill = () => scalar('SELECT public.crm_company_backfill_billing_cld($1
 const count = () => scalar('SELECT count(*)::int AS value FROM public.company_contacts WHERE company_id=$1 AND profile_id=$2', [i.company,i.profile]);
 
 try {
+  const upsertBody = file => {
+    const source = definition(file,'crm_company_upsert_from_billing');
+    const tag = source.match(/AS (\$[\w]*\$)/)[1];
+    return source.slice(source.indexOf(`AS ${tag}`) + 3 + tag.length, source.lastIndexOf(`${tag};`));
+  };
+  const deployedBody = upsertBody(deployedUpsert), documentedBody = upsertBody(documentedUpsert);
+  same(createHash('md5').update(deployedBody).digest('hex'),'25975fbe8e69295d21c311df4a33844b','fixture matches observed live prosrc');
+  same(createHash('md5').update(documentedBody).digest('hex'),'bca55d5657e53ad4beab03ac9af9b983','documented repository body fingerprint retained');
+  // The complete diff contains only full-line comments and blank lines.
+  const executableLines = body => body.split('\n').filter(l => l.trim() && !l.trimStart().startsWith('--'));
+  same(executableLines(deployedBody),executableLines(documentedBody),'both explicitly accepted bodies have identical executable lines');
   await db.exec(fixtureSql());
   const beforeInstall = await snapshot([...protectedTables,'companies','client_legal_details_company_map','company_contacts','company_sync_queue','crm_activity_log','domain_events']);
   await db.exec(read(migrationPath));
@@ -126,6 +138,20 @@ try {
   await reject(() => admin(() => restore(sid)), /retry conflicts/, 'old restore cannot revoke later suppression');
   same(await count(), 0, 'later correction retained');
 
+  // Final requested shape: two existing registered profiles, both non-billing.
+  const linkPerson = (profile,relationship) => admin(() => scalar(
+    'SELECT public.crm_company_link_contact($1,$2,$3,false,\'manual\',null) AS value', [i.company,profile,relationship]));
+  const directorId = await linkPerson(i.otherProfile,'director');
+  const employeeId = await linkPerson(i.employeeProfile,'employee');
+  same(await linkPerson(i.otherProfile,'director'),directorId,'director link retry is idempotent');
+  same(await linkPerson(i.employeeProfile,'employee'),employeeId,'employee link retry is idempotent');
+  same((await db.query('SELECT profile_id,relationship_type,is_billing_contact FROM public.company_contacts WHERE company_id=$1 ORDER BY profile_id',[i.company])).rows,
+    [{profile_id:i.otherProfile,relationship_type:'director',is_billing_contact:false},
+      {profile_id:i.employeeProfile,relationship_type:'employee',is_billing_contact:false}], 'exactly two target registered profiles and no administrator');
+  await service(backfill);
+  same(await scalar('SELECT count(*)::int AS value FROM public.company_contacts WHERE company_id=$1',[i.company]),2,'sync keeps exactly two target profiles');
+  same(await snapshot(protectedTables),beforeRestore,'linking the two existing profiles preserves all business data');
+
   // A drifted hosted schema must fail BEFORE creating any correction objects.
   await db.close();
   db = new PGlite();
@@ -136,6 +162,10 @@ try {
       "REVOKE EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) FROM anon"],
     ["ALTER FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) SECURITY INVOKER", /security configuration drift/,
       "ALTER FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) SECURITY DEFINER"],
+    [definition(deployedUpsert,'crm_company_upsert_from_billing').replace('BEGIN\n','BEGIN\n  PERFORM 1; -- Unknown executable body.\n'), /canonical writer drift: crm_company_upsert_from_billing/,
+      definition(deployedUpsert,'crm_company_upsert_from_billing')],
+    ["ALTER TABLE public.company_contacts DROP CONSTRAINT company_contacts_relationship_type_check; ALTER TABLE public.company_contacts ADD CONSTRAINT company_contacts_relationship_type_check CHECK (relationship_type IN ('billing_contact','director','other'))", /role constraint drift/,
+      "ALTER TABLE public.company_contacts DROP CONSTRAINT company_contacts_relationship_type_check; ALTER TABLE public.company_contacts ADD CONSTRAINT company_contacts_relationship_type_check CHECK (relationship_type IN ('billing_contact','signatory','director','representative','external_contact','other'))"],
     [definition('20260719231416_b9fa502e-0849-4336-9bab-b9414eddc501.sql','crm_company_link_contact').replace('BEGIN\n','BEGIN\n  -- Fixture body drift.\n'), /canonical writer drift/, null]
   ]) {
     await db.exec(change);
@@ -145,5 +175,5 @@ try {
     same(await snapshot(Object.keys(driftBaseline)), driftBaseline, 'drift leaves business rows unchanged');
     if (reset) await db.exec(reset);
   }
-  console.log(`PASS: ${checks} database assertions; synthetic data only; no production connection`);
+  console.log(`PASS: ${checks} database assertions (${process.env.BILLING_UPSERT_VARIANT ?? 'deployed'} upsert); synthetic data only; no production connection`);
 } finally { await db.close(); }
