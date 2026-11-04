@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 const base = new URL('../../', import.meta.url);
-export const migrationPath = 'supabase/migrations/20261103125859_crm_company_billing_contact_unlink.sql';
+export const migrationPath = 'scripts/company-billing-unlink/schema-asset.sql';
 export const read = path => readFileSync(new URL(path, base), 'utf8');
 export const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 export const ids = { company: id(1), otherCompany: id(2), profile: id(11), otherProfile: id(12), employeeProfile: id(13),
@@ -67,6 +67,7 @@ export function fixtureSql() {
     CREATE TABLE public.audit_logs(actor_user_id uuid, action text, actor_type text, entity_type text, entity_id text, meta jsonb);
     CREATE TABLE public.domain_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_type text,source text,entity_id uuid,payload jsonb);
     ${definition(phase2, '_crm_company_emit_domain_event')}
+    ${read('supabase/migrations/20260721133000_crm_company_edit_runtime_repair.sql')}
     ${definition(phase2, '_crm_company_resolve_or_create_internal')}
     ${definition(phase2, 'crm_company_merge')}
     ${definition(linker, 'crm_company_link_contact')}

@@ -46,6 +46,8 @@ import {
   FileText,
 } from "lucide-react";
 
+import { EditCompanyDialog } from "@/components/admin/companies/EditCompanyDialog";
+import { BillingContactUnlink, RegisteredCompanyContactForm } from "@/components/admin/companies/CompanyContactActions";
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -182,6 +184,7 @@ interface CompanyContact {
   source: "billing_requisites" | "manual" | "import" | "call_center" | "admin_link" | "document_review" | string;
   is_billing_contact: boolean;
   is_primary: boolean;
+  source_client_legal_details_map_id: string | null;
   external_full_name: string | null;
   external_email: string | null;
   external_phone: string | null;
@@ -368,7 +371,6 @@ const kindLabels: Record<CompanyKind, string> = {
   unknown: "Не определён",
 };
 
-const COMPANY_LEGAL_FORMS = ["ООО", "ОДО", "ЗАО", "ОАО", "ПАО", "АО", "СООО", "ИООО", "СЗАО", "УП", "ЧУП", "КУП", "РУП", "ТУП", "ПК", "ТДО", "ТОО", "МУП", "ФГУП", "ГП"];
 
 const contactPersonRoleLabels: Record<string, string> = {
   director: "Директор",
@@ -1246,65 +1248,6 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
   );
 }
 
-function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
-  company: CompanyListItem | null;
-  open?: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
-}) {
-  const [fullName, setFullName] = useState("");
-  const [shortName, setShortName] = useState("");
-  const [legalForm, setLegalForm] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-
-  useEffect(() => {
-    if (!company) return;
-    setFullName(normalizeCompanyName(company.full_name));
-    setShortName(normalizeCompanyName(company.short_name ?? ""));
-    setLegalForm(company.legal_form || inferCompanyLegalForm(company.full_name) || "");
-    setEmail(company.email ?? "");
-    setPhone(normalizeCompanyPhone(company.phone, company.country) ?? "");
-  }, [company]);
-
-  const updateCompany = useMutation({
-    mutationFn: async () => {
-      if (!company) return;
-      const { error } = await supabase.rpc("crm_company_update", {
-        _id: company.id,
-        _full_name: normalizeCompanyName(fullName),
-        _short_name: normalizeCompanyName(shortName) || null,
-        _email: email,
-        _phone: normalizeCompanyPhone(phone, company.country),
-        _legal_form: legalForm || null,
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => { toast.success("Компания обновлена"); onSaved(); },
-    onError: (error: Error) => toast.error(error.message || "Не удалось обновить компанию"),
-  });
-
-  return (
-    <Dialog open={open ?? !!company} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={(event) => { event.preventDefault(); if (!fullName.trim()) return toast.error("Укажите название"); updateCompany.mutate(); }}>
-          <DialogHeader><DialogTitle>Редактировать компанию</DialogTitle><DialogDescription>Изменения сохраняются в канонической записи компании.</DialogDescription></DialogHeader>
-          <div className="grid gap-4 py-5">
-            <label className="grid gap-2 text-sm font-medium">Полное название<Input value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
-            <label className="grid gap-2 text-sm font-medium">Короткое название<Input value={shortName} onChange={(event) => setShortName(event.target.value)} /></label>
-            {company?.company_kind !== "entrepreneur" && <label className="grid gap-2 text-sm font-medium">Организационная форма<Select value={legalForm || "none"} onValueChange={(value) => setLegalForm(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Выберите ОПФ" /></SelectTrigger><SelectContent><SelectItem value="none">Не указана</SelectItem>{COMPANY_LEGAL_FORMS.map((form) => <SelectItem key={form} value={form}>{form}</SelectItem>)}</SelectContent></Select></label>}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-medium">Email<Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label>
-              <label className="grid gap-2 text-sm font-medium">Телефон<Input value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
-            </div>
-            <p className="text-xs text-muted-foreground">Статус меняется отдельными действиями «Архивировать» и «Объединить», чтобы не обходить CRM-инварианты.</p>
-          </div>
-          <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button><Button type="submit" disabled={updateCompany.isPending}>{updateCompany.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { company: any; onRefreshRegistry?: () => void; isRefreshing?: boolean }) {
   const isEntrepreneur = company.company_kind === "entrepreneur";
@@ -1362,6 +1305,8 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
   onOpenCompany?: (companyId: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const access = useAdminAccess();
+  const canManageContacts = !access.isLoading && (access.isAdmin || access.isSuperAdmin);
   const { data: staff = [] } = useStaffOptions();
   const staffNameById = useMemo(() => new Map(staff.map((item) => [item.user_id, item.label])), [staff]);
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
@@ -1395,12 +1340,19 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
     queryFn: async (): Promise<CompanyContact[]> => {
       const { data, error } = await supabase
         .from("company_contacts")
-        .select("id, profile_id, relationship_type, source, is_billing_contact, is_primary, external_full_name, external_email, external_phone")
+        .select("id, profile_id, relationship_type, source, is_billing_contact, is_primary, source_client_legal_details_map_id, external_full_name, external_email, external_phone")
         .eq("company_id", companyId!);
       if (error) throw error;
       return data as CompanyContact[];
     },
   });
+
+  const refreshContacts = async () => {
+    const result = await contactsQuery.refetch();
+    if (result.error) throw result.error;
+    await queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+    await queryClient.invalidateQueries({ queryKey: ["admin-company", companyId] });
+  };
 
   const profileIds = useMemo(
     () => (contactsQuery.data ?? []).flatMap((contact) => contact.profile_id ? [contact.profile_id] : []),
@@ -1851,12 +1803,13 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!contactsQuery.isLoading && !contactPersonsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && (contactPersonsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
-                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = getContactDisplayName(profile?.full_name, contact.external_full_name); const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; const relLabel = companyContactRelationshipLabels[contact.relationship_type] || contact.relationship_type; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{relLabel}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Плательщик</Badge>}</div></div></div>; })}
+                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = getContactDisplayName(profile?.full_name, contact.external_full_name); const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; const relLabel = companyContactRelationshipLabels[contact.relationship_type] || contact.relationship_type; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{relLabel}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Плательщик</Badge>}</div></div><BillingContactUnlink companyId={company.id} contact={contact} canManage={canEdit && canManageContacts} onChanged={refreshContacts} /></div>; })}
                   {((contactsQuery.data?.length ?? 0) > 0 && (contactPersonsQuery.data?.length ?? 0) > 0) && <Separator />}
                   {(contactPersonsQuery.data?.length ?? 0) > 0 && <div className="text-sm font-medium text-muted-foreground">Контактные лица</div>}
                   {contactPersonsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {contactPersonsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Реестр контактных лиц временно недоступен.</div>}
                   {(contactPersonsQuery.data ?? []).map((person) => <div key={person.link_id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><UserRound className="h-4 w-4 text-muted-foreground" /><span className="font-medium">{person.full_name}</span><Badge variant="outline">{contactPersonRoleLabels[person.role] || person.role}</Badge>{person.profile_id ? <Badge variant="secondary">Профиль подтверждён</Badge> : <Badge variant="secondary">Внешняя персона</Badge>}</div>{person.job_title && <div className="mt-1 text-xs text-muted-foreground">{person.job_title}</div>}{(person.email || person.phone) && <div className="mt-1 text-xs text-muted-foreground">{[person.email, person.phone].filter(Boolean).join(" · ")}</div>}</div><span className="shrink-0 text-xs text-muted-foreground">с {formatDate(person.valid_from)}</span></div></div>)}
+                  {canEdit && canManageContacts && <RegisteredCompanyContactForm companyId={company.id} contacts={contactsQuery.data ?? []} onChanged={refreshContacts} />}
                   {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (personFullName.trim()) upsertContactPerson.mutate(); }}><div className="text-sm font-medium">Добавить контактное лицо</div><div className="grid gap-2 sm:grid-cols-2"><Input value={personFullName} onChange={(event) => setPersonFullName(event.target.value)} placeholder="Имя и фамилия" /><Input value={personTitle} onChange={(event) => setPersonTitle(event.target.value)} placeholder="Должность (необязательно)" /><Input value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="Email (необязательно)" /><Input value={personPhone} onChange={(event) => setPersonPhone(event.target.value)} placeholder="Телефон (необязательно)" /></div><div className="flex gap-2"><Select value={personRole} onValueChange={setPersonRole}><SelectTrigger className="flex-1"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(contactPersonRoleLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="submit" size="sm" disabled={upsertContactPerson.isPending || !personFullName.trim()}>{upsertContactPerson.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></div></form>}
                 </TabsContent>
                 <TabsContent value="structure" className="mt-0 space-y-3">

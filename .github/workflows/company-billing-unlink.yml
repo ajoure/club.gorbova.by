@@ -3,7 +3,8 @@ name: Company billing contact unlink
 on:
   pull_request:
     paths:
-      - 'supabase/migrations/20261103125859_crm_company_billing_contact_unlink.sql'
+      - 'src/components/admin/companies/**'
+      - 'src/pages/admin/AdminCompanies.tsx'
       - 'scripts/company-billing-unlink/**'
       - '.github/workflows/company-billing-unlink.yml'
   workflow_dispatch:
