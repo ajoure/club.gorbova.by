@@ -1,0 +1,58 @@
+name: Company billing contact unlink
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/20261103125859_crm_company_billing_contact_unlink.sql'
+      - 'scripts/company-billing-unlink/**'
+      - '.github/workflows/company-billing-unlink.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preservation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install isolated PostgreSQL fixture runtime
+        run: npm install --prefix "$RUNNER_TEMP/billing-unlink" --no-audit --no-fund @electric-sql/pglite@0.5.8
+      - name: Verify preservation, replay, access control and restore
+        run: PGLITE_MODULE="$RUNNER_TEMP/billing-unlink/node_modules/@electric-sql/pglite/dist/index.js" node scripts/company-billing-unlink/unlink.test.mjs
+      - name: Verify the documented comment-only upsert variant
+        run: BILLING_UPSERT_VARIANT=documented PGLITE_MODULE="$RUNNER_TEMP/billing-unlink/node_modules/@electric-sql/pglite/dist/index.js" node scripts/company-billing-unlink/unlink.test.mjs
+  concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: unlink_fixture
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify real concurrent sessions in both lock orders
+        env:
+          BILLING_UNLINK_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGDATABASE: unlink_fixture
+          PGPASSWORD: fixture-only-password
+        run: bash scripts/company-billing-unlink/concurrency.sh
