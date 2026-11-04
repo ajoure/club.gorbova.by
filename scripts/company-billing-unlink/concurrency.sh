@@ -47,3 +47,6 @@ link="SELECT public.crm_company_link_contact('00000000-0000-4000-8000-0000000000
 race "$admin $link" "$admin $unlink" linker-first
 query "$admin SELECT public.crm_company_restore_billing_contact(id) FROM public.crm_company_billing_link_suppressions WHERE revoked_at IS NULL;" >/dev/null
 race "$admin $unlink" "$admin $link" unlink-before-linker
+query "$admin SELECT public.crm_company_restore_billing_contact(id) FROM public.crm_company_billing_link_suppressions WHERE revoked_at IS NULL;" >/dev/null
+managed_unlink="SELECT public.crm_company_unlink_billing_contact('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000041','Fixture managed race','00000000-0000-4000-8000-000000000101');"
+race "$service $managed_unlink" "$service $backfill" managed-service-unlink-first

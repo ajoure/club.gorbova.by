@@ -49,8 +49,8 @@ try {
   same(await snapshot(Object.keys(beforeInstall)), beforeInstall, 'schema install does not mutate existing rows');
 
   // Canonical ACLs are retained, including the deliberately service-only writer.
-  same(await scalar("SELECT has_function_privilege('anon','public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text)','EXECUTE') AS value"), false, 'anon cannot call unlink');
-  same(await scalar("SELECT has_function_privilege('service_role','public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text)','EXECUTE') AS value"), false, 'service has no human correction entrypoint');
+  same(await scalar("SELECT has_function_privilege('anon','public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text,uuid)','EXECUTE') AS value"), false, 'anon cannot call unlink');
+  same(await scalar("SELECT has_function_privilege('service_role','public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text,uuid)','EXECUTE') AS value"), true, 'managed service has a guarded correction entrypoint');
   same(await scalar("SELECT has_function_privilege('service_role','public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)','EXECUTE') AS value"), false, 'linker ACL retained');
   same(await scalar("SELECT has_function_privilege('service_role','public.crm_company_backfill_billing_cld(uuid)','EXECUTE') AS value"), true, 'backfill ACL retained');
   for (const [name, actor] of [['anon',null], ['authenticated',null], ['authenticated',i.otherUser], ['service_role',null]]) {
@@ -151,6 +151,26 @@ try {
   await service(backfill);
   same(await scalar('SELECT count(*)::int AS value FROM public.company_contacts WHERE company_id=$1',[i.company]),2,'sync keeps exactly two target profiles');
   same(await snapshot(protectedTables),beforeRestore,'linking the two existing profiles preserves all business data');
+
+  // Managed execution uses the service identity and an audited administrator
+  // initiator; it never changes auth claims or signs in as another person.
+  const initiatedUnlink = initiator => scalar('SELECT public.crm_company_unlink_billing_contact($1,$2,$3,$4,$5,$6) AS value',
+    [i.company,i.profile,i.cld,i.contact,'Fixture managed operation',initiator]);
+  const initiatedRestore = (suppression,initiator) => scalar('SELECT public.crm_company_restore_billing_contact($1,$2) AS value',[suppression,initiator]);
+  await reject(() => service(() => initiatedUnlink(i.otherUser)), /forbidden/, 'service cannot name a nonadmin initiator');
+  await reject(() => admin(() => initiatedUnlink(i.otherUser)), /override interactive initiator/, 'interactive caller cannot impersonate an initiator');
+  await reject(() => service(() => restore(second.suppression_id)), /forbidden/, 'managed restore requires an explicit initiator');
+  await reject(() => service(() => initiatedRestore(second.suppression_id,i.otherUser)), /forbidden/, 'managed restore rejects a nonadmin initiator');
+  await reject(() => admin(() => initiatedRestore(second.suppression_id,i.otherUser)), /override interactive initiator/, 'interactive restore cannot impersonate an initiator');
+  await service(() => initiatedRestore(second.suppression_id,i.actor));
+  const managed = await service(() => initiatedUnlink(i.actor));
+  same(managed.unlinked,1,'managed correction is executable without an owner JWT');
+  same(await service(() => scalar('SELECT auth.uid() AS value')),null,'service retains its own null user identity');
+  same(await scalar("SELECT metadata->>'execution_role' AS value FROM public.crm_activity_log WHERE idempotency_key=$1",['company.billing_contact_unlinked:'+managed.suppression_id]),'service_role','audit distinguishes service execution');
+  same(await scalar('SELECT created_by AS value FROM public.crm_company_billing_link_suppressions WHERE id=$1',[managed.suppression_id]),i.actor,'verified admin initiator is recorded');
+  same(await count(),0,'managed replay leaves administrator unlinked');
+  same(await scalar('SELECT count(*)::int AS value FROM public.company_contacts WHERE company_id=$1',[i.company]),2,'managed correction retains the two registered target profiles');
+  same(await snapshot(protectedTables),beforeRestore,'managed unlink/restore preserves business data');
 
   // A drifted hosted schema must fail BEFORE creating any correction objects.
   await db.close();

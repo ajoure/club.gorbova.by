@@ -126,10 +126,11 @@ CREATE TRIGGER crm_company_guard_suppressed_billing_map
 
 CREATE FUNCTION public.crm_company_unlink_billing_contact(
   _company_id uuid, _profile_id uuid, _client_legal_details_id uuid,
-  _expected_contact_id uuid, _reason text
+  _expected_contact_id uuid, _reason text, _initiator_user_id uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-  v_actor uuid := auth.uid();
+  v_service boolean := COALESCE(auth.role() = 'service_role', false);
+  v_actor uuid;
   v_cld public.client_legal_details%ROWTYPE;
   v_company public.companies%ROWTYPE;
   v_map public.client_legal_details_company_map%ROWTYPE;
@@ -138,6 +139,14 @@ DECLARE
   v_id uuid;
   v_count integer;
 BEGIN
+  -- Managed Lovable Cloud operations use their existing service identity.
+  -- Require an explicit administrator initiator instead of fabricating a user
+  -- JWT/auth.uid(). Interactive calls always retain their actual auth.uid().
+  v_actor := CASE WHEN v_service THEN _initiator_user_id ELSE auth.uid() END;
+  IF NOT v_service AND _initiator_user_id IS NOT NULL
+     AND _initiator_user_id IS DISTINCT FROM v_actor THEN
+    RAISE EXCEPTION 'forbidden: cannot override interactive initiator' USING ERRCODE = '42501';
+  END IF;
   IF v_actor IS NULL OR NOT COALESCE(public.has_role_v2(v_actor, 'admin')
        OR public.has_role_v2(v_actor, 'super_admin'), false) THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
@@ -201,22 +210,29 @@ BEGIN
   INSERT INTO public.crm_activity_log(activity_type, source_entity_id, source_entity_type, user_id, idempotency_key, metadata)
     VALUES ('company.billing_contact_unlinked', _company_id, 'company', v_actor,
             'company.billing_contact_unlinked:' || v_id::text,
-            jsonb_build_object('suppression_id', v_id, 'contact_id', _expected_contact_id));
+            jsonb_build_object('suppression_id', v_id, 'contact_id', _expected_contact_id,
+              'execution_role', auth.role(), 'initiator_user_id', v_actor));
   RETURN jsonb_build_object('suppression_id', v_id, 'unlinked', v_count, 'already_unlinked', false);
 END $$;
-REVOKE ALL ON FUNCTION public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text) TO authenticated;
+REVOKE ALL ON FUNCTION public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text,uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.crm_company_unlink_billing_contact(uuid,uuid,uuid,uuid,text,uuid) TO authenticated, service_role;
 
-CREATE FUNCTION public.crm_company_restore_billing_contact(_suppression_id uuid)
+CREATE FUNCTION public.crm_company_restore_billing_contact(_suppression_id uuid, _initiator_user_id uuid DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-  v_actor uuid := auth.uid();
+  v_service boolean := COALESCE(auth.role() = 'service_role', false);
+  v_actor uuid;
   v_s public.crm_company_billing_link_suppressions%ROWTYPE;
   v_contact public.company_contacts%ROWTYPE;
   v_owner uuid;
   v_company uuid;
   v_status text;
 BEGIN
+  v_actor := CASE WHEN v_service THEN _initiator_user_id ELSE auth.uid() END;
+  IF NOT v_service AND _initiator_user_id IS NOT NULL
+     AND _initiator_user_id IS DISTINCT FROM v_actor THEN
+    RAISE EXCEPTION 'forbidden: cannot override interactive initiator' USING ERRCODE = '42501';
+  END IF;
   IF v_actor IS NULL OR NOT COALESCE(public.has_role_v2(v_actor, 'admin')
        OR public.has_role_v2(v_actor, 'super_admin'), false) THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
@@ -258,11 +274,12 @@ BEGIN
   INSERT INTO public.crm_activity_log(activity_type, source_entity_id, source_entity_type, user_id, idempotency_key, metadata)
     VALUES ('company.billing_contact_restored', v_s.company_id, 'company', v_actor,
             'company.billing_contact_restored:' || v_s.id::text,
-            jsonb_build_object('suppression_id', v_s.id, 'contact_id', v_s.contact_id));
+            jsonb_build_object('suppression_id', v_s.id, 'contact_id', v_s.contact_id,
+              'execution_role', auth.role(), 'initiator_user_id', v_actor));
   RETURN jsonb_build_object('contact_id', v_s.contact_id, 'restored', 1, 'already_restored', false);
 END $$;
-REVOKE ALL ON FUNCTION public.crm_company_restore_billing_contact(uuid) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.crm_company_restore_billing_contact(uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.crm_company_restore_billing_contact(uuid,uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.crm_company_restore_billing_contact(uuid,uuid) TO authenticated, service_role;
 
 -- Canonical writers, with only the suppression check/result change.
 CREATE OR REPLACE FUNCTION public.crm_company_link_contact(
