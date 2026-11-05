@@ -6,6 +6,7 @@ const consumers = [
   "src/components/admin/communication/OlegSettingsSection.tsx",
   "src/components/admin/communication/BroadcastsTabContent.tsx",
   "src/hooks/useClubAdmins.ts",
+  "src/hooks/useUnifiedInbox.ts",
 ];
 
 describe("operational Telegram bot RPC projection contract", () => {

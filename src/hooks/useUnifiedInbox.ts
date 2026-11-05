@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
@@ -12,6 +13,7 @@ import {
 } from "@/lib/telegramBusinessIdentity";
 import {
   mergeTelegramWorkQueue,
+  getTelegramQueueContextMessageId,
   type TelegramUnansweredSummary,
 } from "@/lib/contactCenterTelegramQueue";
 import { formatContactName } from "@/lib/nameUtils";
@@ -274,34 +276,57 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     [tgRows, tgWorkSummaries, serverSearch],
   );
 
-  const tgLastMessageIds = useMemo(
-    () => Array.from(new Set(tgQueue.map((item) => item.dialog?.last_message_id).filter(Boolean))) as string[],
+  const tgContextMessageIds = useMemo(
+    () => Array.from(new Set(tgQueue.map(getTelegramQueueContextMessageId).filter(Boolean))).sort() as string[],
     [tgQueue],
   );
-  const tgLastMessageIdentities = useQuery({
-    queryKey: ["unified-tg-last-message-identities", tgLastMessageIds],
-    enabled: enabled && tgLastMessageIds.length > 0,
+  const tgContextMessageIdentities = useQuery({
+    queryKey: ["unified-tg-context-message-identities", tgContextMessageIds],
+    enabled: enabled && tgContextMessageIds.length > 0,
     staleTime: 30_000,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const batches: string[][] = [];
+      for (let offset = 0; offset < tgContextMessageIds.length; offset += 50) {
+        batches.push(tgContextMessageIds.slice(offset, offset + 50));
+      }
+      const results = await Promise.all(batches.map((ids) => supabase
         .from("telegram_messages")
-        .select("id, transport, business_account_id")
-        .in("id", tgLastMessageIds);
-      if (error) throw error;
-      return (data || []) as Array<{
+        .select("id, transport, bot_id, business_account_id")
+        .in("id", ids)));
+      for (const result of results) if (result.error) throw result.error;
+      return results.flatMap((result) => result.data || []) as Array<{
         id: string;
         transport: "bot" | "business";
+        bot_id: string | null;
         business_account_id: string | null;
       }>;
     },
   });
+  const tgContextBotIds = useMemo(
+    () => Array.from(new Set((tgContextMessageIdentities.data || [])
+      .filter((identity) => identity.transport === "bot")
+      .map((identity) => identity.bot_id)
+      .filter((id): id is string => !!id))).sort(),
+    [tgContextMessageIdentities.data],
+  );
+  const tgContextBots = useQuery({
+    queryKey: ["telegram-bots-for-chat"],
+    enabled: enabled && tgContextBotIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await operationalSupabase.rpc("list_operational_telegram_bots")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data || [];
+    },
+  });
   const tgBusinessAccountIds = useMemo(
     () => Array.from(new Set(
-      (tgLastMessageIdentities.data || [])
+      (tgContextMessageIdentities.data || [])
         .map((row) => row.business_account_id)
         .filter((id): id is string => !!id),
     )),
-    [tgLastMessageIdentities.data],
+    [tgContextMessageIdentities.data],
   );
   const tgBusinessAccounts = useQuery({
     queryKey: ["unified-tg-business-accounts", tgBusinessAccountIds],
@@ -585,11 +610,12 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     const tgUnansweredMap = new Map<string, any>();
     (tgUnanswered.data || []).forEach((item: any) => tgUnansweredMap.set(item.user_id, item));
     const tgMessageIdentityMap = new Map(
-      (tgLastMessageIdentities.data || []).map((row) => [row.id, row]),
+      (tgContextMessageIdentities.data || []).map((row) => [row.id, row]),
     );
     const tgBusinessAccountMap = new Map(
       (tgBusinessAccounts.data || []).map((account) => [account.id, account]),
     );
+    const tgContextBotMap = new Map((tgContextBots.data || []).map((bot) => [bot.id, bot]));
 
     const out: UnifiedDialog[] = [];
 
@@ -603,20 +629,24 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       // An unresolved/failed identity read is not a confirmed unlinked contact.
       if (!p && !tgProfiles.isSuccess) continue;
       const pref = tgPrefMap.get(userId);
-      const latestIdentity = d?.last_message_id
-        ? tgMessageIdentityMap.get(d.last_message_id)
+      const contextMessageId = getTelegramQueueContextMessageId(queueItem);
+      const contextIdentity = contextMessageId
+        ? tgMessageIdentityMap.get(contextMessageId)
         : null;
-      const businessAccount = latestIdentity?.business_account_id
-        ? tgBusinessAccountMap.get(latestIdentity.business_account_id) ?? null
+      const businessAccount = contextIdentity?.business_account_id
+        ? tgBusinessAccountMap.get(contextIdentity.business_account_id) ?? null
         : null;
       const canonicalName = p ? formatContactName(p) : "—";
+      const contextBot = contextIdentity?.bot_id ? tgContextBotMap.get(contextIdentity.bot_id) : null;
+      const dialogMatchesContextBot = contextIdentity?.bot_id && contextIdentity.bot_id === d?.last_bot_id;
       // Until the identity read completes, prefer a neutral Telegram badge
       // over briefly showing the connected bot for a personal conversation.
-      const sourceLabel = !latestIdentity
+      const sourceLabel = !contextIdentity
         ? null
-        : latestIdentity.transport === "business"
+        : contextIdentity.transport === "business"
           ? getTelegramPersonalChannelLabel(businessAccount)
-          : d?.last_bot_name || d?.last_bot_username || null;
+          : contextBot?.bot_name || contextBot?.bot_username ||
+            (dialogMatchesContextBot ? d?.last_bot_name || d?.last_bot_username : null) || null;
       out.push({
         key: `tg:${userId}`,
         source: "telegram",
@@ -731,8 +761,9 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
   }, [
     enabled,
     tgQueue,
-    tgLastMessageIdentities.data,
+    tgContextMessageIdentities.data,
     tgBusinessAccounts.data,
+    tgContextBots.data,
     retainedTgProfiles,
     tgProfiles.isSuccess,
     tgPrefs.data,
@@ -886,7 +917,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       Object.values(loadingBySource).some(Boolean),
     loadingBySource,
     errors: {
-      telegram: (tg.error || tgUnanswered.error || tgProfiles.error) as Error | null,
+      telegram: (tg.error || tgUnanswered.error || tgProfiles.error || tgContextMessageIdentities.error || tgContextBots.error || tgBusinessAccounts.error) as Error | null,
       instagram: igDialogs.error as Error | null,
       support: support.error as Error | null,
     },

@@ -36,8 +36,8 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(contactTelegramChatSource).toContain("msg.business_account_id ?? null");
     expect(contactTelegramChatSource).toContain("admin_get_telegram_channel_messages_v1");
     expect(unifiedInboxHookSource).toContain("getTelegramPersonalChannelLabel");
-    expect(unifiedInboxHookSource).toContain("latestIdentity.transport === \"business\"");
-    expect(sourceBadgeSource).toContain('label?.includes("личный Telegram")');
+    expect(unifiedInboxHookSource).toContain("contextIdentity.transport === \"business\"");
+    expect(sourceBadgeSource).toContain("getTelegramSourceBadgeText");
   });
 
   it("validates an explicitly selected personal sender against the dialog", () => {

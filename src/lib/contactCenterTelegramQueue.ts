@@ -11,6 +11,13 @@ export interface TelegramQueueItem<TDialog extends { user_id: string }> {
   unanswered: TelegramUnansweredSummary | null;
 }
 
+/** An open/assigned incoming question identifies its destination even after a broadcast. */
+export function getTelegramQueueContextMessageId(
+  item: TelegramQueueItem<{ user_id: string; last_message_id?: string | null }>,
+): string | null {
+  return item.unanswered?.oldest_message_id || item.dialog?.last_message_id || null;
+}
+
 /**
  * The regular inbox RPC is paginated, while the unanswered RPC returns the
  * complete work queue. Keep the fast first page, then add lightweight rows for
