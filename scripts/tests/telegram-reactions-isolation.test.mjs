@@ -149,7 +149,7 @@ async function check(name,body){
 async function inbound(rows=[message()],options={}) {
  const mock=dbMock({telegram_bots:bots,telegram_messages:rows,profiles:[{user_id:'client-X',telegram_user_id:9001}],telegram_message_reactions:options.reactions??[]},options);
  const h=await handler(webhookPath,mock);
- const res=await h.invoke(new Request('https://synthetic.invalid/webhook?bot_id=bot-A',{method:'POST',headers:{'Content-Type':'application/json','x-telegram-bot-api-secret-token':'synthetic-webhook-secret'},body:JSON.stringify({update_id:1,message_reaction:{chat:{id:9001,type:'private'},message_id:7,user:{id:9001},old_reaction:options.remove?[{type:'emoji',emoji:'❤️'}]:[],new_reaction:options.remove?[]:[{type:'emoji',emoji:'❤️'}]}})}));
+ const res=await h.invoke(new Request('https://synthetic.invalid/webhook?bot_id=bot-A',{method:'POST',headers:{'Content-Type':'application/json','x-telegram-bot-api-secret-token':'synthetic-webhook-secret'},body:JSON.stringify({update_id:1,message_reaction:{chat:{id:9001,type:'private'},message_id:7,user:{id:9001},old_reaction:options.oldReactions??(options.remove?[{type:'emoji',emoji:'❤️'}]:[]),new_reaction:options.newReactions??(options.remove?[]:[{type:'emoji',emoji:'❤️'}])}})}));
  assert.equal(h.fetches.length,0);
  return{res,mock,reactions:mock.state.telegram_message_reactions};
 }
@@ -189,6 +189,7 @@ if(!coreOnly){
  });
  await check('inbound database lookup error refuses',async()=>{
   const r=await inbound([message()],{queryError:{table:'telegram_messages'}});assert.equal(r.res.status,500);assert.deepEqual(r.reactions,[]);
+  assert.equal(r.mock.calls.some(c=>c.action&&c.action!=='read'),false,'failure before mutation performs no DML');
  });
  await check('inbound upsert error refuses',async()=>{
   const r=await inbound([message()],{queryError:{table:'telegram_message_reactions',action:'upsert'}});assert.equal(r.res.status,500);assert.deepEqual(r.reactions,[]);
@@ -200,6 +201,12 @@ if(!coreOnly){
  await check('inbound delete error refuses',async()=>{
   const r=await inbound([message()],{remove:true,reactions:[rx('client-X')],queryError:{table:'telegram_message_reactions',action:'delete'}});
   assert.equal(r.res.status,500);assert.deepEqual(r.reactions,[rx('client-X')]);
+ });
+ // Delta writes are independent: a later failure does not roll back an earlier delete.
+ await check('later delta failure returns 500 with an earlier delete preserved',async()=>{
+  const r=await inbound([message()],{reactions:[rx('client-X'),rx('staff-B')],oldReactions:[{type:'emoji',emoji:'❤️'}],newReactions:[{type:'emoji',emoji:'🔥'}],queryError:{table:'telegram_message_reactions',action:'upsert'}});
+  assert.equal(r.res.status,500);assert.deepEqual(r.reactions,[rx('staff-B')]);
+  assert.deepEqual(r.mock.calls.filter(c=>c.action&&c.action!=='read').map(c=>c.action),['delete','upsert']);
  });
  await check('revoked operator is not selected',async()=>expectDelivered(await outbound([rx('former-staff')]),null));
  await check('custom communication:manage staff is eligible without admin role',async()=>expectDelivered(await outbound([rx('staff-B','🔥')]),'🔥'));
