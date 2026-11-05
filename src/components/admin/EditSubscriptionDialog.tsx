@@ -502,13 +502,13 @@ export function EditSubscriptionDialog({
 
   const currentStatus = STATUS_OPTIONS.find(s => s.value === formData.status);
   const hasTelegramClub = !!currentClubId;
-  // Определить статус доступа: granted, pending, revoked или none
+  // active и legacy granted означают выданное право, а не подтверждённое вступление.
   const telegramStatus = (() => {
     if (!telegramAccess) return 'none';
     const chatState = telegramAccess.state_chat;
     const channelState = telegramAccess.state_channel;
     
-    if (chatState === 'granted' || channelState === 'granted') return 'granted';
+    if (chatState === 'active' || channelState === 'active' || chatState === 'granted' || channelState === 'granted') return 'granted';
     if (chatState === 'pending' || channelState === 'pending') return 'pending';
     if (chatState === 'revoked' || channelState === 'revoked') return 'revoked';
     return 'unknown';
@@ -795,10 +795,14 @@ export function EditSubscriptionDialog({
                           <Clock className="w-3 h-3 mr-1" />
                           Ожидает присоединения
                         </Badge>
-                      ) : (
+                      ) : telegramStatus === 'revoked' ? (
                         <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
                           <X className="w-3 h-3 mr-1" />
                           Отозван
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-muted text-muted-foreground border-border">
+                          Статус неизвестен
                         </Badge>
                       )
                     ) : (
