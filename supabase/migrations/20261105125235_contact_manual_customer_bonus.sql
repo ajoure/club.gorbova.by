@@ -1,25 +1,36 @@
--- Manual customer bonuses use the existing customer purchase-credit ledger.
+-- Execute the existing DDL as one atomic PostgreSQL statement.
+-- Each dollar string preserves one original command, including its comments.
+-- Do not split this DO or add transaction control; any error rolls it all back.
+DO $customer_bonus_migration$
+BEGIN
+  EXECUTE $bonus_stmt_01$-- Manual customer bonuses use the existing customer purchase-credit ledger.
 -- They never create a referral, partner payout, payment, order or access grant.
 -- This calculator is internal to SECURITY DEFINER wallet RPCs. Its live ACL
 -- had drifted to client roles; restore the original service-only contract so
 -- arbitrary profile balances cannot be read by bypassing the owner RPC.
-revoke all on function public.referral_customer_credit_available(uuid) from public, anon, authenticated;
-grant execute on function public.referral_customer_credit_available(uuid) to service_role;
+revoke all on function public.referral_customer_credit_available(uuid) from public, anon, authenticated;$bonus_stmt_01$;
+  EXECUTE $bonus_stmt_02$
+grant execute on function public.referral_customer_credit_available(uuid) to service_role;$bonus_stmt_02$;
+  EXECUTE $bonus_stmt_03$
 
 -- Other audit access stays unchanged; this feature's internal reason/actor
 -- must not become readable through a wider existing audit SELECT policy.
-drop policy if exists customer_bonus_private_audit_select on public.audit_logs;
+drop policy if exists customer_bonus_private_audit_select on public.audit_logs;$bonus_stmt_03$;
+  EXECUTE $bonus_stmt_04$
 create policy customer_bonus_private_audit_select on public.audit_logs
   as restrictive for select to authenticated
   using (action is distinct from 'customer_bonus_manually_credited'
     or (auth.uid() is not null and (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
-      or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false))));
+      or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false))));$bonus_stmt_04$;
+  EXECUTE $bonus_stmt_05$
 -- anon cannot execute the canonical role helper. Its separate restrictive
 -- policy hides only this action and preserves unrelated legacy audit reads.
-drop policy if exists customer_bonus_private_audit_select_anon on public.audit_logs;
+drop policy if exists customer_bonus_private_audit_select_anon on public.audit_logs;$bonus_stmt_05$;
+  EXECUTE $bonus_stmt_06$
 create policy customer_bonus_private_audit_select_anon on public.audit_logs
   as restrictive for select to anon
-  using (action is distinct from 'customer_bonus_manually_credited');
+  using (action is distinct from 'customer_bonus_manually_credited');$bonus_stmt_06$;
+  EXECUTE $bonus_stmt_07$
 
 -- Shared conservative classifier for statement imports and provider metadata.
 create or replace function public.customer_bonus_is_reversal(p_type text, p_amount numeric, p_meta jsonb)
@@ -28,8 +39,10 @@ returns boolean language sql immutable security invoker set search_path = pg_cat
     or lower(coalesce(p_type, '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
     or lower(coalesce(p_meta->>'type', '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
     or lower(coalesce(p_meta->>'transaction_type', '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
-$$;
-revoke all on function public.customer_bonus_is_reversal(text, numeric, jsonb) from public, anon, authenticated;
+$$;$bonus_stmt_07$;
+  EXECUTE $bonus_stmt_08$
+revoke all on function public.customer_bonus_is_reversal(text, numeric, jsonb) from public, anon, authenticated;$bonus_stmt_08$;
+  EXECUTE $bonus_stmt_09$
 
 create or replace function public.admin_get_customer_bonus_wallet(
   p_profile_id uuid,
@@ -90,9 +103,12 @@ begin
   end if;
   return jsonb_build_object('available_minor', v_available, 'currency', 'BYN', 'entries', v_entries,
     'payments', v_payments, 'request', v_request);
-end $$;
-revoke all on function public.admin_get_customer_bonus_wallet(uuid, uuid) from public, anon, authenticated;
-grant execute on function public.admin_get_customer_bonus_wallet(uuid, uuid) to authenticated;
+end $$;$bonus_stmt_09$;
+  EXECUTE $bonus_stmt_10$
+revoke all on function public.admin_get_customer_bonus_wallet(uuid, uuid) from public, anon, authenticated;$bonus_stmt_10$;
+  EXECUTE $bonus_stmt_11$
+grant execute on function public.admin_get_customer_bonus_wallet(uuid, uuid) to authenticated;$bonus_stmt_11$;
+  EXECUTE $bonus_stmt_12$
 
 create or replace function public.admin_credit_customer_bonus(
   p_profile_id uuid,
@@ -165,9 +181,12 @@ begin
     jsonb_build_object('profile_id', p_profile_id, 'amount_minor', p_amount_minor, 'currency', 'BYN',
       'reason', v_reason, 'source_payment_id', p_source_payment_id, 'request_id', p_request_id));
   return jsonb_build_object('entry_id', v_id, 'created', true);
-end $$;
-revoke all on function public.admin_credit_customer_bonus(uuid, bigint, text, uuid, uuid) from public, anon, authenticated;
-grant execute on function public.admin_credit_customer_bonus(uuid, bigint, text, uuid, uuid) to authenticated;
+end $$;$bonus_stmt_12$;
+  EXECUTE $bonus_stmt_13$
+revoke all on function public.admin_credit_customer_bonus(uuid, bigint, text, uuid, uuid) from public, anon, authenticated;$bonus_stmt_13$;
+  EXECUTE $bonus_stmt_14$
+grant execute on function public.admin_credit_customer_bonus(uuid, bigint, text, uuid, uuid) to authenticated;$bonus_stmt_14$;
+  EXECUTE $bonus_stmt_15$
 
 -- Customer-facing read is independent of referral-program enrollment/settings.
 -- Internal reasons, actor identity and request keys never leave the admin API.
@@ -189,6 +208,11 @@ begin
       and not (status = 'reserved' and coalesce(expires_at < now(), false) and applied_order_id is null)
     order by created_at desc, id limit 10) e;
   return jsonb_build_object('available_minor', v_available, 'currency', 'BYN', 'entries', v_entries);
-end $$;
-revoke all on function public.get_my_customer_bonus_wallet() from public, anon, authenticated;
+end $$;$bonus_stmt_15$;
+  EXECUTE $bonus_stmt_16$
+revoke all on function public.get_my_customer_bonus_wallet() from public, anon, authenticated;$bonus_stmt_16$;
+  EXECUTE $bonus_stmt_17$
 grant execute on function public.get_my_customer_bonus_wallet() to authenticated;
+$bonus_stmt_17$;
+END;
+$customer_bonus_migration$;

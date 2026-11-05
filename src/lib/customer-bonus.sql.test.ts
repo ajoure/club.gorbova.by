@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import migration from "../../supabase/migrations/20261105125235_contact_manual_customer_bonus.sql?raw";
 import roleSource from "../../supabase/migrations/20260630195832_09c71c3f-ddb0-433a-853a-e81fb18b3212.sql?raw";
@@ -97,6 +98,98 @@ beforeEach(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe("manual customer bonus: real PostgreSQL role and ledger contract", () => {
+  it("preserves all 17 reviewed DDL commands byte for byte inside one DO", () => {
+    const commands = [...migration.matchAll(/ {2}EXECUTE \$(bonus_stmt_\d{2})\$([\s\S]*?)\$\1\$;/g)];
+    expect(commands).toHaveLength(17);
+    expect(commands.map((command) => command[1])).toEqual(
+      Array.from({ length: 17 }, (_, index) => `bonus_stmt_${String(index + 1).padStart(2, "0")}`),
+    );
+    // Pin the complete reviewed source before the atomic wrapper, including
+    // comments, whitespace, function bodies, policies, ACLs and final newline.
+    const original = commands.map((command) => command[2]).join("");
+    expect(Buffer.byteLength(original)).toBe(13624);
+    expect(createHash("sha256").update(original).digest("hex"))
+      .toBe("2879861bd5584ef14eef47753d08ebe4e4d1d146e7925c8185eff031cb5c4834");
+    const scaffold = migration.replace(/ {2}EXECUTE \$(bonus_stmt_\d{2})\$[\s\S]*?\$\1\$;\n/g, "");
+    expect(scaffold.replace(/^--[^\n]*\n/gm, ""))
+      .toBe("DO $customer_bonus_migration$\nBEGIN\nEND;\n$customer_bonus_migration$;\n");
+  });
+
+  it("rolls back executed ACL, policy and function changes if later migration DDL fails", async () => {
+    await db.exec("RESET ROLE;");
+    const snapshot = async () => ({
+      functions: (await db.query<{ name: string; body_md5: string }>(`
+        select p.proname as name, p.oid::text as oid, md5(p.prosrc) as body_md5,
+          pg_get_functiondef(p.oid) as definition, p.proacl::text as acl
+        from pg_proc p where p.oid in (
+          'public.referral_customer_credit_available(uuid)'::regprocedure,
+          'public.customer_bonus_is_reversal(text,numeric,jsonb)'::regprocedure,
+          'public.admin_get_customer_bonus_wallet(uuid,uuid)'::regprocedure,
+          'public.admin_credit_customer_bonus(uuid,bigint,text,uuid,uuid)'::regprocedure,
+          'public.get_my_customer_bonus_wallet()'::regprocedure)
+        order by p.proname
+      `)).rows,
+      policies: (await db.query<{ name: string; using_md5: string }>(`
+        select polname as name, oid::text as oid, polpermissive, polcmd,
+          polroles::text as roles, pg_get_expr(polqual,polrelid) as using_expr,
+          md5(pg_get_expr(polqual,polrelid)) as using_md5,
+          pg_get_expr(polwithcheck,polrelid) as check_expr
+        from pg_policy where polrelid='public.audit_logs'::regclass
+        order by polname
+      `)).rows,
+    });
+    const secured = await snapshot();
+    try {
+      // Start with recognizably different synthetic definitions and ACLs.
+      // The failed migration must restore this exact state, not merely leave
+      // an already-secured schema unchanged after a syntax error.
+      await db.exec(`
+        grant execute on function public.referral_customer_credit_available(uuid) to anon,authenticated;
+        drop policy customer_bonus_private_audit_select on public.audit_logs;
+        create policy customer_bonus_private_audit_select on public.audit_logs
+          as restrictive for select to authenticated using(false);
+        drop policy customer_bonus_private_audit_select_anon on public.audit_logs;
+        create policy customer_bonus_private_audit_select_anon on public.audit_logs
+          as restrictive for select to anon using(false);
+        create or replace function public.customer_bonus_is_reversal(p_type text,p_amount numeric,p_meta jsonb)
+          returns boolean language sql immutable security invoker set search_path=pg_catalog as $$ select false $$;
+        create or replace function public.admin_get_customer_bonus_wallet(p_profile_id uuid,p_request_id uuid default null)
+          returns jsonb language plpgsql stable security definer
+          set search_path=pg_catalog,public,pg_temp as $$ begin return '{}'::jsonb; end $$;
+      `);
+      const before = await snapshot();
+      const classifier = secured.functions.find((row) => row.name === "customer_bonus_is_reversal")!;
+      const walletReader = secured.functions.find((row) => row.name === "admin_get_customer_bonus_wallet")!;
+      const policy = secured.policies.find((row) => row.name === "customer_bonus_private_audit_select")!;
+      expect(before).not.toEqual(secured);
+      // Inject immediately after command 12, once both policy replacements,
+      // calculator ACL changes and several function replacements have run.
+      // Assert that the prefix really changed the catalog before triggering
+      // an ordinary failing DDL command (duplicate table), SQLSTATE 42P07.
+      const boundary = "$bonus_stmt_12$;";
+      expect(migration.split(boundary)).toHaveLength(2);
+      const failing = migration.replace(boundary, `${boundary}
+        IF has_function_privilege('anon','public.referral_customer_credit_available(uuid)','EXECUTE')
+          OR has_function_privilege('authenticated','public.referral_customer_credit_available(uuid)','EXECUTE')
+          OR (SELECT md5(prosrc) FROM pg_proc WHERE oid='public.customer_bonus_is_reversal(text,numeric,jsonb)'::regprocedure) IS DISTINCT FROM '${classifier.body_md5}'
+          OR (SELECT md5(prosrc) FROM pg_proc WHERE oid='public.admin_get_customer_bonus_wallet(uuid,uuid)'::regprocedure) IS DISTINCT FROM '${walletReader.body_md5}'
+          OR (SELECT md5(pg_get_expr(polqual,polrelid)) FROM pg_policy
+            WHERE polrelid='public.audit_logs'::regclass AND polname='customer_bonus_private_audit_select') IS DISTINCT FROM '${policy.using_md5}' THEN
+          RAISE EXCEPTION 'migration_prefix_was_not_executed';
+        END IF;
+        EXECUTE 'CREATE TABLE public.audit_logs(id integer)';`);
+      await expect(db.exec(failing)).rejects.toMatchObject({
+        code: "42P07", message: 'relation "audit_logs" already exists',
+      });
+      // Query after the failed standalone DO, without an enclosing test
+      // transaction or a test ROLLBACK that could mask lost atomicity.
+      expect(await snapshot()).toEqual(before);
+    } finally {
+      // Preserve the shared synthetic fixture for all role/business tests.
+      await db.exec(migration);
+    }
+  });
+
   it("credits once, audits the authenticated actor and reads the same durable request", async () => {
     const first = (await credit()).rows[0].result;
     expect(first.created).toBe(true);
