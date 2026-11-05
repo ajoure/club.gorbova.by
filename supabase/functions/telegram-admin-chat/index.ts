@@ -169,6 +169,49 @@ async function telegramRequest(botToken: string, method: string, body: object) {
   return response.json();
 }
 
+// Same current mutation eligibility as sync_telegram_reaction: canonical
+// admin/superadmin OR communication:manage. A contact may also be staff;
+// user_id is not an origin marker, so do not exclude the contact or other staff.
+async function canManageTelegramReaction(supabase: any, actorId: string): Promise<boolean> {
+  const roles = await Promise.all([
+    supabase.rpc("has_role", { _user_id: actorId, _role: "admin" }),
+    supabase.rpc("has_role", { _user_id: actorId, _role: "superadmin" }),
+  ]);
+  if (roles.some(result => result.error || typeof result.data !== "boolean")) {
+    throw new Error("reaction_actor_permission_unknown");
+  }
+  if (roles.some(result => result.data)) return true;
+  const access = await supabase.rpc("has_admin_section_access", {
+    _user_id: actorId, _section_code: "communication", _min_level: "manage",
+  });
+  if (access.error || typeof access.data !== "boolean") {
+    throw new Error("reaction_actor_permission_unknown");
+  }
+  return access.data;
+}
+
+async function latestOperatorReaction(supabase: any, messageId: string, allowed: Set<string>): Promise<string | null> {
+  // A full page is not evidence of an empty eligible remainder. Fail closed
+  // rather than clearing the bot when older candidates were not inspected.
+  const limit = 1000;
+  const { data: rows, error, count } = await supabase.from("telegram_message_reactions")
+    .select("id,user_id,emoji,created_at", { count: "exact" }).eq("message_id", messageId)
+    .order("created_at", { ascending: false }).order("id", { ascending: false })
+    .range(0, limit - 1);
+  if (error || !Array.isArray(rows)) throw new Error("reaction_remainder_unknown");
+  const eligibility = new Map<string, boolean>();
+  for (const row of rows) {
+    if (!allowed.has(row.emoji)) continue;
+    if (typeof row.user_id !== "string" || !row.user_id) throw new Error("reaction_actor_unknown");
+    if (!eligibility.has(row.user_id)) {
+      eligibility.set(row.user_id, await canManageTelegramReaction(supabase, row.user_id));
+    }
+    if (eligibility.get(row.user_id)) return row.emoji;
+  }
+  if (count !== rows.length) throw new Error("reaction_remainder_incomplete");
+  return null;
+}
+
 function base64ToBytes(base64: string): Uint8Array {
   if (!base64) throw new Error("Empty base64 input");
   // Sanitize: strip data URL prefix, whitespace/newlines, normalize URL-safe alphabet, pad.
@@ -2518,25 +2561,17 @@ Deno.serve(async (req) => {
         let finalReaction: Array<{type: string; emoji: string}> = [];
 
         if (removeReaction) {
-          // After removing, find the most recent remaining admin reaction
-          const { data: latestReaction, error: rErr } = await supabase
-            .from('telegram_message_reactions')
-            .select('emoji')
-            .eq('message_id', telegram_message_db_id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (rErr) {
-            console.error('[sync_telegram_reaction] DB read error:', rErr);
-            return new Response(JSON.stringify({ ok: false, reason: 'db_read_failed' }), {
+          // Preserve the latest currently authorized operator, not a customer's
+          // Telegram reaction. Historical actor origin is not stored here.
+          try {
+            const latestEmoji = await latestOperatorReaction(supabase, telegram_message_db_id, TELEGRAM_REACTION_EMOJI);
+            if (latestEmoji) finalReaction = [{ type: 'emoji', emoji: latestEmoji }];
+          } catch (error) {
+            console.error('[sync_telegram_reaction] Aggregation unknown:', error);
+            return new Response(JSON.stringify({ ok: false, reason: 'reaction_aggregation_unknown' }), {
               status: 500,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
-          }
-
-          if (latestReaction && TELEGRAM_REACTION_EMOJI.has(latestReaction.emoji)) {
-            finalReaction = [{ type: 'emoji', emoji: latestReaction.emoji }];
           }
           // else: finalReaction stays [] → clears bot reaction in Telegram
         } else {

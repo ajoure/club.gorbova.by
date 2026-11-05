@@ -1,0 +1,33 @@
+name: Telegram reaction isolation
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/functions/telegram-webhook/index.ts'
+      - 'supabase/functions/telegram-admin-chat/**'
+      - 'scripts/tests/telegram-reactions-isolation.test.mjs'
+      - '.github/workflows/telegram-reactions-isolation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/telegram-webhook/index.ts'
+      - 'supabase/functions/telegram-admin-chat/**'
+      - 'scripts/tests/telegram-reactions-isolation.test.mjs'
+      - '.github/workflows/telegram-reactions-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-handler-contracts:
+    name: Actual Telegram handlers with mocked DB and fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      # Built-in TypeScript stripping and VM modules; no npm install, network
+      # client, production credentials, or provider calls in the test harness.
+      - run: node --experimental-vm-modules --disable-warning=ExperimentalWarning scripts/tests/telegram-reactions-isolation.test.mjs
