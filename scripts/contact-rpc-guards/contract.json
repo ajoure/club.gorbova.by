@@ -1,0 +1,246 @@
+{
+  "helper_body_md5": "c058bbd825535772cdfc4de69d95b147",
+  "technical_role": "sandbox_exec_hdjgkjceownmmnrqqtuz",
+  "functions": [
+    {
+      "name": "get_duplicate_contact_profiles",
+      "signature": "public.get_duplicate_contact_profiles(integer,integer,text)",
+      "old_body_md5": "95ec7a3c88103ce3772a5b6f93f8c11e",
+      "new_body_md5": "d896265c679cb66e318c8a3c9a3ee0cf",
+      "old_language": "sql",
+      "new_language": "plpgsql",
+      "return_kind": "setof_profiles",
+      "arg_names": [
+        "p_limit",
+        "p_offset",
+        "p_search"
+      ],
+      "defaults": "100, 0, NULL::text",
+      "old_public_anon": true,
+      "arg_types": [
+        "integer",
+        "integer",
+        "text"
+      ],
+      "all_arg_names": [
+        "p_limit",
+        "p_offset",
+        "p_search"
+      ],
+      "all_arg_types": null,
+      "modes": null,
+      "return_type": "public.profiles",
+      "returns_set": true,
+      "old_acl": [
+        "PUBLIC|postgres|EXECUTE|false",
+        "anon|postgres|EXECUTE|false",
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ],
+      "new_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ]
+    },
+    {
+      "name": "get_profiles_with_paid_orders",
+      "signature": "public.get_profiles_with_paid_orders(integer,integer,text)",
+      "old_body_md5": "231092dacfaff6e49ad42b7c856bebfd",
+      "new_body_md5": "78bf35946813049ce6ac946429a0af36",
+      "old_language": "sql",
+      "new_language": "plpgsql",
+      "return_kind": "paid_table",
+      "arg_names": [
+        "p_limit",
+        "p_offset",
+        "p_search"
+      ],
+      "defaults": "NULL::text",
+      "old_public_anon": true,
+      "arg_types": [
+        "integer",
+        "integer",
+        "text"
+      ],
+      "all_arg_names": [
+        "p_limit",
+        "p_offset",
+        "p_search",
+        "profile_id",
+        "user_id",
+        "email",
+        "full_name",
+        "first_name",
+        "last_name",
+        "phone",
+        "telegram_username",
+        "telegram_user_id",
+        "status",
+        "is_archived",
+        "created_at",
+        "duplicate_flag",
+        "avatar_url",
+        "last_seen_at",
+        "loyalty_score",
+        "loyalty_ai_summary",
+        "loyalty_status_reason",
+        "loyalty_proofs",
+        "loyalty_analyzed_messages_count",
+        "loyalty_updated_at",
+        "communication_style",
+        "last_paid_at",
+        "paid_orders_count"
+      ],
+      "all_arg_types": [
+        "integer",
+        "integer",
+        "text",
+        "uuid",
+        "uuid",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "bigint",
+        "text",
+        "boolean",
+        "timestamptz",
+        "text",
+        "text",
+        "timestamptz",
+        "numeric",
+        "text",
+        "text",
+        "jsonb",
+        "integer",
+        "timestamptz",
+        "jsonb",
+        "timestamptz",
+        "integer"
+      ],
+      "modes": [
+        "i",
+        "i",
+        "i",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t",
+        "t"
+      ],
+      "return_type": "record",
+      "returns_set": true,
+      "old_acl": [
+        "PUBLIC|postgres|EXECUTE|false",
+        "anon|postgres|EXECUTE|false",
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ],
+      "new_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ]
+    },
+    {
+      "name": "get_contact_tab_counts",
+      "signature": "public.get_contact_tab_counts(text)",
+      "old_body_md5": "3d040e8907cd356beec8486f7d4944f1",
+      "new_body_md5": "91f6bc81b5c3ec2292946a1ad8fc12ea",
+      "old_language": "sql",
+      "new_language": "plpgsql",
+      "return_kind": "json",
+      "arg_names": [
+        "p_search"
+      ],
+      "defaults": "NULL::text",
+      "old_public_anon": false,
+      "arg_types": [
+        "text"
+      ],
+      "all_arg_names": [
+        "p_search"
+      ],
+      "all_arg_types": null,
+      "modes": null,
+      "return_type": "json",
+      "returns_set": false,
+      "old_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ],
+      "new_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ]
+    },
+    {
+      "name": "get_profiles_with_paid_orders_count",
+      "signature": "public.get_profiles_with_paid_orders_count(text)",
+      "old_body_md5": "671f75a3589bdf860e787d45275e11be",
+      "new_body_md5": "f4c13000c7e55e016b0b5c766b6c5dbb",
+      "old_language": "sql",
+      "new_language": "plpgsql",
+      "return_kind": "bigint",
+      "arg_names": [
+        "p_search"
+      ],
+      "defaults": "NULL::text",
+      "old_public_anon": false,
+      "arg_types": [
+        "text"
+      ],
+      "all_arg_names": [
+        "p_search"
+      ],
+      "all_arg_types": null,
+      "modes": null,
+      "return_type": "bigint",
+      "returns_set": false,
+      "old_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ],
+      "new_acl": [
+        "authenticated|postgres|EXECUTE|false",
+        "postgres|postgres|EXECUTE|false",
+        "sandbox_exec_hdjgkjceownmmnrqqtuz|postgres|EXECUTE|false",
+        "service_role|postgres|EXECUTE|false"
+      ]
+    }
+  ]
+}

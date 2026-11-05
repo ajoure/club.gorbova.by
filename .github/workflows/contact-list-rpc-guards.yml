@@ -1,0 +1,50 @@
+name: Contact list RPC guard contracts
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/*_guard_contact_list_rpc_access.sql'
+      - 'scripts/contact-rpc-guards/**'
+      - '.github/workflows/contact-list-rpc-guards.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/*_guard_contact_list_rpc_access.sql'
+      - 'scripts/contact-rpc-guards/**'
+      - '.github/workflows/contact-list-rpc-guards.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-contracts:
+    name: Contact RPC real PostgreSQL authorization and atomicity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: contact-rpc-test-only
+          POSTGRES_DB: contact_rpc_guard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres -d contact_rpc_guard_test'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: contact-rpc-test-only
+      PGDATABASE: contact_rpc_guard_test
+      CONTACT_RPC_GUARD_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify source/body consistency
+        run: python3 scripts/contact-rpc-guards/test_contract.py --static
+      - name: Execute isolated PostgreSQL role and query contracts
+        run: python3 scripts/contact-rpc-guards/test_contract.py
