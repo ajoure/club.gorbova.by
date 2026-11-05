@@ -10,10 +10,16 @@ grant execute on function public.referral_customer_credit_available(uuid) to ser
 -- must not become readable through a wider existing audit SELECT policy.
 drop policy if exists customer_bonus_private_audit_select on public.audit_logs;
 create policy customer_bonus_private_audit_select on public.audit_logs
-  as restrictive for select to authenticated, anon
-  using (action <> 'customer_bonus_manually_credited'
+  as restrictive for select to authenticated
+  using (action is distinct from 'customer_bonus_manually_credited'
     or (auth.uid() is not null and (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
       or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false))));
+-- anon cannot execute the canonical role helper. Its separate restrictive
+-- policy hides only this action and preserves unrelated legacy audit reads.
+drop policy if exists customer_bonus_private_audit_select_anon on public.audit_logs;
+create policy customer_bonus_private_audit_select_anon on public.audit_logs
+  as restrictive for select to anon
+  using (action is distinct from 'customer_bonus_manually_credited');
 
 -- Shared conservative classifier for statement imports and provider metadata.
 create or replace function public.customer_bonus_is_reversal(p_type text, p_amount numeric, p_meta jsonb)

@@ -66,6 +66,10 @@ beforeAll(async () => {
   // Execute the actual canonical role and legacy referral helper bodies,
   // including their deliberately broader referrals/edit contract.
   await db.exec(sqlFunction(roleSource, "has_role_v2"));
+  // Preserve the live helper ACL as well as its body. PUBLIC EXECUTE would
+  // hide policy regressions for anon, which cannot call this helper in Cloud.
+  await db.exec(`revoke all on function public.has_role_v2(uuid,text) from public,anon,authenticated;
+    grant execute on function public.has_role_v2(uuid,text) to authenticated,service_role;`);
   await db.exec(`create function public.has_admin_section_access(p_user uuid,p_section text,p_level text)
     returns boolean language sql stable security definer as $$
       select public.has_role_v2(p_user,'admin') or public.has_role_v2(p_user,'super_admin')
@@ -159,8 +163,16 @@ describe("manual customer bonus: real PostgreSQL role and ledger contract", () =
   });
 
   it("keeps the new manual audit private even under an anonymous legacy audit read grant", async () => {
-    await credit(); await actor("", "anon");
+    await credit(); await db.exec("RESET ROLE;");
+    await db.exec("insert into audit_logs(action) values('unrelated_action'),(null);");
+    await actor("", "anon");
+    await expect(db.query("select has_role_v2(auth.uid(),'admin')")).rejects.toThrow(/permission denied/);
     expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(0);
+    expect((await db.query("select action from audit_logs")).rows).toEqual([{ action: "unrelated_action" }, { action: null }]);
+    for (const uid of [customer, editor]) {
+      await actor(uid);
+      expect((await db.query("select action from audit_logs")).rows).toEqual([{ action: "unrelated_action" }, { action: null }]);
+    }
   });
 
   it("also supports super_admin without trusting caller-supplied profile/auth identity", async () => {
