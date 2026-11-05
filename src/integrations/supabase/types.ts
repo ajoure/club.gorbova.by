@@ -27324,6 +27324,18 @@ export type Database = {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string
       }
+      get_my_site_requests: {
+        Args: never
+        Returns: {
+          id: string
+          kind: string
+          source_id: string
+          submitted_at: string
+          product_name: string
+          tariff_name: string
+          status: string
+        }[]
+      }
       get_order_expected_paid: { Args: { p_order_id: string }; Returns: number }
       get_payment_duplicates: {
         Args: never
