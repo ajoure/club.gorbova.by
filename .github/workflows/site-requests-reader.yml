@@ -1,0 +1,48 @@
+name: Own site request reader contracts
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/*_customer_site_requests_reader.sql'
+      - 'scripts/tests/site-requests-reader*'
+      - '.github/workflows/site-requests-reader.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/*_customer_site_requests_reader.sql'
+      - 'scripts/tests/site-requests-reader*'
+      - '.github/workflows/site-requests-reader.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-contracts:
+    name: Site requests real PostgreSQL ownership and origin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: site-requests-test-only
+          POSTGRES_DB: site_requests_reader_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d site_requests_reader_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: site-requests-test-only
+      PGDATABASE: site_requests_reader_test
+      SITE_REQUESTS_PG_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Execute actual managed migration and synthetic PostgreSQL contracts
+        run: node --test scripts/tests/site-requests-reader.test.mjs

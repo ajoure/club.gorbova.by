@@ -30,6 +30,7 @@ import { SubscriptionListItem } from "@/components/purchases/SubscriptionListIte
 import { SubscriptionDetailSheet } from "@/components/purchases/SubscriptionDetailSheet";
 import { OrderListItem } from "@/components/purchases/OrderListItem";
 import { PreregistrationListItem } from "@/components/purchases/PreregistrationListItem";
+import { SiteRequestListItem } from "@/components/purchases/SiteRequestListItem";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTelegramLinkStatus } from "@/hooks/useTelegramLink";
 import { latestSubscriptionPayment } from "@/lib/documents/latestSubscriptionPayment";
@@ -273,7 +274,7 @@ export default function Purchases() {
   });
 
   // Fetch preregistrations
-  const { data: preregistrations, isLoading: preregistrationsLoading } = useQuery({
+  const { data: preregistrations, isLoading: preregistrationsLoading, isError: preregistrationsError, refetch: refetchPreregistrations } = useQuery({
     queryKey: ["user-preregistrations", user?.id],
     queryFn: async () => {
       if (!user) return [];
@@ -285,6 +286,16 @@ export default function Purchases() {
       
       if (error) throw error;
       return data as CoursePreregistration[];
+    },
+    enabled: !!user,
+  });
+
+  const { data: siteRequests, isLoading: siteRequestsLoading, isError: siteRequestsError, refetch: refetchSiteRequests } = useQuery({
+    queryKey: ["my-site-requests", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_my_site_requests");
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -607,7 +618,7 @@ export default function Purchases() {
                   <span className="sm:hidden">Подписки</span>
                   <span className="hidden sm:inline">Прошлые подписки</span>
                 </TabsTrigger>
-                <TabsTrigger value="preregistrations" className="text-xs sm:text-sm py-2 px-1 sm:px-3">Предзаписи</TabsTrigger>
+                <TabsTrigger value="preregistrations" className="text-xs sm:text-sm py-2 px-1 sm:px-3">Заявки</TabsTrigger>
               </TabsList>
 
               <TabsContent value="orders">
@@ -658,24 +669,47 @@ export default function Purchases() {
               </TabsContent>
 
               <TabsContent value="preregistrations">
-                {preregistrationsLoading ? (
+                <h3 className="font-medium mb-2">Заявки и предзаписи</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Здесь сохранены ваши обращения. Получение заявки само по себе не подтверждает оплату или доступ к продукту.
+                </p>
+                {preregistrationsLoading || siteRequestsLoading ? (
                   <div className="space-y-3">
                     <Skeleton className="h-16 w-full" />
                     <Skeleton className="h-16 w-full" />
-                  </div>
-                ) : preregistrations && preregistrations.length > 0 ? (
-                  <div className="space-y-3">
-                    {preregistrations.map((prereg) => (
-                      <PreregistrationListItem
-                        key={prereg.id}
-                        preregistration={prereg}
-                      />
-                    ))}
                   </div>
                 ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                    <p className="text-sm">Нет предзаписей на курсы</p>
+                  <div className="space-y-4">
+                    {preregistrationsError && (
+                      <div role="alert" className="rounded-xl border p-4 text-sm">
+                        <p>Не удалось загрузить предзаписи на курсы.</p>
+                        <Button variant="outline" size="sm" className="mt-2" onClick={() => void refetchPreregistrations()}>Попробовать снова</Button>
+                      </div>
+                    )}
+                    {siteRequestsError && (
+                      <div role="alert" className="rounded-xl border p-4 text-sm">
+                        <p>Не удалось загрузить заявки с сайта.</p>
+                        <Button variant="outline" size="sm" className="mt-2" onClick={() => void refetchSiteRequests()}>Попробовать снова</Button>
+                      </div>
+                    )}
+                    {!!preregistrations?.length && (
+                      <section aria-label="Предзаписи на курсы" className="space-y-3">
+                        <h4 className="text-sm font-medium">Предзаписи на курсы</h4>
+                        {preregistrations.map(prereg => <PreregistrationListItem key={prereg.id} preregistration={prereg} />)}
+                      </section>
+                    )}
+                    {!!siteRequests?.length && (
+                      <section aria-label="Заявки с сайта" className="space-y-3">
+                        <h4 className="text-sm font-medium">Заявки с сайта</h4>
+                        {siteRequests.map(request => <SiteRequestListItem key={request.id} request={request} />)}
+                      </section>
+                    )}
+                    {!preregistrationsError && !siteRequestsError && !preregistrations?.length && !siteRequests?.length && (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                        <p className="text-sm">Пока нет заявок и предзаписей</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </TabsContent>
