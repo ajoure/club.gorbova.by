@@ -24801,6 +24801,21 @@ export type Database = {
       }
     }
     Functions: {
+      admin_credit_customer_bonus: {
+        Args: {
+          p_profile_id: string
+          p_amount_minor: number
+          p_reason: string
+          p_request_id: string
+          p_source_payment_id?: string | null
+        }
+        Returns: Json
+      }
+      admin_get_customer_bonus_wallet: {
+        Args: { p_profile_id: string; p_request_id?: string | null }
+        Returns: Json
+      }
+      get_my_customer_bonus_wallet: { Args: never; Returns: Json }
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {

@@ -15,6 +15,7 @@ import { User, Mail, Phone, Save, X, Key, Eye, EyeOff, Loader2, Camera, Upload }
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 import { TelegramProfileWidget } from "@/components/profile/TelegramProfileWidget";
+import { CustomerBonusCard } from "@/components/profile/CustomerBonusCard";
 
 interface ProfileData {
   id: string;
@@ -414,6 +415,8 @@ export default function ProfileSettings() {
           <h1 className="text-2xl font-bold text-foreground">Профиль</h1>
           <p className="text-muted-foreground">Управление личными данными</p>
         </div>
+
+        <CustomerBonusCard />
 
         <Card>
           <CardHeader>
