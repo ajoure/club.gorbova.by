@@ -1,5 +1,15 @@
 -- Manual customer bonuses use the existing customer purchase-credit ledger.
 -- They never create a referral, partner payout, payment, order or access grant.
+-- Shared conservative classifier for statement imports and provider metadata.
+create or replace function public.customer_bonus_is_reversal(p_type text, p_amount numeric, p_meta jsonb)
+returns boolean language sql immutable security invoker set search_path = pg_catalog as $$
+  select coalesce(p_amount, 0) < 0
+    or lower(coalesce(p_type, '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
+    or lower(coalesce(p_meta->>'type', '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
+    or lower(coalesce(p_meta->>'transaction_type', '')) ~ '(refund|возврат|void|cancel|отмен|chargeback)'
+$$;
+revoke all on function public.customer_bonus_is_reversal(text, numeric, jsonb) from public, anon, authenticated;
+
 create or replace function public.admin_get_customer_bonus_wallet(
   p_profile_id uuid,
   p_request_id uuid default null
@@ -38,7 +48,7 @@ begin
     where pay.profile_id = p_profile_id and pay.status::text = 'succeeded'
       and pay.currency = 'BYN' and pay.amount > 0 and not coalesce(pay.is_deleted, false)
       and coalesce(pay.refunded_amount, 0) = 0
-      and lower(coalesce(pay.transaction_type, '')) not in ('refund', 'void', 'возврат средств')
+      and not public.customer_bonus_is_reversal(pay.transaction_type, pay.amount, pay.meta)
       and (o.id is null or o.profile_id is null or o.profile_id = p_profile_id)
     order by pay.paid_at desc nulls last, pay.id limit 100
   ) p;
@@ -93,7 +103,7 @@ begin
     if v_payment.profile_id is distinct from p_profile_id or v_payment.status::text <> 'succeeded'
       or v_payment.currency <> 'BYN' or v_payment.amount <= 0 or coalesce(v_payment.is_deleted, false)
       or coalesce(v_payment.refunded_amount, 0) <> 0
-      or lower(coalesce(v_payment.transaction_type, '')) in ('refund', 'void', 'возврат средств')
+      or public.customer_bonus_is_reversal(v_payment.transaction_type, v_payment.amount, v_payment.meta)
       or p_amount_minor > round(v_payment.amount * 100)::bigint then raise exception 'bonus_payment_not_eligible'; end if;
     if v_payment.order_id is not null then
       select profile_id into v_order_profile from public.orders_v2 where id = v_payment.order_id;
@@ -101,7 +111,7 @@ begin
     end if;
     -- A separate refund row must not be mistaken for an unchanged successful receipt.
     if exists (select 1 from public.payments_v2 r where not coalesce(r.is_deleted, false)
-      and (r.status::text = 'refunded' or (r.status::text = 'succeeded' and lower(coalesce(r.transaction_type, '')) = 'refund'))
+      and (r.status::text in ('refunded', 'canceled', 'cancelled') or (r.status::text = 'succeeded' and public.customer_bonus_is_reversal(r.transaction_type, r.amount, r.meta)))
       and (r.reference_payment_id::text = v_payment.id::text
         or (v_payment.provider_payment_id is not null and r.reference_payment_id::text = v_payment.provider_payment_id)
         or r.meta->>'parent_payment_id' = v_payment.id::text)) then raise exception 'bonus_payment_refund_found'; end if;

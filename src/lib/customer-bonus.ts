@@ -22,7 +22,7 @@ export function parseBonusMinor(value: string): number | null {
   return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
 }
 
-export const bonusEntryLabel = (type: string) => ({
+export const bonusEntryLabel = (type: string, status?: string) => type === "purchase_reserve" && status === "reserved" ? "Зарезервировано для оплаты" : ({
   admin_adjustment: "Начислено администратором", subscription_earn: "Бонус за оплату",
   purchase_reserve: "Использовано при покупке", refund_reversal: "Корректировка после возврата",
 }[type] ?? "Бонусная операция");

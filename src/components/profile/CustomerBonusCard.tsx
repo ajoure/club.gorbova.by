@@ -23,7 +23,7 @@ export function CustomerBonusCard() {
     <CardContent className="space-y-4">
       <div><p className="text-sm text-muted-foreground">Доступно для покупок</p><p className="text-2xl font-semibold">{formatBynMinor(Number(wallet.data.available_minor))}</p></div>
       <div className="space-y-2">{wallet.data.entries.map((entry) => <div key={entry.id} className="flex flex-wrap justify-between gap-2 rounded-lg border p-3 text-sm">
-        <div><p>{bonusEntryLabel(entry.entry_type)}</p><p className="text-xs text-muted-foreground">{new Date(entry.created_at).toLocaleDateString("ru-BY")}</p></div>
+        <div><p>{bonusEntryLabel(entry.entry_type, entry.status)}</p><p className="text-xs text-muted-foreground">{new Date(entry.created_at).toLocaleDateString("ru-BY")}</p></div>
         <p className="font-medium">{entry.amount_minor > 0 ? "+" : ""}{formatBynMinor(Number(entry.amount_minor))}</p>
       </div>)}</div>
     </CardContent>

@@ -154,7 +154,7 @@ export function ContactBonusesTab({ profileId, contactName }: { profileId: strin
     <Card><CardHeader><CardTitle className="text-base">История бонусов</CardTitle></CardHeader><CardContent className="space-y-3">
       {(wallet.data?.entries ?? []).length === 0 && <p className="text-sm text-muted-foreground">Бонусных операций пока нет.</p>}
       {(wallet.data?.entries ?? []).map((entry) => <div key={entry.id} className="space-y-1 rounded-lg border p-3 text-sm" data-bonus-entry-id={entry.id} data-bonus-request-id={entry.request_id || undefined} data-bonus-source-payment-id={entry.source_payment_id || undefined}>
-        <div className="flex flex-wrap items-start justify-between gap-2"><p className="font-medium">{bonusEntryLabel(entry.entry_type)}</p><p className="font-semibold">{entry.amount_minor > 0 ? "+" : ""}{formatBynMinor(Number(entry.amount_minor))}</p></div>
+        <div className="flex flex-wrap items-start justify-between gap-2"><p className="font-medium">{bonusEntryLabel(entry.entry_type, entry.status)}</p><p className="font-semibold">{entry.amount_minor > 0 ? "+" : ""}{formatBynMinor(Number(entry.amount_minor))}</p></div>
         <p className="text-xs text-muted-foreground">{new Date(entry.created_at).toLocaleString("ru-BY")}{entry.status === "released" ? " · резерв снят" : ""}</p>
         {entry.reason && <p className="break-words">{entry.reason}</p>}
         {entry.source_payment_id && <p className="text-xs text-muted-foreground">За оплату: {wallet.data?.payments?.find((payment) => payment.id === entry.source_payment_id)?.product_name || "подтверждённый платёж"}</p>}

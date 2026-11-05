@@ -145,6 +145,39 @@ describe("manual customer bonus: real PostgreSQL role and ledger contract", () =
     await actor(admin); await expect(credit()).rejects.toThrow(/bonus_payment_already_credited/);
   });
 
+  it.each([
+    ["Возврат средств", -1500, {}], ["Возврат средств", 1500, {}], ["Отмена", 1500, {}],
+    ["void", 1500, {}], ["Платёж", -1500, {}], ["Платёж", 1500, { type: "refund" }],
+    ["payment", 1500, { transaction_type: "chargeback" }],
+  ])("rejects linked reversal %s/%s/%j, including Russian imports", async (type, amount, meta) => {
+    await db.exec("RESET ROLE;");
+    await db.query("insert into payments_v2(id,profile_id,amount,currency,status,transaction_type,reference_payment_id,meta) values($1,$2,$3,'BYN','succeeded',$4,$5,$6::jsonb)", [secondRequest, profile, amount, type, payment, JSON.stringify(meta)]);
+    await actor(admin); await expect(credit()).rejects.toThrow(/bonus_payment_refund_found/);
+    expect((await wallet()).available_minor).toBe(0);
+  });
+
+  it.each([["Отмена", {}], ["cancel", {}], ["Платёж", { type: "refund" }], ["payment", { transaction_type: "возврат" }]])(
+    "does not offer or credit a reversal-like source %s/%j", async (type, meta) => {
+      await db.exec("RESET ROLE;");
+      await db.query("update payments_v2 set transaction_type=$1,meta=$2::jsonb", [type, JSON.stringify(meta)]);
+      await actor(admin); await expect(credit()).rejects.toThrow(/bonus_payment_not_eligible/);
+      expect((await wallet()).payments).toEqual([]);
+    },
+  );
+
+  it.each(["canceled", "cancelled"])("rejects a completed linked cancellation with status %s", async (status) => {
+    await db.exec("RESET ROLE;");
+    await db.query("insert into payments_v2(id,profile_id,amount,currency,status,transaction_type,reference_payment_id) values($1,$2,1500,'BYN',$3,'Отмена',$4)", [secondRequest, profile, status, payment]);
+    await actor(admin); await expect(credit()).rejects.toThrow(/bonus_payment_refund_found/);
+    expect((await wallet()).available_minor).toBe(0);
+  });
+
+  it("does not mistake a failed refund attempt for a completed reversal", async () => {
+    await db.exec("RESET ROLE;");
+    await db.query("insert into payments_v2(id,profile_id,amount,currency,status,transaction_type,reference_payment_id) values($1,$2,1500,'BYN','failed','Возврат средств',$3)", [secondRequest, profile, payment]);
+    await actor(admin); await credit(); expect((await wallet()).available_minor).toBe(15000);
+  });
+
   it("allows an explicit standalone bonus without creating a referral or changing a payment", async () => {
     await credit([undefined, undefined, undefined, undefined, null]);
     expect((await wallet()).available_minor).toBe(15000);
