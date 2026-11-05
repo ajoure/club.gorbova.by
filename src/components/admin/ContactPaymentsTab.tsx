@@ -428,7 +428,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0 shrink-0"
-                        onClick={() => window.open(`/admin/orders/${payment.order_id}`, '_blank')}
+                        onClick={() => window.open(`/admin/deals?deal=${payment.order_id}`, '_blank')}
                         title="Открыть заказ"
                       >
                         <ExternalLink className="w-3 h-3" />
