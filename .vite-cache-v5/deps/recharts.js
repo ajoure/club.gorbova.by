@@ -2,11 +2,11 @@ import {
   invariant
 } from "./chunk-EZEVKDFA.js";
 import {
-  deepEqual
-} from "./chunk-LTD42SMO.js";
-import {
   clsx_default
 } from "./chunk-I25C6BU3.js";
+import {
+  deepEqual
+} from "./chunk-LTD42SMO.js";
 import {
   require_react_dom
 } from "./chunk-CO6ZALLC.js";
