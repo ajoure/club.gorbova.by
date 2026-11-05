@@ -1,16 +1,26 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import migration from "../../supabase/migrations/20261105125235_contact_manual_customer_bonus.sql?raw";
+import roleSource from "../../supabase/migrations/20260630195832_09c71c3f-ddb0-433a-853a-e81fb18b3212.sql?raw";
+import alignedSource from "../../supabase/migrations/20260815181904_align_all_admin_access_contract.sql?raw";
+import walletSource from "../../supabase/migrations/20260722010312_ddae1f52-794d-476c-a35f-123d462d1559.sql?raw";
 
 const profile = "11111111-1111-4111-8111-111111111111";
 const otherProfile = "22222222-2222-4222-8222-222222222222";
 const admin = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const customer = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const manager = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const editor = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const payment = "44444444-4444-4444-8444-444444444444";
 const request = "55555555-5555-4555-8555-555555555555";
 const secondRequest = "66666666-6666-4666-8666-666666666666";
 let db: PGlite;
+let legacyReferralDefinition: string;
+const sqlFunction = (source: string, name: string) => {
+  const value = source.match(new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\$\\$;`, "i"))?.[0];
+  if (!value) throw new Error(`Missing canonical SQL source: ${name}`);
+  return value;
+};
 const actor = async (uid: string, role = "authenticated") => {
   await db.exec("RESET ROLE;");
   await db.query("select set_config('request.jwt.claim.sub', $1, false)", [uid]);
@@ -32,30 +42,51 @@ beforeAll(async () => {
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to authenticated,anon;
     create table public.profiles(id uuid primary key,user_id uuid,is_archived boolean default false,created_at timestamptz default now());
-    create table public.roles(user_id uuid,code text);
-    create function public.referral_is_admin(p_user_id uuid) returns boolean language sql stable security definer as $$
-      select exists(select 1 from public.roles where user_id=p_user_id and code in ('admin','super_admin')) $$;
+    create table public.roles(id uuid primary key default gen_random_uuid(),code text unique);
+    create table public.user_roles_v2(user_id uuid,role_id uuid references public.roles(id));
+    create table public.section_grants(user_id uuid,section text,level text);
     create table public.products_v2(id uuid primary key,name text);
     create table public.orders_v2(id uuid primary key,profile_id uuid,product_id uuid);
     create table public.payments_v2(id uuid primary key,profile_id uuid,order_id uuid,amount numeric,currency text,status text,
       paid_at timestamptz,product_name_raw text,is_deleted boolean default false,refunded_amount numeric,transaction_type text,
       reference_payment_id text,provider_payment_id text,meta jsonb);
-    create table public.referral_customer_credit_entries(id uuid primary key default gen_random_uuid(),profile_id uuid not null references public.profiles(id),
-      amount_minor bigint not null check(amount_minor<>0),entry_type text,status text,source_payment_id uuid unique references public.payments_v2(id),
-      source_order_id uuid,checkout_key text unique,metadata jsonb not null default '{}',created_at timestamptz default now(),expires_at timestamptz,applied_order_id uuid);
+    ${walletSource.match(/create table public\.referral_customer_credit_entries\s*\([\s\S]*?\);/i)?.[0]}
     alter table public.referral_customer_credit_entries enable row level security;
     grant select on public.referral_customer_credit_entries to authenticated;
     create policy own_credit on public.referral_customer_credit_entries for select to authenticated using (
       exists(select 1 from public.profiles p where p.id=profile_id and p.user_id=auth.uid()));
     grant select on public.profiles to authenticated;
-    create table public.audit_logs(id uuid primary key default gen_random_uuid(),actor_user_id uuid,actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);
+    create table public.audit_logs(id uuid primary key default gen_random_uuid(),actor_user_id uuid,actor_type text,action text,entity_type text,entity_id text,meta jsonb,created_at timestamptz default now());
+    alter table public.audit_logs enable row level security;
+    -- Adversarial broad legacy audit read: the feature's restrictive policy
+    -- must still keep its own internal reason/actor private.
+    grant select on public.audit_logs to authenticated;
+    create policy legacy_audit_read on public.audit_logs for select to authenticated using(true);
   `);
+  // Execute the actual canonical role and legacy referral helper bodies,
+  // including their deliberately broader referrals/edit contract.
+  await db.exec(sqlFunction(roleSource, "has_role_v2"));
+  await db.exec(`create function public.has_admin_section_access(p_user uuid,p_section text,p_level text)
+    returns boolean language sql stable security definer as $$
+      select public.has_role_v2(p_user,'admin') or public.has_role_v2(p_user,'super_admin')
+        or exists(select 1 from public.section_grants where user_id=p_user and section=p_section and level=p_level)
+    $$;`);
+  await db.exec(sqlFunction(alignedSource, "referral_is_admin"));
+  legacyReferralDefinition = (await db.query<{ definition: string }>("select pg_get_functiondef('public.referral_is_admin(uuid)'::regprocedure) definition")).rows[0].definition;
+  await db.exec(sqlFunction(walletSource, "referral_customer_credit_available"));
+  await db.exec(sqlFunction(walletSource, "referral_get_my_customer_credit"));
+  // Reproduce the live calculator ACL drift that the new migration fixes.
+  await db.exec("grant execute on function public.referral_customer_credit_available(uuid) to anon,authenticated,service_role;");
   await db.exec(migration);
 }, 30_000);
 beforeEach(async () => {
-  await db.exec("RESET ROLE; truncate public.audit_logs, public.referral_customer_credit_entries, public.payments_v2, public.orders_v2, public.products_v2, public.profiles, public.roles cascade;");
+  await db.exec("RESET ROLE; truncate public.audit_logs, public.referral_customer_credit_entries, public.payments_v2, public.orders_v2, public.products_v2, public.profiles, public.user_roles_v2, public.section_grants, public.roles cascade;");
   await db.query("insert into public.profiles(id,user_id) values($1,$2),($3,$4)", [profile, customer, otherProfile, manager]);
-  await db.query("insert into public.roles values($1,'admin'),($2,'manager'),($3,'user')", [admin, manager, customer]);
+  await db.exec("insert into public.roles(code) values('admin'),('super_admin'),('manager'),('referral_editor'),('user');");
+  for (const [uid, code] of [[admin, "admin"], [manager, "manager"], [editor, "referral_editor"], [customer, "user"]]) {
+    await db.query("insert into public.user_roles_v2 select $1,id from public.roles where code=$2", [uid, code]);
+  }
+  await db.query("insert into public.section_grants values($1,'referrals','edit')", [editor]);
   await db.query("insert into public.payments_v2(id,profile_id,amount,currency,status,transaction_type,paid_at,product_name_raw,meta) values($1,$2,1500,'BYN','succeeded','payment',now(),'Synthetic consultation','{}')", [payment, profile]);
   await actor(admin);
 });
@@ -84,8 +115,52 @@ describe("manual customer bonus: real PostgreSQL role and ledger contract", () =
     await actor(admin, "service_role"); await expect(credit()).rejects.toThrow(/permission denied/);
   });
 
+  it("denies delegated referrals/edit even when the actual legacy helper allows it", async () => {
+    await credit(); await actor(editor);
+    expect((await db.query<{ allowed: boolean }>("select public.referral_is_admin(auth.uid()) allowed")).rows[0].allowed).toBe(true);
+    expect((await db.query<{ allowed: boolean }>("select public.has_role_v2(auth.uid(),'admin') allowed")).rows[0].allowed).toBe(false);
+    await expect(credit([undefined, undefined, undefined, secondRequest, null])).rejects.toThrow(/bonus_admin_required/);
+    await expect(wallet()).rejects.toThrow(/bonus_admin_required/);
+    expect((await db.query("select * from referral_customer_credit_entries where profile_id=$1", [profile])).rows).toHaveLength(0);
+    await expect(db.query("insert into referral_customer_credit_entries(profile_id,amount_minor,entry_type,status) values($1,99999,'admin_adjustment','posted')", [profile])).rejects.toThrow(/permission denied/);
+    await expect(db.query("update referral_customer_credit_entries set amount_minor=99999")).rejects.toThrow(/permission denied/);
+    await expect(db.query("delete from referral_customer_credit_entries")).rejects.toThrow(/permission denied/);
+    expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(0);
+  });
+
+  it("keeps the broad legacy referral contract unchanged while fixing only bonus authorization", async () => {
+    await db.exec("RESET ROLE;");
+    expect((await db.query<{ definition: string }>("select pg_get_functiondef('public.referral_is_admin(uuid)'::regprocedure) definition")).rows[0].definition).toBe(legacyReferralDefinition);
+    await actor(editor);
+    expect((await db.query<{ allowed: boolean }>("select referral_is_admin(auth.uid()) allowed")).rows[0].allowed).toBe(true);
+  });
+
+  it("closes the raw balance calculator but preserves service and existing owner-wallet callers", async () => {
+    await credit(); await actor("", "anon");
+    await expect(db.query("select referral_customer_credit_available($1)", [profile])).rejects.toThrow(/permission denied/);
+    await actor(customer);
+    await expect(db.query("select referral_customer_credit_available($1)", [profile])).rejects.toThrow(/permission denied/);
+    expect((await db.query<{ result: { available_minor: number } }>("select referral_get_my_customer_credit() result")).rows[0].result.available_minor).toBe(15000);
+    expect((await db.query<{ result: { available_minor: number } }>("select get_my_customer_bonus_wallet() result")).rows[0].result.available_minor).toBe(15000);
+    await actor("", "service_role");
+    expect((await db.query<{ amount: number }>("select referral_customer_credit_available($1)::int amount", [profile])).rows[0].amount).toBe(15000);
+  });
+
+  it("preserves raw own ledger without exposing the internal audit reason or actor", async () => {
+    await credit();
+    expect((await wallet()).entries).toMatchObject([{ reason: "Synthetic consultation bonus 10%", actor_user_id: admin }]);
+    await actor(customer);
+    const own = (await db.query<{ metadata: Record<string, unknown> }>("select metadata from referral_customer_credit_entries where profile_id=$1", [profile])).rows;
+    expect(own).toHaveLength(1);
+    expect(own[0].metadata).toEqual({ request_id: request, manual_customer_bonus: true });
+    expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(0);
+    await actor(admin);
+    expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(1);
+  });
+
   it("also supports super_admin without trusting caller-supplied profile/auth identity", async () => {
-    await db.exec("RESET ROLE; update roles set code='super_admin' where code='admin';");
+    await db.exec("RESET ROLE;");
+    await db.query("update user_roles_v2 set role_id=(select id from roles where code='super_admin') where user_id=$1", [admin]);
     await actor(admin); await credit();
     await actor(customer);
     const mine = (await db.query<{ result: Record<string, unknown> }>("select get_my_customer_bonus_wallet() result")).rows[0].result;

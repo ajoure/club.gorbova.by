@@ -1,5 +1,20 @@
 -- Manual customer bonuses use the existing customer purchase-credit ledger.
 -- They never create a referral, partner payout, payment, order or access grant.
+-- This calculator is internal to SECURITY DEFINER wallet RPCs. Its live ACL
+-- had drifted to client roles; restore the original service-only contract so
+-- arbitrary profile balances cannot be read by bypassing the owner RPC.
+revoke all on function public.referral_customer_credit_available(uuid) from public, anon, authenticated;
+grant execute on function public.referral_customer_credit_available(uuid) to service_role;
+
+-- Other audit access stays unchanged; this feature's internal reason/actor
+-- must not become readable through a wider existing audit SELECT policy.
+drop policy if exists customer_bonus_private_audit_select on public.audit_logs;
+create policy customer_bonus_private_audit_select on public.audit_logs
+  as restrictive for select to authenticated
+  using (action <> 'customer_bonus_manually_credited'
+    or (auth.uid() is not null and (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
+      or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false))));
+
 -- Shared conservative classifier for statement imports and provider metadata.
 create or replace function public.customer_bonus_is_reversal(p_type text, p_amount numeric, p_meta jsonb)
 returns boolean language sql immutable security invoker set search_path = pg_catalog as $$
@@ -17,7 +32,8 @@ create or replace function public.admin_get_customer_bonus_wallet(
 set search_path = pg_catalog, public, pg_temp as $$
 declare v_available bigint; v_entries jsonb; v_payments jsonb; v_request jsonb;
 begin
-  if auth.uid() is null or not public.referral_is_admin(auth.uid()) then
+  if auth.uid() is null or not (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
+    or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false)) then
     raise exception 'bonus_admin_required' using errcode = '42501';
   end if;
   if not exists (select 1 from public.profiles where id = p_profile_id and not coalesce(is_archived, false)) then
@@ -31,11 +47,15 @@ begin
     and not (status = 'reserved' and coalesce(expires_at < now(), false) and applied_order_id is null);
   select coalesce(jsonb_agg(to_jsonb(e) order by e.created_at desc, e.id), '[]'::jsonb) into v_entries
   from (
-    select id, amount_minor, entry_type, status, created_at, source_payment_id,
-      metadata->>'reason' as reason, metadata->>'actor_user_id' as actor_user_id,
-      metadata->>'request_id' as request_id
-    from public.referral_customer_credit_entries where profile_id = p_profile_id
-    order by created_at desc, id limit 50
+    select e.id, e.amount_minor, e.entry_type, e.status, e.created_at, e.source_payment_id,
+      a.meta->>'reason' as reason, a.actor_user_id::text as actor_user_id,
+      e.metadata->>'request_id' as request_id
+    from (select * from public.referral_customer_credit_entries where profile_id = p_profile_id
+      order by created_at desc, id limit 50) e
+    left join lateral (select meta, actor_user_id from public.audit_logs
+      where entity_type = 'referral_customer_credit_entry' and entity_id = e.id::text
+        and action = 'customer_bonus_manually_credited' order by created_at desc, id limit 1) a
+      on e.entry_type = 'admin_adjustment'
   ) e;
   select coalesce(jsonb_agg(to_jsonb(p) order by p.paid_at desc nulls last, p.id), '[]'::jsonb) into v_payments
   from (
@@ -53,11 +73,14 @@ begin
     order by pay.paid_at desc nulls last, pay.id limit 100
   ) p;
   if p_request_id is not null then
-    select jsonb_build_object('entry_id', id, 'profile_id', profile_id, 'amount_minor', amount_minor,
-      'reason', metadata->>'reason', 'source_payment_id', source_payment_id, 'status', status)
-    into v_request from public.referral_customer_credit_entries
-    where profile_id = p_profile_id and entry_type = 'admin_adjustment'
-      and checkout_key = 'admin-bonus:' || p_request_id::text;
+    select jsonb_build_object('entry_id', e.id, 'profile_id', e.profile_id, 'amount_minor', e.amount_minor,
+      'reason', a.meta->>'reason', 'source_payment_id', e.source_payment_id, 'status', e.status)
+    into v_request from public.referral_customer_credit_entries e
+    left join lateral (select meta from public.audit_logs
+      where entity_type = 'referral_customer_credit_entry' and entity_id = e.id::text
+        and action = 'customer_bonus_manually_credited' order by created_at desc, id limit 1) a on true
+    where e.profile_id = p_profile_id and e.entry_type = 'admin_adjustment'
+      and e.checkout_key = 'admin-bonus:' || p_request_id::text;
   end if;
   return jsonb_build_object('available_minor', v_available, 'currency', 'BYN', 'entries', v_entries,
     'payments', v_payments, 'request', v_request);
@@ -75,9 +98,10 @@ create or replace function public.admin_credit_customer_bonus(
 set search_path = pg_catalog, public, pg_temp as $$
 declare
   v_reason text := btrim(p_reason); v_id uuid; v_existing public.referral_customer_credit_entries%rowtype;
-  v_payment public.payments_v2%rowtype; v_order_profile uuid; v_key text;
+  v_payment public.payments_v2%rowtype; v_order_profile uuid; v_key text; v_existing_reason text;
 begin
-  if auth.uid() is null or not public.referral_is_admin(auth.uid()) then
+  if auth.uid() is null or not (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
+    or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false)) then
     raise exception 'bonus_admin_required' using errcode = '42501';
   end if;
   if p_profile_id is null or p_request_id is null or p_amount_minor is null
@@ -90,8 +114,11 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('referral-credit:' || p_profile_id::text, 0));
   select * into v_existing from public.referral_customer_credit_entries where checkout_key = v_key;
   if v_existing.id is not null then
+    select meta->>'reason' into v_existing_reason from public.audit_logs
+      where entity_type = 'referral_customer_credit_entry' and entity_id = v_existing.id::text
+        and action = 'customer_bonus_manually_credited' order by created_at desc, id limit 1;
     if v_existing.entry_type <> 'admin_adjustment' or v_existing.profile_id <> p_profile_id
-      or v_existing.amount_minor <> p_amount_minor or v_existing.metadata->>'reason' is distinct from v_reason
+      or v_existing.amount_minor <> p_amount_minor or v_existing_reason is distinct from v_reason
       or v_existing.source_payment_id is distinct from p_source_payment_id then raise exception 'bonus_request_conflict'; end if;
     return jsonb_build_object('entry_id', v_existing.id, 'created', false);
   end if;
@@ -123,10 +150,12 @@ begin
     profile_id, amount_minor, entry_type, status, source_payment_id, source_order_id, checkout_key, metadata
   ) values (
     p_profile_id, p_amount_minor, 'admin_adjustment', 'posted', p_source_payment_id, v_payment.order_id, v_key,
-    jsonb_build_object('reason', v_reason, 'actor_user_id', auth.uid(), 'request_id', p_request_id, 'manual_customer_bonus', true)
+    -- The customer can SELECT their own ledger through existing RLS. Keep
+    -- internal reasons/actor identity exclusively in the private audit below.
+    jsonb_build_object('request_id', p_request_id, 'manual_customer_bonus', true)
   ) returning id into v_id;
   insert into public.audit_logs(actor_user_id, actor_type, action, entity_type, entity_id, meta)
-  values (auth.uid(), 'user', 'customer_bonus_manually_credited', 'referral_customer_credit_entry', v_id,
+  values (auth.uid(), 'user', 'customer_bonus_manually_credited', 'referral_customer_credit_entry', v_id::text,
     jsonb_build_object('profile_id', p_profile_id, 'amount_minor', p_amount_minor, 'currency', 'BYN',
       'reason', v_reason, 'source_payment_id', p_source_payment_id, 'request_id', p_request_id));
   return jsonb_build_object('entry_id', v_id, 'created', true);
