@@ -60,8 +60,8 @@ beforeAll(async () => {
     alter table public.audit_logs enable row level security;
     -- Adversarial broad legacy audit read: the feature's restrictive policy
     -- must still keep its own internal reason/actor private.
-    grant select on public.audit_logs to authenticated;
-    create policy legacy_audit_read on public.audit_logs for select to authenticated using(true);
+    grant select on public.audit_logs to authenticated,anon;
+    create policy legacy_audit_read on public.audit_logs for select to public using(true);
   `);
   // Execute the actual canonical role and legacy referral helper bodies,
   // including their deliberately broader referrals/edit contract.
@@ -156,6 +156,11 @@ describe("manual customer bonus: real PostgreSQL role and ledger contract", () =
     expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(0);
     await actor(admin);
     expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(1);
+  });
+
+  it("keeps the new manual audit private even under an anonymous legacy audit read grant", async () => {
+    await credit(); await actor("", "anon");
+    expect((await db.query("select * from audit_logs where action='customer_bonus_manually_credited'")).rows).toHaveLength(0);
   });
 
   it("also supports super_admin without trusting caller-supplied profile/auth identity", async () => {

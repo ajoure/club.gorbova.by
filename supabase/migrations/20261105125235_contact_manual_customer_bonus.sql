@@ -10,7 +10,7 @@ grant execute on function public.referral_customer_credit_available(uuid) to ser
 -- must not become readable through a wider existing audit SELECT policy.
 drop policy if exists customer_bonus_private_audit_select on public.audit_logs;
 create policy customer_bonus_private_audit_select on public.audit_logs
-  as restrictive for select to authenticated
+  as restrictive for select to authenticated, anon
   using (action <> 'customer_bonus_manually_credited'
     or (auth.uid() is not null and (coalesce(public.has_role_v2(auth.uid(), 'admin'), false)
       or coalesce(public.has_role_v2(auth.uid(), 'super_admin'), false))));
