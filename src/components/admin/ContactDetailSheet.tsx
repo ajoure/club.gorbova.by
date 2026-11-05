@@ -170,6 +170,7 @@ import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { ContactChannelsSection } from "./ContactChannelsSection";
 import { ContactReferralsTab } from "./contact/ContactReferralsTab";
+import { ContactBonusesTab } from "./contact/ContactBonusesTab";
 import { scrollHorizontalRibbon } from "@/lib/horizontalWheelScroll";
 
 // formatContactName imported from @/lib/nameUtils
@@ -2166,6 +2167,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 <Sparkles className="w-3 h-3 mr-1" />
                 Лояльность
               </TabsTrigger>
+              {(adminAccess.isAdmin || adminAccess.isSuperAdmin) && <TabsTrigger value="bonuses" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Gift className="w-3 h-3 mr-1" />
+                Бонусы
+              </TabsTrigger>}
               <TabsTrigger value="referrals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Gift className="w-3 h-3 mr-1" />
                 Рефералы
@@ -4255,6 +4260,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
             <TabsContent value="referrals" className="m-0">
               <ContactReferralsTab profileId={contact.id} />
+            </TabsContent>
+
+            <TabsContent value="bonuses" className="m-0">
+              <ContactBonusesTab key={contact.id} profileId={contact.id} contactName={contact.full_name || "Контакт"} />
             </TabsContent>
 
             {/* Artifacts Tab — Анкеты, обучение и вебинары */}
