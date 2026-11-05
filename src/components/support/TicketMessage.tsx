@@ -26,6 +26,7 @@ import type { TicketMessage as TicketMessageType, TicketAttachment } from "@/hoo
 import type { ReactionGroup } from "@/hooks/useTicketReactions";
 import { useSignedAttachments } from "@/hooks/useSignedAttachments";
 import { ChatMediaMessage } from "@/components/admin/chat/ChatMediaMessage";
+import { TicketMessageText } from "./TicketMessageText";
 
 const EMOJI_LIST = [
   "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
@@ -207,7 +208,7 @@ export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onTo
                   : "bg-muted"
               )}
             >
-              <p className="text-sm whitespace-pre-wrap">{message.message}</p>
+              <TicketMessageText text={message.message} />
             </div>
           )}
 
