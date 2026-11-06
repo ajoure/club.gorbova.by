@@ -28,8 +28,8 @@ BEGIN
     IF pg_get_userbyid(r.proowner)<>'postgres' OR grants IS DISTINCT FROM expected
       OR EXISTS(SELECT 1 FROM aclexplode(r.proacl) a
         WHERE a.grantor<>r.proowner OR a.is_grantable OR a.privilege_type<>'EXECUTE')
-      OR r.proconfig IS DISTINCT FROM CASE WHEN r.proname='user_has_training_lesson_access'
-        THEN ARRAY['search_path=public, pg_temp'] ELSE ARRAY['search_path=public'] END
+      OR r.proconfig IS DISTINCT FROM (CASE WHEN r.proname='user_has_training_lesson_access'
+        THEN ARRAY['search_path=public, pg_temp'] ELSE ARRAY['search_path=public'] END)
       THEN RAISE EXCEPTION 'paid_lesson_baseline_permissions_drift'; END IF;
   END LOOP;
 END;
@@ -115,6 +115,7 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path='' AS $fn$
      AND s.access_start_at<(c.deal_month||'-01')::date+interval '1 month'
      AND s.access_end_at>(c.deal_month||'-01')::date
      AND pay.profile_id=p.id AND pay.status='succeeded' AND pay.currency='BYN'
+     AND pay.transaction_type='payment' AND coalesce(pay.refunded_amount,0)>=0
      AND NOT coalesce(pay.is_deleted,false)
      AND pay.amount-coalesce(pay.refunded_amount,0)>=c.agreement_amount
      AND r.is_active AND r.grant_target_type='training_content'
@@ -122,7 +123,7 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path='' AS $fn$
      AND r.target_ref IN(SELECT id::text FROM chain WHERE parent_module_id IS NULL)
      AND EXISTS(SELECT 1 FROM chain WHERE parent_module_id IS NULL
        AND product_id='11c9f1b8-0355-4753-bd74-40b42aa53616'::uuid)
-     AND NOT EXISTS(SELECT 1 FROM chain WHERE NOT is_active)
+     AND NOT EXISTS(SELECT 1 FROM chain WHERE is_active IS NOT TRUE)
      AND private.club_month_rule_allows_lesson(r.conditions,l.id,l.module_id)
  ),false);
 $fn$;

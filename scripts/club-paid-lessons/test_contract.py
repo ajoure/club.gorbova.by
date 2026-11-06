@@ -97,7 +97,7 @@ def main():
       INSERT INTO public.training_modules VALUES('{root}',NULL,'{club}',true),('{parent}','{root}',NULL,true);
       INSERT INTO public.training_lessons VALUES('{lesson}','{parent}','{month}',true,true),('{other}','{parent}','{month}',true,true);
       INSERT INTO public.subscriptions_v2 VALUES('{subscription}','{u}','{p}','{club}','{tariff}','active',now()-interval '3 months','{end}');
-      INSERT INTO public.payments_v2 VALUES('{payment}','{p}','succeeded','BYN',800,50,false);
+      INSERT INTO public.payments_v2(id,profile_id,status,currency,amount,refunded_amount,is_deleted) VALUES('{payment}','{p}','succeeded','BYN',800,50,false);
       INSERT INTO public.access_rules VALUES('{rule}','{club}','{tariff}','training_content','{root}',true,
        '{{"access_mode":"full","allowed_lesson_ids":[],"allowed_module_ids":[],"match_purchase_month":true}}');""")
     baseline = value("SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(x)) FROM public.payments_v2 x),(SELECT jsonb_agg(to_jsonb(x)) FROM public.subscriptions_v2 x),(SELECT jsonb_agg(to_jsonb(x)) FROM public.orders_v2 x));")
@@ -147,6 +147,8 @@ def main():
         ("UPDATE public.subscriptions_v2 SET status='expired';", "UPDATE public.subscriptions_v2 SET status='active';"),
         ("UPDATE public.payments_v2 SET refunded_amount=800;", "UPDATE public.payments_v2 SET refunded_amount=50;"),
         ("UPDATE public.payments_v2 SET is_deleted=true;", "UPDATE public.payments_v2 SET is_deleted=false;"),
+        ("UPDATE public.payments_v2 SET transaction_type='refund';", "UPDATE public.payments_v2 SET transaction_type='payment';"),
+        ("UPDATE public.payments_v2 SET refunded_amount=-1;", "UPDATE public.payments_v2 SET refunded_amount=50;"),
         ("UPDATE public.access_rules SET is_active=false;", "UPDATE public.access_rules SET is_active=true;"),
         (f"UPDATE public.training_lessons SET released=false WHERE id='{lesson}';", f"UPDATE public.training_lessons SET released=true WHERE id='{lesson}';"),
         (f"UPDATE public.training_modules SET product_id='{uid(82)}' WHERE id='{root}';", f"UPDATE public.training_modules SET product_id='{club}' WHERE id='{root}';"),

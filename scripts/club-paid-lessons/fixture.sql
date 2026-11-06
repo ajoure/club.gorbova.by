@@ -15,7 +15,7 @@ CREATE TABLE public.tariffs(id uuid PRIMARY KEY);
 CREATE TABLE public.training_modules(id uuid PRIMARY KEY,parent_module_id uuid,product_id uuid,is_active boolean NOT NULL);
 CREATE TABLE public.training_lessons(id uuid PRIMARY KEY,module_id uuid,content_month text,is_active boolean NOT NULL,released boolean DEFAULT true);
 CREATE TABLE public.subscriptions_v2(id uuid PRIMARY KEY,user_id uuid,profile_id uuid,product_id uuid,tariff_id uuid,status text,access_start_at timestamptz,access_end_at timestamptz);
-CREATE TABLE public.payments_v2(id uuid PRIMARY KEY,profile_id uuid,status text,currency text,amount numeric,refunded_amount numeric,is_deleted boolean);
+CREATE TABLE public.payments_v2(id uuid PRIMARY KEY,profile_id uuid,status text,currency text,amount numeric,refunded_amount numeric,is_deleted boolean,transaction_type text DEFAULT 'payment');
 CREATE TABLE public.access_rules(id uuid PRIMARY KEY,product_id uuid,tariff_id uuid,grant_target_type text,target_ref text,is_active boolean,conditions jsonb);
 CREATE TABLE public.orders_v2(id uuid PRIMARY KEY,user_id uuid,profile_id uuid,tariff_id uuid,status text,meta jsonb);
 CREATE FUNCTION public.training_release_guard(l uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
