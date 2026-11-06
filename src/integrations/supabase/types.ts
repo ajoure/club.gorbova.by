@@ -24801,21 +24801,6 @@ export type Database = {
       }
     }
     Functions: {
-      admin_credit_customer_bonus: {
-        Args: {
-          p_profile_id: string
-          p_amount_minor: number
-          p_reason: string
-          p_request_id: string
-          p_source_payment_id?: string | null
-        }
-        Returns: Json
-      }
-      admin_get_customer_bonus_wallet: {
-        Args: { p_profile_id: string; p_request_id?: string | null }
-        Returns: Json
-      }
-      get_my_customer_bonus_wallet: { Args: never; Returns: Json }
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {
@@ -24977,6 +24962,16 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_credit_customer_bonus: {
+        Args: {
+          p_amount_minor: number
+          p_profile_id: string
+          p_reason: string
+          p_request_id: string
+          p_source_payment_id?: string
+        }
+        Returns: Json
+      }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
@@ -25066,6 +25061,10 @@ export type Database = {
           unanswered_count: number
           username: string
         }[]
+      }
+      admin_get_customer_bonus_wallet: {
+        Args: { p_profile_id: string; p_request_id?: string }
+        Returns: Json
       }
       admin_get_payments_page_v1: {
         Args: {
@@ -26713,6 +26712,10 @@ export type Database = {
         Returns: Json
       }
       custdev_validate_state: { Args: { p_state: Json }; Returns: boolean }
+      customer_bonus_is_reversal: {
+        Args: { p_amount: number; p_meta: Json; p_type: string }
+        Returns: boolean
+      }
       deactivate_global_document_package: {
         Args: { _package_id: string }
         Returns: Json
@@ -27311,6 +27314,7 @@ export type Database = {
           visibility_scope: string
         }[]
       }
+      get_my_customer_bonus_wallet: { Args: never; Returns: Json }
       get_my_requisites_status: {
         Args: never
         Returns: {
@@ -27320,21 +27324,21 @@ export type Database = {
           requisites_status: string
         }[]
       }
-      get_next_document_number: {
-        Args: { p_document_type: string; p_prefix?: string }
-        Returns: string
-      }
       get_my_site_requests: {
         Args: never
         Returns: {
           id: string
           kind: string
-          source_id: string
-          submitted_at: string
           product_name: string
-          tariff_name: string
+          source_id: string
           status: string
+          submitted_at: string
+          tariff_name: string
         }[]
+      }
+      get_next_document_number: {
+        Args: { p_document_type: string; p_prefix?: string }
+        Returns: string
       }
       get_order_expected_paid: { Args: { p_order_id: string }; Returns: number }
       get_payment_duplicates: {
@@ -27964,6 +27968,23 @@ export type Database = {
           provider_payment_id: string
           receipt_url: string
         }[]
+      }
+      record_club_paid_lesson_correction: {
+        Args: {
+          p_agreement_amount: number
+          p_evidence_ref: string
+          p_expected_end: string
+          p_key: string
+          p_lesson: string
+          p_month: string
+          p_operator_ref: string
+          p_payment: string
+          p_profile: string
+          p_subscription: string
+          p_tariff: string
+          p_user: string
+        }
+        Returns: Json
       }
       record_refund_atomic: {
         Args: {
