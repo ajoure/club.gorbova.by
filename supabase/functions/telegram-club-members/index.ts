@@ -716,8 +716,13 @@ Deno.serve(async (req) => {
       // GUARD: re-validate access for all candidates before kicking
       const membersWithUser = (members || []).filter(m => m.profile_id);
       const profileIds = membersWithUser.map(m => m.profile_id);
-      const { data: profileRows } = await supabase
+      const { data: profileRows, error: profilesError } = await supabase
         .from('profiles').select('id, user_id').in('id', profileIds);
+      if (profilesError) {
+        return new Response(JSON.stringify({
+          success: false, error: 'PROFILES_LOOKUP_FAILED', action, kicked_count: 0,
+        }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
 
       const userIds = [...new Set((membersWithUser).map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
@@ -818,8 +823,13 @@ Deno.serve(async (req) => {
       // Map profile_id → user_id
       const membersWithProfile = (members || []).filter(m => m.profile_id);
       const profileIds = membersWithProfile.map(m => m.profile_id);
-      const { data: profileRows } = await supabase
+      const { data: profileRows, error: profilesError } = await supabase
         .from('profiles').select('id, user_id').in('id', profileIds);
+      if (profilesError) {
+        return new Response(JSON.stringify({
+          success: false, error: 'PROFILES_LOOKUP_FAILED', action, kicked_count: 0,
+        }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
 
       const userIds = [...new Set(membersWithProfile.map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
