@@ -1,4 +1,5 @@
 import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
+import { startBoundImpersonation } from "@/lib/adminReturn";
 import { EffectiveProductAccessNote } from "@/components/purchases/EffectiveProductAccessNote";
 import { isContactVisibleDeal } from "@/lib/deals/dealFinancialKind";
 import { useState, useRef, useEffect, useMemo } from "react";
@@ -1391,42 +1392,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     if (!contact?.user_id) return;
     setIsImpersonating(true);
     try {
-      // Store current session before impersonating
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        // Use consistent keys with ImpersonationBar and add timestamp for session expiry
-        localStorage.setItem("admin_session_backup", JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-        }));
-        const adminReturnUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-        localStorage.setItem("admin_return_url", adminReturnUrl);
-        localStorage.setItem("impersonation_start_time", Date.now().toString());
-        // Critical: ensure impersonation can never be “silent”
-        localStorage.setItem("is_impersonating", "true");
-      }
-
-      const result = await startImpersonation(contact.user_id);
+      const returnUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      const result = await startBoundImpersonation(supabase.auth, contact.user_id, returnUrl,
+        () => startImpersonation(contact.user_id!));
       if (result) {
-        // Use verifyOtp with token_hash only (email must not be provided with token_hash)
-        const { error } = await supabase.auth.verifyOtp({
-          token_hash: result.tokenHash,
-          type: "magiclink",
-        });
-        
-        if (error) {
-          console.error("verifyOtp error:", error);
-          throw error;
-        }
         
         toast.success(`Вход от имени ${formatContactName(contact) || contact.email}`);
         onOpenChange(false);
-        const nextUrl = new URL(localStorage.getItem("admin_return_url") || "/admin", window.location.origin);
+        const nextUrl = new URL(returnUrl, window.location.origin);
         nextUrl.searchParams.set("impersonating", "true");
         window.location.href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
       }
     } catch (error) {
-      console.error("Impersonation error:", error);
+      console.error("Impersonation entry failed");
       toast.error("Ошибка входа от имени пользователя");
     } finally {
       setIsImpersonating(false);

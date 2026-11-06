@@ -1,3 +1,4 @@
+import { authMutations } from "@/lib/appAuthMutations";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -491,7 +492,7 @@ export function PaymentDialog({
       // Set flag BEFORE auth to prevent useEffect from resetting dialog state
       authInProgressRef.current = true;
 
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await authMutations.signInWithPassword({
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
       });

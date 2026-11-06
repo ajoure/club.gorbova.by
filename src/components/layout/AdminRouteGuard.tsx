@@ -57,7 +57,7 @@ export function AdminRouteGuard({ children }: AdminRouteGuardProps) {
   return <Navigate to="/dashboard" replace />;
 }
 
-function findFirstAccessibleAdminPath(access: ReturnType<typeof useAdminAccess>): string | null {
+export function findFirstAccessibleAdminPath(access: ReturnType<typeof useAdminAccess>): string | null {
   for (const s of ADMIN_SECTIONS) {
     if (s.resources?.length) {
       const resource = s.resources.find((candidate) =>

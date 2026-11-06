@@ -1,7 +1,10 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { authMutations } from "@/lib/appAuthMutations";
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { clearImpersonationStorage, hasStaleImpersonationState } from "@/lib/impersonationStorage";
+import { clearImpersonationStorage, getReturnFence, hasStaleImpersonationState, type AuthLease } from "@/lib/impersonationStorage";
+import { guardedAuthMutation } from "@/lib/guardedAuthMutation";
+import { verifiedSessionBinding } from "@/lib/adminReturn";
 
 type AppRole = "user" | "admin" | "superadmin" | "employee";
 
@@ -20,6 +23,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const latestSession = useRef<Session | null>(null);
   const [role, setRole] = useState<AppRole>("user");
   const [loading, setLoading] = useState(true);
 
@@ -92,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.info(`[AuthContext] onAuthStateChange: event=${_event}, hasSession=${!!currentSession}`);
         }
 
+        latestSession.current = currentSession;
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
         // Only flip loading off when we know what's going on:
@@ -107,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession()
       .then(({ data: { session: existingSession } }) => {
         if (!isMounted) return;
+        latestSession.current = existingSession;
         setSession(existingSession);
         setUser(existingSession?.user ?? null);
       })
@@ -135,19 +141,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    try { return await guardedAuthMutation("password-login", async lease => {
+    const recovery = getReturnFence();
     // Clean stale impersonation state on normal login
-    if (hasStaleImpersonationState()) {
-      clearImpersonationStorage();
+    if (!recovery && hasStaleImpersonationState()) {
+      clearImpersonationStorage(lease);
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await authMutations.signInWithPassword({
       email,
       password,
-    });
+    }, lease);
+    if (recovery && !error) {
+      if (!lease || !data.session || !data.user || typeof data.session.expires_at !== "number" || data.session.expires_at * 1000 <= Date.now()) return { error: new Error("RETURN_LOGIN_UNVERIFIED") };
+      const returnedBinding = await verifiedSessionBinding(supabase.auth, data.session, data.user.id);
+      // A peer may have changed shared SDK storage before its event reaches this document.
+      // This is a fresh public read, never a rescue of an expired returned credential.
+      const actual = await supabase.auth.getSession();
+      if (actual.error || !actual.data.session || actual.data.session.user.id !== data.user.id
+        || returnedBinding !== await verifiedSessionBinding(supabase.auth, actual.data.session, data.user.id)
+        || latestSession.current?.user.id !== data.user.id || latestSession.current.access_token !== actual.data.session.access_token
+        || getReturnFence()?.operationId !== recovery.operationId || getReturnFence()?.phase !== "manual") return { error: new Error("RETURN_LOGIN_UNVERIFIED") };
+      // Explicit manual credentials replaced the old session under the same origin lock.
+      // This is normal login, never a claimed successful restoration of the old backup.
+      clearImpersonationStorage(lease);
+    }
     return { error };
+    }); } catch { return { error: new Error("RETURN_RECOVERY_REQUIRED") }; }
   };
 
-  const signUp = async (email: string, password: string, firstName: string, lastName: string, phone: string) => {
+  const signUp = async (email: string, password: string, firstName: string, lastName: string, phone: string, lease?: AuthLease) => {
     const redirectUrl = `${window.location.origin}/`;
 
     // Carry any captured referral code into auth user_metadata so attribution
@@ -163,7 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore malformed capture */ }
 
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error } = await authMutations.signUp({
       email,
       password,
       options: {
@@ -176,9 +199,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ...referralMetadata,
         },
       },
-    });
+    }, lease);
 
-    
     if (data?.user && !data?.session && data?.user?.identities?.length === 0) {
       return { 
         error: { message: "User already registered" } as Error,
@@ -205,12 +227,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    return guardedAuthMutation("other", async lease => {
     // Always clear impersonation state on signOut
-    clearImpersonationStorage();
-    await supabase.auth.signOut();
+    clearImpersonationStorage(lease);
+    await authMutations.signOut(undefined, lease);
     setUser(null);
+    latestSession.current = null;
     setSession(null);
     setRole("user");
+    });
   };
 
   return (
@@ -221,7 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role,
         loading,
         signIn,
-        signUp,
+        signUp: (email, password, firstName, lastName, phone) => guardedAuthMutation("other", lease => signUp(email, password, firstName, lastName, phone, lease)),
         signOut,
       }}
     >

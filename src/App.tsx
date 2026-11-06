@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { AdminReturnProvider } from "@/contexts/AdminReturnContext";
 import { HelpModeProvider } from "@/contexts/HelpModeContext";
 // ImpersonationBar moved inside DashboardLayout (authenticated shell only)
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
@@ -206,6 +207,7 @@ const App = () => {
       <Sonner />
       <BrowserRouter>
           <AuthProvider>
+            <AdminReturnProvider>
             <HelpModeProvider>
               <ScrollToTop />
               <GlobalPaymentHandler />
@@ -410,6 +412,7 @@ const App = () => {
               </Routes>
             </div>
           </HelpModeProvider>
+            </AdminReturnProvider>
         </AuthProvider>
     </BrowserRouter>
     </TooltipProvider>

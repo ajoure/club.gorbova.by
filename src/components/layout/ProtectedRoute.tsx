@@ -5,6 +5,7 @@ import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { Loader2 } from "lucide-react";
 import { saveLastRoute } from "@/hooks/useLastRoute";
 import { AdminRouteGuard } from "./AdminRouteGuard";
+import { useAdminReturn } from "@/contexts/AdminReturnContext";
 
 /**
  * ProtectedRoute — deterministic state matrix:
@@ -25,6 +26,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const adminReturn = useAdminReturn();
   const { user, loading } = useAuth();
   const { profile, bootstrapReady } = useAuthBootstrap();
   const location = useLocation();
@@ -63,7 +65,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }, [user, loading, location.pathname, location.search, location.hash]);
 
   // State matrix
-  if (loading || (!user && !settled)) {
+  if (adminReturn && adminReturn.view.phase !== "idle" || loading || (!user && !settled)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
