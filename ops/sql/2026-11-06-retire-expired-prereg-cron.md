@@ -31,8 +31,9 @@ IDs, имена, расписания, команды, owner, database и про
    вручную или через модель. Не подставлять hash самого файла внутрь него.
 3. Через разрешённые read-only SELECT проверить все guards: наблюдаемые
    owner/роль/видимость, pg_cron 1.6.4, native C API OID/signature/defaults/
-   EXECUTE, ключ jobid и стандартный invalidation trigger, два полных
-   non-active fingerprints, очередь и снимок других jobs. Отличие — STOP,
+   EXECUTE, ключ jobid и ровно один trigger всего — стандартный non-internal
+   invalidation; любой дополнительный/internal/FK trigger даёт STOP. Также
+   сверить два полных non-active fingerprints, очередь и снимок других jobs. Отличие — STOP,
    а не автоматическое обновление ожидаемых hashes. Этот этап не вызывает
    `alter_job`, даже с прежним значением флага.
 4. Только отдельно назначенный координатор может передать один точный DO

@@ -82,6 +82,7 @@ BEGIN
 
   -- A unique jobid bounds each native UPDATE to one row. Only the standard
   -- statement-level cache invalidation trigger/rules contract is accepted.
+  -- Count ALL triggers: internal/FK triggers must not hide extra side effects.
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_constraint AS c
     JOIN pg_catalog.pg_attribute AS a
@@ -94,7 +95,8 @@ BEGIN
     RAISE EXCEPTION 'Retirement STOP: cron job key or rule drift';
   END IF;
   SELECT pg_catalog.count(*) = 1 AND coalesce(pg_catalog.bool_and(
-           t.tgname = 'cron_job_cache_invalidate' AND t.tgtype = 60
+           NOT t.tgisinternal
+           AND t.tgname = 'cron_job_cache_invalidate' AND t.tgtype = 60
            AND t.tgenabled = 'O' AND p.prosrc = 'cron_job_cache_invalidate'
            AND p.probin = '$libdir/pg_cron' AND l.lanname = 'c'
            AND n.nspname = 'cron' AND p.proname = 'job_cache_invalidate'
@@ -106,7 +108,7 @@ BEGIN
     JOIN pg_catalog.pg_proc AS p ON p.oid = t.tgfoid
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
     JOIN pg_catalog.pg_language AS l ON l.oid = p.prolang
-   WHERE t.tgrelid = 'cron.job'::regclass AND NOT t.tgisinternal;
+   WHERE t.tgrelid = 'cron.job'::regclass;
   IF v_trigger_matches IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'Retirement STOP: cron invalidation trigger drift';
   END IF;
