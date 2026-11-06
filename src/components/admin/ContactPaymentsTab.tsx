@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { mergeContactFailedAttempts } from "@/lib/payments/contactFailedAttempts";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { resolveModuleDisplayMetaBatch } from "@/lib/deals/resolveModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
@@ -29,6 +30,8 @@ interface PaymentItem {
   card_brand: string | null;
   order_id: string | null;
   productName?: string | null;
+  currency?: string;
+  is_attempt?: boolean;
 }
 
 // Helper: get brand variants for matching (handles master vs mastercard)
@@ -60,6 +63,16 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
       if (error) throw error;
       return data || [];
     },
+  });
+
+  const { data: failedAttempts = [], isLoading: attemptsLoading, isError: attemptsError } = useQuery({
+    queryKey: ['contact-failed-attempts', contactId],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('admin_get_contact_failed_attempts', { p_profile_id: contactId });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!contactId,
   });
 
   // Fetch payments for this contact - ONLY from payments_v2 (queue is fully materialized)
@@ -284,6 +297,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
     return <ArrowUpRight className="w-4 h-4 text-green-500" />;
   };
 
+  const history = mergeContactFailedAttempts(payments || [], failedAttempts) as PaymentItem[];
+
   const getTransactionLabel = (type: string | null) => {
     if (type === 'refund' || type === 'Возврат средств') return 'Возврат';
     return 'Оплата';
@@ -302,7 +317,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
     }
   };
 
-  if (isLoading) {
+  if (isLoading || attemptsLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-full" />
@@ -361,8 +376,11 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         </Card>
       )}
 
+      {attemptsError && <p role="alert" className="text-sm text-destructive">
+        Не удалось загрузить историю неудачных попыток. Обновите страницу, чтобы повторить проверку.
+      </p>}
       {/* Payments list */}
-      {!payments || payments.length === 0 ? (
+      {history.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
             <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -377,9 +395,9 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
       ) : (
         <div className="space-y-2">
           <div className="text-sm text-muted-foreground mb-2">
-            Найдено платежей: {payments.length}
+            Записей в истории: {history.length}
           </div>
-          {payments.map((payment) => (
+          {history.map((payment) => (
             <Card key={payment.id} className="hover:bg-muted/50 transition-colors">
               <CardContent className="py-3 px-3 sm:px-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 min-w-0">
@@ -388,12 +406,12 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium whitespace-nowrap">
-                          {payment.amount ? `${payment.amount.toLocaleString('ru-RU')} BYN` : '—'}
+                          {payment.amount ? `${payment.amount.toLocaleString('ru-RU')} ${payment.currency || 'BYN'}` : '—'}
                         </span>
                         {getStatusBadge(payment.status)}
                       </div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        <span>{getTransactionLabel(payment.transaction_type)}</span>
+                        <span>{payment.is_attempt ? 'Неудачная попытка списания' : getTransactionLabel(payment.transaction_type)}</span>
                         {payment.paid_at && (
                           <>
                             <span>•</span>
