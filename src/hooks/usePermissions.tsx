@@ -18,7 +18,11 @@ interface Role {
 interface PermissionsData {
   permissions: string[];
   userRoles: Role[];
+  actorId?: string;
+  complete?: boolean;
 }
+
+export const permissionQueryKey = (id?: string) => ["user-permissions-and-roles", id] as const;
 
 interface AdminAccessRow {
   section_code: string;
@@ -48,7 +52,7 @@ export function usePermissions() {
   const { user } = useAuth();
 
   const { data, isLoading: loading } = useQuery<PermissionsData & { adminAccess: AdminAccessRow[] }>({
-    queryKey: ["user-permissions-and-roles", user?.id],
+    queryKey: permissionQueryKey(user?.id),
     queryFn: async () => {
       if (!user?.id) return { permissions: [], userRoles: [], adminAccess: [] };
 
@@ -83,7 +87,10 @@ export function usePermissions() {
         ? (console.error("Error fetching admin access:", adminAccessResult.error), [])
         : ((adminAccessResult.data as AdminAccessRow[]) || []);
 
-      return { permissions, userRoles, adminAccess };
+      // Return verification must distinguish a successful deny from incomplete reads.
+      // Existing consumers retain their deny-on-error permission behavior.
+      return { permissions, userRoles, adminAccess, actorId: user.id,
+        complete: !permsResult.error && !rolesResult.error && !adminAccessResult.error };
     },
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,

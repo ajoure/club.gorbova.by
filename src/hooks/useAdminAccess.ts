@@ -58,12 +58,14 @@ export interface AdminAccessApi {
   canAccessPath(pathOrLocation: string, min?: AccessLevel): boolean;
 }
 
+export const adminAccessQueryKey = (id?: string) => ["admin-access", id] as const;
+
 export function useAdminAccess(): AdminAccessApi {
   const { user } = useAuth();
   const { isSuperAdmin, isAdmin, loading: rbacLoading } = useRbac();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["admin-access", user?.id],
+    queryKey: adminAccessQueryKey(user?.id),
     enabled: !!user?.id,
     staleTime: 60_000,
     queryFn: async () => {
@@ -86,15 +88,22 @@ export function useAdminAccess(): AdminAccessApi {
       const gatingValue = gatingRes.data?.value as { enabled?: boolean } | null | undefined;
       const gatingEnabled = gatingValue?.enabled !== false; // по умолчанию включено
 
-      return { rows, gatingEnabled };
+      return { rows, gatingEnabled, actorId: user!.id, complete: !gatingRes.error };
     },
   });
 
-  return useMemo<AdminAccessApi>(() => {
+  return useMemo(() => resolveAdminAccess(data?.rows ?? [], data?.gatingEnabled ?? true,
+    isSuperAdmin, isAdmin, !!user?.id && (isLoading || rbacLoading)),
+  [data, isLoading, rbacLoading, user?.id, isSuperAdmin, isAdmin]);
+}
+
+/** Shared canonical resolver; return verification reuses the exact normal route policy. */
+export function resolveAdminAccess(rows: RawAccessRow[], gatingEnabled: boolean,
+  isSuperAdmin: boolean, isAdmin: boolean, loading = false): AdminAccessApi {
     const sections = new Map<string, AccessLevel>();
     const resources = new Map<string, Map<string, AccessLevel>>();
 
-    for (const row of data?.rows ?? []) {
+    for (const row of rows) {
       if (row.resource_code) {
         let perSection = resources.get(row.section_code);
         if (!perSection) {
@@ -107,7 +116,6 @@ export function useAdminAccess(): AdminAccessApi {
       }
     }
 
-    const gatingEnabled = data?.gatingEnabled ?? true;
     const bypass = !gatingEnabled || isSuperAdmin || isAdmin;
 
     const getSectionLevel = (sectionCode: string): AccessLevel => {
@@ -144,7 +152,7 @@ export function useAdminAccess(): AdminAccessApi {
 
     return {
       // Role and section queries resolve independently; wait for both before routing.
-      isLoading: !!user?.id && (isLoading || rbacLoading),
+      isLoading: loading,
       isSuperAdmin,
       isAdmin,
       sections,
@@ -156,5 +164,5 @@ export function useAdminAccess(): AdminAccessApi {
       canAccessResource,
       canAccessPath,
     };
-  }, [data, isLoading, rbacLoading, user?.id, isSuperAdmin, isAdmin]);
+
 }

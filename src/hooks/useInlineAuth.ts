@@ -1,3 +1,4 @@
+import { authMutations } from "@/lib/appAuthMutations";
 /**
  * Shared inline auth hook — extracted from PaymentDialog.
  *
@@ -132,7 +133,7 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
     try {
       authInProgressRef.current = true;
 
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
+      const { data, error: authError } = await authMutations.signInWithPassword({
         email: email.toLowerCase().trim(),
         password,
       });
@@ -184,7 +185,7 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
 
       const fullName = [meta?.firstName, meta?.lastName].filter(Boolean).join(" ");
 
-      const { data, error: authError } = await supabase.auth.signUp({
+      const { data, error: authError } = await authMutations.signUp({
         email: email.toLowerCase().trim(),
         password,
         options: {

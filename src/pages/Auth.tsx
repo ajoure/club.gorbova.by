@@ -1,6 +1,8 @@
+import { authMutations } from "@/lib/appAuthMutations";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminReturn } from "@/contexts/AdminReturnContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,10 +90,33 @@ function normalizeInternalRedirect(value: string | null): string {
   return value;
 }
 
+function ManualReturnLogin() {
+  const { signIn } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return <div className="min-h-screen flex items-center justify-center p-6 bg-background">
+    <form className="w-full max-w-sm space-y-4" onSubmit={async event => {
+      event.preventDefault(); if (pending) return; setPending(true); setFailed(false);
+      try { const result = await signIn(email.trim(), password); setFailed(!!result.error); }
+      catch { setFailed(true); } finally { setPending(false); }
+    }}>
+      <h1 className="text-xl font-semibold">Войдите в свой аккаунт</h1>
+      <p>Подтвердите вход, чтобы продолжить работу.</p>
+      <label className="block">Email<input className="w-full rounded-md border p-2" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} /></label>
+      <label className="block">Пароль<input className="w-full rounded-md border p-2" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
+      {failed && <p role="alert">Не удалось подтвердить вход. Проверьте данные или дождитесь завершения действия в другой вкладке.</p>}
+      <button className="w-full rounded-md border p-2 disabled:opacity-50" disabled={pending}>{pending ? "Проверяем…" : "Войти"}</button>
+    </form>
+  </div>;
+}
+
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, session, signIn, signUp, loading } = useAuth();
+  const manualReturnLogin = useAdminReturn()?.view.phase === "manual";
 
   // Compute recovery-flow ONCE, synchronously, before any state init.
   // Used as the single source of truth for both initial mode and the
@@ -103,7 +128,7 @@ export default function Auth() {
     if (searchParams.get("mode") === "signup" || searchParams.has("ref")) return "signup";
     return "login";
   });
-  // Set to true ONLY after supabase.auth.updateUser({ password }) succeeds.
+  // Set to true ONLY after authMutations.updateUser({ password }) succeeds.
   // Until then, recovery sessions are NOT allowed to navigate to /dashboard.
   const [passwordUpdated, setPasswordUpdated] = useState(false);
   const [email, setEmail] = useState(() => {
@@ -196,6 +221,7 @@ export default function Auth() {
   }, [isRecoveryFlow]);
 
   useEffect(() => {
+    if (manualReturnLogin) return;
     // Recovery-flow guard: as long as the user opened a recovery link and
     // hasn't actually changed their password yet, we MUST NOT redirect them
     // anywhere — otherwise the recovery session silently logs them in.
@@ -237,7 +263,7 @@ export default function Auth() {
       // По умолчанию — на дашборд
       navigate('/dashboard');
     }
-  }, [user, mode, navigate, searchParams, isRecoveryFlow, passwordUpdated]);
+  }, [user, mode, navigate, searchParams, isRecoveryFlow, passwordUpdated, manualReturnLogin]);
 
   const getFieldError = (field: string) => {
     return fieldErrors.find(e => e.field === field)?.message;
@@ -277,7 +303,7 @@ export default function Auth() {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ password });
+    const { error } = await authMutations.updateUser({ password });
 
     setIsSubmitting(false);
 
@@ -589,6 +615,7 @@ export default function Auth() {
     </div>
   );
 
+  if (manualReturnLogin) return <ManualReturnLogin />;
   return (
     <div className="relative flex min-h-[100dvh] items-start justify-center overflow-x-hidden overflow-y-auto p-4 py-6 sm:items-center sm:py-4">
       {/* Background gradient */}

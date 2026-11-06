@@ -1,3 +1,4 @@
+import { authMutations } from "@/lib/appAuthMutations";
 import type { QuestionnaireJourney } from "@/lib/siteQuestionnaireJourney";
 /**
  * useInlineEmailOtp — OTP-first inline auth for public/identity flows.
@@ -315,7 +316,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
         }
 
         // Step 2: exchange token_hash for a real Supabase session.
-        const { data: sessionData, error: sessionError } = await supabase.auth.verifyOtp({
+        const { data: sessionData, error: sessionError } = await authMutations.verifyOtp({
           token_hash: tokenHash,
           type: "magiclink",
         });
@@ -330,12 +331,12 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
         // after the email code has produced a verified Supabase session.
         const pendingPassword = pendingPasswordRef.current;
         if (pendingPassword) {
-          const { error: passwordError } = await supabase.auth.updateUser({
+          const { error: passwordError } = await authMutations.updateUser({
             password: pendingPassword,
           });
           if (passwordError) {
             console.error("[useInlineEmailOtp] password setup failed:", passwordError);
-            await supabase.auth.signOut();
+            await authMutations.signOut();
             setStep("details");
             setError(
               "Email подтверждён, но пароль не удалось сохранить. Проверьте пароль и запросите новый код.",

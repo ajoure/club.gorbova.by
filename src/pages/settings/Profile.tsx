@@ -1,3 +1,4 @@
+import { authMutations } from "@/lib/appAuthMutations";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -255,7 +256,7 @@ export default function ProfileSettings() {
       setIsChanging(true);
       try {
         // First verify current password by re-authenticating
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+        const { error: signInError } = await authMutations.signInWithPassword({
           email: user?.email || "",
           password: currentPassword,
         });
@@ -267,7 +268,7 @@ export default function ProfileSettings() {
         }
 
         // Update password
-        const { error: updateError } = await supabase.auth.updateUser({
+        const { error: updateError } = await authMutations.updateUser({
           password: newPassword,
         });
 

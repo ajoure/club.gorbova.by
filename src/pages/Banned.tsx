@@ -1,3 +1,4 @@
+import { authMutations } from "@/lib/appAuthMutations";
 import { useNavigate } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ export default function Banned() {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await authMutations.signOut();
     navigate("/auth");
   };
 
