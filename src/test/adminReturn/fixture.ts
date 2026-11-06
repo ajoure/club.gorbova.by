@@ -44,6 +44,7 @@ export function authFixture(lock?: <R>(name: string, timeout: number, work: () =
     refreshWait: null as Promise<void> | null,
     userWait: null as Promise<void> | null,
     userWaitActor: null as string | null,
+    userWaitOccurrence: null as number | null,
     permissionWait: null as Promise<void> | null,
     permissionError: false,
     deny: false,
@@ -62,7 +63,11 @@ export function authFixture(lock?: <R>(name: string, timeout: number, work: () =
     calls.push({ method: init?.method ?? "GET", path: u.pathname, scope: u.searchParams.get("scope"), actor: s?.user.id });
     const reply = (value: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
     if (u.pathname === "/auth/v1/logout") { await options.logoutWait; return reply({ message: "synthetic logout result" }, options.logoutStatus); }
-    if (u.pathname === "/auth/v1/user") { if (!options.userWaitActor || options.userWaitActor === s?.user.id) await options.userWait; return s ? reply(options.operatorUserMissing && s.user.id === OPERATOR ? { user: null } : s.user) : reply({ message: "invalid synthetic user" }, 401); }
+    if (u.pathname === "/auth/v1/user") {
+      const occurrence = calls.filter(c => c.path.endsWith("/user") && c.actor === s?.user.id).length;
+      if ((!options.userWaitActor || options.userWaitActor === s?.user.id) && (options.userWaitOccurrence === null || options.userWaitOccurrence === occurrence)) await options.userWait;
+      return s ? reply(options.operatorUserMissing && s.user.id === OPERATOR ? { user: null } : s.user) : reply({ message: "invalid synthetic user" }, 401);
+    }
     if (u.pathname === "/auth/v1/token") {
       const body = JSON.parse(String(init?.body));
       if (u.searchParams.get("grant_type") === "password") { await options.passwordWait; return reply(register(session(options.passwordUserId, SESSION_B, false, "manual"))); }

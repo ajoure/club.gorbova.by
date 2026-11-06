@@ -158,9 +158,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A peer may have changed shared SDK storage before its event reaches this document.
       // This is a fresh public read, never a rescue of an expired returned credential.
       const actual = await supabase.auth.getSession();
-      if (actual.error || !actual.data.session || actual.data.session.user.id !== data.user.id
-        || returnedBinding !== await verifiedSessionBinding(supabase.auth, actual.data.session, data.user.id)
-        || latestSession.current?.user.id !== data.user.id || latestSession.current.access_token !== actual.data.session.access_token
+      if (actual.error || !actual.data.session || actual.data.session.user.id !== data.user.id) return { error: new Error("RETURN_LOGIN_UNVERIFIED") };
+      const actualBinding = await verifiedSessionBinding(supabase.auth, actual.data.session, data.user.id);
+      if (returnedBinding !== actualBinding) return { error: new Error("RETURN_LOGIN_UNVERIFIED") };
+      // Last public storage read follows ALL server-verification awaits. No new verification loop:
+      // an intervening token/session change is recovery, even if its event has not arrived yet.
+      const closing = await supabase.auth.getSession();
+      if (closing.error || !closing.data.session || closing.data.session.user.id !== data.user.id
+        || closing.data.session.access_token !== actual.data.session.access_token
+        || latestSession.current?.user.id !== data.user.id || latestSession.current.access_token !== closing.data.session.access_token
         || getReturnFence()?.operationId !== recovery.operationId || getReturnFence()?.phase !== "manual") return { error: new Error("RETURN_LOGIN_UNVERIFIED") };
       // Explicit manual credentials replaced the old session under the same origin lock.
       // This is normal login, never a claimed successful restoration of the old backup.

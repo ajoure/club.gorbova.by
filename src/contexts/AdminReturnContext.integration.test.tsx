@@ -214,4 +214,28 @@ describe("Admin return real AuthProvider/coordinator/route integration with actu
     expect(screen.queryByText("client content")).toBeNull(); expect(runtime.success).not.toHaveBeenCalled();
     expect(s.f.calls.filter(c => c.path.endsWith("token"))).toHaveLength(1); // No refresh rescue.
   });
+  it("T11 a raw peer write during the SECOND manual user verification cannot clear the fence", async () => {
+    const s = await setup(); s.f.options.logoutStatus = 401;
+    const Auth = (await import("@/pages/Auth")).default;
+    s.mount("/purchases", <Auth />); await waitClient();
+    fireEvent.click(screen.getByRole("button", { name: "Вернуться в админку" }));
+    await waitUntil(() => expect(screen.getByRole("button", { name: "Войти заново" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Войти заново" }));
+    await waitUntil(() => expect(screen.getByLabelText("Email")).toBeTruthy());
+    const peer = authFixture(undefined, { store: s.f.store, storageKey: s.f.storageKey }); peer.options.passwordUserId = TARGET;
+    const second = deferred<void>(); s.f.options.userWait = second.promise; s.f.options.userWaitActor = OPERATOR; s.f.options.userWaitOccurrence = 2;
+    let login!: ReturnType<typeof authOperations.signIn>;
+    act(() => { login = authOperations.signIn("operator@example.invalid", "synthetic-only"); });
+    await waitUntil(() => expect(s.f.calls.filter(c => c.path.endsWith("user") && c.actor === OPERATOR)).toHaveLength(2));
+    expect(authOperations.user?.id).toBe(OPERATOR);
+    await peer.client.auth.signInWithPassword({ email: "target@example.invalid", password: "synthetic-only" });
+    expect(authOperations.user?.id).toBe(OPERATOR); // Deliberately no BroadcastChannel delivery.
+    let result: Awaited<typeof login>;
+    await act(async () => { second.resolve(); result = await login; });
+    const actualActor = (await s.f.client.auth.getSession()).data.session?.user.id;
+    if (!result!.error) console.info("manual-second-user-outcome", { errorNull: true, fencePresent: !!getReturnFence(), SDKIsTarget: actualActor === TARGET, contextIsOperator: authOperations.user?.id === OPERATOR });
+    expect(result!.error).not.toBeNull(); expect(getReturnFence()?.phase).toBe("manual");
+    expect(actualActor).toBe(TARGET); expect(screen.queryByText("operator content")).toBeNull(); expect(screen.queryByText("client content")).toBeNull();
+    expect(runtime.success).not.toHaveBeenCalled(); expect(s.f.calls.filter(c => c.path.endsWith("logout"))).toHaveLength(1);
+  });
 });
