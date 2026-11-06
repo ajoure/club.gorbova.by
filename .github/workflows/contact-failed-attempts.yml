@@ -1,0 +1,51 @@
+name: Contact failed attempt history
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/*_contact_failed_attempt_history.sql'
+      - 'scripts/contact-attempts/**'
+      - 'scripts/contact-failed-attempts.test.mjs'
+      - 'src/lib/payments/contactFailedAttempts.ts'
+      - 'src/components/admin/ContactPaymentsTab.tsx'
+      - '.github/workflows/contact-failed-attempts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/*_contact_failed_attempt_history.sql'
+      - 'scripts/contact-attempts/**'
+      - 'src/lib/payments/contactFailedAttempts.ts'
+      - '.github/workflows/contact-failed-attempts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: contact_attempts_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d contact_attempts_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: fixture-only
+      PGDATABASE: contact_attempts_test
+      CONTACT_ATTEMPTS_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python3 scripts/contact-attempts/test_contract.py
+      - run: node --experimental-strip-types --test scripts/contact-failed-attempts.test.mjs
