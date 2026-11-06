@@ -24801,10 +24801,6 @@ export type Database = {
       }
     }
     Functions: {
-      admin_get_contact_failed_attempts: {
-        Args: { p_profile_id: string }
-        Returns: { id: string; provider_payment_id: string; amount: number; currency: string; attempted_at: string }[]
-      }
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {
@@ -25045,6 +25041,16 @@ export type Database = {
           linked_product_name: string
           member_updated_at: string
           telegram_access_status: string
+        }[]
+      }
+      admin_get_contact_failed_attempts: {
+        Args: { p_profile_id: string }
+        Returns: {
+          amount: number
+          attempted_at: string
+          currency: string
+          id: string
+          provider_payment_id: string
         }[]
       }
       admin_get_contact_telegram_channels_v1: {
