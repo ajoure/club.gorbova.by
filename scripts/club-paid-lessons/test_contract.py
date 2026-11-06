@@ -99,7 +99,11 @@ def main():
       INSERT INTO public.subscriptions_v2 VALUES('{subscription}','{u}','{p}','{club}','{tariff}','active',now()-interval '3 months','{end}');
       INSERT INTO public.payments_v2(id,profile_id,status,currency,amount,refunded_amount,is_deleted) VALUES('{payment}','{p}','succeeded','BYN',800,50,false);
       INSERT INTO public.access_rules VALUES('{rule}','{club}','{tariff}','training_content','{root}',true,
-       '{{"access_mode":"full","allowed_lesson_ids":[],"allowed_module_ids":[],"match_purchase_month":true}}');""")
+       '{{"access_mode":"full","allowed_lesson_ids":[],"allowed_module_ids":[],"match_purchase_month":true}}');
+      INSERT INTO public.orders_v2 VALUES
+       ('{uid(61)}','{u}',NULL,'{tariff}','paid','{{"deal_month":"2020-01"}}'),
+       ('{uid(62)}',NULL,'{p}','{tariff}','paid','{{"deal_month":"2020-02"}}'),
+       ('{uid(63)}','{u}','{p}','{tariff}','paid','{{"deal_month":"2020-03","source":"rule_engine"}}');""")
     baseline = value("SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(x)) FROM public.payments_v2 x),(SELECT jsonb_agg(to_jsonb(x)) FROM public.subscriptions_v2 x),(SELECT jsonb_agg(to_jsonb(x)) FROM public.orders_v2 x));")
     args = [f"'{uid(50)}'", f"'{u}'", f"'{p}'", f"'{subscription}'", f"'{payment}'", f"'{tariff}'", f"'{lesson}'", f"'{month}'", '750', f"'{end}'", "'synthetic-owner-agreement:1'", "'fixture-operator'"]
 
@@ -114,6 +118,9 @@ def main():
         return f"SELECT has_purchase::text FROM public.has_month_purchase_bulk('{user}','{payload}'::jsonb);"
 
     check(gate(), 'false', 'original missing paid month reproduced')
+    check(gate('legacy-opaque-key', m='2020-01'), 'true', 'real paid order preserves opaque key')
+    check(gate('legacy-opaque-key', m='2020-02'), 'true', 'historical profile-linked order preserved')
+    check(gate('legacy-opaque-key', m='2020-03'), 'false', 'rule-engine order remains excluded')
     denied(record(role='anon'), 'anon writer denied')
     denied(record(role='authenticated'), 'authenticated writer denied')
     for changes in ({1: f"'{uid(80)}'"}, {5: f"'{uid(81)}'"}, {7: "'1999-01'"}, {8: '751'}, {9: "now()+interval '10 years'"}):
@@ -127,6 +134,8 @@ def main():
     check('SELECT count(*) FROM private.club_paid_lesson_correction_audit;', 1, 'exactly one audit')
     check(gate(), 'true', 'plain lesson ID')
     check(gate(f'{lesson}::{tariff}'), 'true', 'actual lesson::tariff UI key')
+    check('SET ROLE authenticated; '+gate(f'{lesson}::{tariff}'), 'true', 'authenticated reader through unchanged ACL')
+    denied('SET ROLE anon; '+gate(f'{lesson}::{tariff}'), 'anon bulk remains denied')
     check(gate(f'{parent}::{tariff}'), 'true', 'containing module navigation')
     check(gate(f'{root}::{tariff}'), 'true', 'ancestor navigation')
     for target in [other, f'{other}::{tariff}', 'live-access-month-0', 'invalid', f'{lesson}::{uid(81)}']:
@@ -150,6 +159,7 @@ def main():
         ("UPDATE public.payments_v2 SET transaction_type='refund';", "UPDATE public.payments_v2 SET transaction_type='payment';"),
         ("UPDATE public.payments_v2 SET refunded_amount=-1;", "UPDATE public.payments_v2 SET refunded_amount=50;"),
         ("UPDATE public.access_rules SET is_active=false;", "UPDATE public.access_rules SET is_active=true;"),
+        ("UPDATE public.access_rules SET conditions=conditions||'{\"unknown_guard\":true}';", "UPDATE public.access_rules SET conditions=conditions-'unknown_guard';"),
         (f"UPDATE public.training_lessons SET released=false WHERE id='{lesson}';", f"UPDATE public.training_lessons SET released=true WHERE id='{lesson}';"),
         (f"UPDATE public.training_modules SET product_id='{uid(82)}' WHERE id='{root}';", f"UPDATE public.training_modules SET product_id='{club}' WHERE id='{root}';"),
     ]

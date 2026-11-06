@@ -273,6 +273,10 @@ BEGIN
      FROM sandbox_exec_hdjgkjceownmmnrqqtuz;
    REVOKE ALL ON FUNCTION private.training_lesson_access_before_paid_correction(uuid,uuid)
      FROM sandbox_exec_hdjgkjceownmmnrqqtuz;
+   REVOKE ALL ON FUNCTION private.club_month_rule_allows_lesson(jsonb,uuid,uuid),
+     private.club_paid_lesson_claim_valid(private.club_paid_lesson_corrections),
+     private.has_club_paid_lesson_correction(uuid,uuid,text,text,boolean)
+     FROM sandbox_exec_hdjgkjceownmmnrqqtuz;
  END IF;
 END;
 $technical_acl$;
@@ -283,6 +287,12 @@ BEGIN
      IS DISTINCT FROM '79b2c0572e2d5a15f5302b1d276fa212'
    OR EXISTS(SELECT 1 FROM private.club_paid_lesson_corrections)
    OR EXISTS(SELECT 1 FROM private.club_paid_lesson_correction_audit)
+   OR EXISTS(SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+     WHERE p.oid IN('private.club_month_rule_allows_lesson(jsonb,uuid,uuid)'::regprocedure,
+       'private.club_paid_lesson_claim_valid(private.club_paid_lesson_corrections)'::regprocedure,
+       'private.has_club_paid_lesson_correction(uuid,uuid,text,text,boolean)'::regprocedure,
+       'private.training_lesson_access_before_paid_correction(uuid,uuid)'::regprocedure)
+       AND a.grantee<>p.proowner)
    OR has_function_privilege('anon','public.record_club_paid_lesson_correction(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,numeric,timestamptz,text,text)','EXECUTE')
    OR has_function_privilege('authenticated','public.record_club_paid_lesson_correction(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,numeric,timestamptz,text,text)','EXECUTE') THEN
    RAISE EXCEPTION 'paid_lesson_postcheck_failed';
