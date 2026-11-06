@@ -2201,15 +2201,21 @@ Deno.serve(async (req) => {
 
       if (telegramUserId && reaction.chat.type === 'private') {
         try {
-          // Find the DB message by telegram message_id + telegram_user_id
-          const { data: dbMsg } = await supabase
+          // Provider message IDs are scoped to this bot's private chat. Never
+          // attach a bot reaction to another bot or a Business transport row.
+          const { data: dbMsg, error: messageError } = await supabase
             .from('telegram_messages')
             .select('id, user_id')
             .eq('message_id', telegramMessageId)
-            .eq('telegram_user_id', telegramUserId)
+            .eq('telegram_user_id', chatId)
+            .eq('bot_id', botId)
+            .eq('transport', 'bot')
+            .is('business_account_id', null)
+            .is('business_connection_id', null)
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
+          if (messageError) throw new Error('reaction_message_lookup_failed');
 
           if (dbMsg) {
             // Determine added and removed emojis
@@ -2224,11 +2230,12 @@ Deno.serve(async (req) => {
             const removed = oldEmojis.filter(e => !newEmojis.includes(e));
 
             // Find profile user_id for the actual reactor (not message author)
-            const { data: reactorProfile } = await supabase
+            const { data: reactorProfile, error: reactorError } = await supabase
               .from('profiles')
               .select('user_id')
               .eq('telegram_user_id', telegramUserId)
               .maybeSingle();
+            if (reactorError) throw new Error('reaction_actor_lookup_failed');
 
             if (!reactorProfile) {
               console.log(`[REACTION] unmapped_reactor: tg_user=${telegramUserId}, skipping`);
@@ -2241,17 +2248,18 @@ Deno.serve(async (req) => {
 
             // Remove reactions
             for (const emoji of removed) {
-              await supabase
+              const { error } = await supabase
                 .from('telegram_message_reactions')
                 .delete()
                 .eq('message_id', dbMsg.id)
                 .eq('user_id', reactorUserId)
                 .eq('emoji', emoji);
+              if (error) throw new Error('reaction_delete_failed');
             }
 
             // Add reactions (upsert-safe via unique constraint)
             for (const emoji of added) {
-              await supabase
+              const { error } = await supabase
                 .from('telegram_message_reactions')
                 .upsert(
                   {
@@ -2261,6 +2269,7 @@ Deno.serve(async (req) => {
                   },
                   { onConflict: 'message_id,user_id,emoji' }
                 );
+              if (error) throw new Error('reaction_upsert_failed');
             }
 
             console.log(`[REACTION] tg_user=${telegramUserId} msg=${telegramMessageId} added=${added.join(',')} removed=${removed.join(',')}`);
@@ -2269,6 +2278,9 @@ Deno.serve(async (req) => {
           }
         } catch (reactionErr) {
           console.error('[REACTION] Error processing message_reaction:', reactionErr);
+          return new Response(JSON.stringify({ ok: false, error: 'reaction_processing_failed' }), {
+            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
         }
       }
 
