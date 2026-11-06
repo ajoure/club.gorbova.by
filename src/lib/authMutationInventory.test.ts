@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { inspectAuthSource, inspectRuntime } from "../../scripts/verify-auth-mutation-ingress.mjs";
 
 describe("auth mutation ingress AST gate", () => {
+  // Full-source AST scan needs an integration-test budget; the corpus cases keep the default timeout.
   it("gates every current runtime source file in the normal CI unit suite", () => {
     expect(inspectRuntime(process.cwd()).findings).toEqual([]);
-  });
+  }, 30_000);
   it.each([
     "supabase.auth.signOut()",
     "supabase.auth['signOut']()",
