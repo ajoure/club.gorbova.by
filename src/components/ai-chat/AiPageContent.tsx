@@ -733,6 +733,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
         <GlassCard
           className={cn(
             "p-0 overflow-hidden flex flex-col flex-1 min-h-0 transition-all",
+            mode === "user" && "mt-1.5",
             isDragOverChat && "ring-2 ring-primary/30"
           )}
           onDragOver={handleChatDragOver}
