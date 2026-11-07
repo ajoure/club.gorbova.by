@@ -103,6 +103,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE site_questionnaire_test'
           node --test scripts/tests/site-questionnaire-database.test.mjs scripts/tests/site-webinar-registration.test.mjs scripts/tests/webinar-cms-release.test.mjs scripts/tests/questionnaire-function-packaging.test.mjs
           node --test scripts/tests/webinar-refinement-cms.test.mjs scripts/site-block-version-repair/repair.test.mjs
+          node --test scripts/video-security/session-guard.test.mjs
           node --test scripts/tests/site-questionnaire-bonus-channel.test.mjs
           node --test scripts/tests/site-questionnaire-journeys.test.mjs
           node scripts/tests/site-questionnaire-concurrency.test.mjs
