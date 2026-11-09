@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { useAdminAccess } from '@/hooks/useAdminAccess';
 import { useAuth } from '@/contexts/AuthContext';
 import { latestObservedIncomingBoundary, telegramMessageCacheKey } from '@/lib/telegramChatCache';
+import { SourceBadge } from './unified/SourceBadge';
 
 type Bot = { id: string; label: string; username: string | null };
 type Dialog = { user_id: string; display_name: string; telegram_user_id: number | null; telegram_username: string | null;
@@ -182,6 +183,7 @@ function SupportBotWorkspace() {
           {dialogs.data?.length === 0 && <p className="p-3 text-sm text-muted-foreground">Обращений нет</p>}
           {dialogs.data?.map(d => <button key={d.user_id} className={`w-full border-b p-3 text-left text-sm ${selectedUser === d.user_id ? 'bg-muted' : ''}`} onClick={() => updateRoute(bot!.id, d.user_id)}>
             <span className="block font-medium break-words">{d.display_name}{d.unread_count > 0 ? ' · Требует ответа' : ''}</span>
+            <SourceBadge source="telegram" label={bot?.label || bot?.username} className="my-1" />
             <span className="block line-clamp-2 text-muted-foreground break-words">{d.last_message_preview || 'Вложение'}</span>
           </button>)}
         </div>
@@ -191,7 +193,10 @@ function SupportBotWorkspace() {
         <Button variant="ghost" size="sm" className="md:hidden self-start" onClick={() => updateRoute(bot?.id)}>К списку</Button>
         {dialog && bot ? <>
           <div className="flex flex-wrap gap-2 items-center border-b pb-2 mb-2 shrink-0">
-            <span className="min-w-0 flex-1 font-medium break-words">{dialog.display_name}</span>
+            <div className="min-w-0 flex-1">
+              <span className="block font-medium break-words">{dialog.display_name}</span>
+              <SourceBadge source="telegram" label={bot.label || bot.username} className="mt-1" />
+            </div>
             <span className="text-xs">{dialog.unread_count ? 'Требует ответа' : 'Решён'}</span>
             {dialog.assignee_name && <span className="text-xs">Ответственный: {dialog.assignee_name}</span>}
             <Button size="sm" variant="outline" className="md:hidden" aria-expanded={actionsExpanded}

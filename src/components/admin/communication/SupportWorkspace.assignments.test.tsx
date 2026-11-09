@@ -69,6 +69,30 @@ async function choose() {
 }
 
 describe('scoped assignment through existing support controls', () => {
+  it('shows the exact service bot in both the list and open conversation without broad inbox requests', async () => {
+    open();
+    await screen.findByLabelText('Передать менеджеру');
+    expect(screen.getAllByLabelText('Telegram · Service')).toHaveLength(2);
+    expect(screen.getAllByText('TG · Service')).toHaveLength(2);
+    expect(f.rpc.mock.calls.every(([name]) => ['support_bot_channels_v1', 'support_bot_dialogs_v1', 'get_contact_center_assignees_v1'].includes(name))).toBe(true);
+    expect(f.invoke).not.toHaveBeenCalled();
+    expect(f.assign).not.toHaveBeenCalled();
+  });
+  it('replaces the visible source when selecting another service bot', async () => {
+    const original = f.rpc.getMockImplementation()!;
+    const second = '00000000-0000-0000-0000-000000000099';
+    f.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => name === 'support_bot_channels_v1'
+      ? { data: [{ id: f.bot, label: 'Service' }, { id: second, label: 'Second service' }], error: null }
+      : original(name, args));
+    open();
+    await screen.findByLabelText('Передать менеджеру');
+    expect(screen.getAllByText('TG · Service')).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Служебный бот'), { target: { value: second } });
+    await screen.findByText('TG · Second service');
+    expect(screen.queryByText('TG · Service')).not.toBeInTheDocument();
+    expect(f.invoke).not.toHaveBeenCalled();
+    expect(f.assign).not.toHaveBeenCalled();
+  });
   it('opens and closes mobile management actions without changing assignment or channel', async () => {
     open();
     const toggle = await screen.findByRole('button', { name: 'Действия' });
