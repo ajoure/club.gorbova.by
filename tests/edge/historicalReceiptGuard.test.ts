@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { hasHistoricalReceiptMarker, historicalWebhookReplay, HISTORICAL_RECEIPT_RUN, inspectHistoricalReceipt } from '../../supabase/functions/bepaid-webhook/historical-receipt-guard';
+import { hasHistoricalReceiptMarker, historicalWebhookReplay, HISTORICAL_RECEIPT_RUN, PAID_RECEIPT_REPAIR_RUN, matchesFinancialReceiptTuple, inspectHistoricalReceipt } from '../../supabase/functions/bepaid-webhook/historical-receipt-guard';
 import { classifyRebillAccessOutcome, runRebillFlow } from '../../supabase/functions/bepaid-webhook/historical-rebill-flow';
 
 const uid = '11111111-2222-4333-8444-555555555555';
@@ -140,4 +141,120 @@ it('wires early boundaries before authenticated webhook queue, importer profile/
   expect(r.indexOf('const historical = await inspectHistoricalReceipt(db, item.bepaid_uid)')).toBeLessThan(r.indexOf('return canonicalRecovery(db, options)'));
   const g=source('grant-access-for-order/index.ts');
   expect(g.indexOf('hasHistoricalReceiptMarker(historicalOrderRead.data?.meta)')).toBeLessThan(g.indexOf("if (_body.context === '3ds_finalize')"));
+});
+
+
+describe('one reviewed paid-receipt repair, without new access', () => {
+  const approvedDigest = 'e007b3314bc03da0f8dff92de8024337a1ddb8e31521cad9f5204c7f546d6a6c';
+  const tuple = ['financial-receipt-preservation-v1', PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent'].join('\n');
+  beforeEach(() => { vi.stubGlobal('crypto', webcrypto); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function paidFixture() {
+    const h = fixture();
+    Object.assign(h.order.meta, { historical_repair_run: PAID_RECEIPT_REPAIR_RUN,
+      historical_access_mode: 'unchanged_existing_rights',
+      grant_status: 'not_invoked_financial_reconstruction',
+      materialization_status: 'financial_reconstructed_preserved' });
+    return h;
+  }
+  // No synthetic tuple is added to the production allowlist. Only the crypto
+  // boundary maps this exact synthetic tuple to the approved digest; every
+  // different input uses real SHA-256 and fails the production allowlist.
+  function approveSyntheticTuple() {
+    const realDigest = webcrypto.subtle.digest.bind(webcrypto.subtle);
+    return vi.spyOn(webcrypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+      if (new TextDecoder().decode(data as ArrayBuffer) === tuple) {
+        return Uint8Array.from(approvedDigest.match(/../g)!, byte => parseInt(byte, 16)).buffer;
+      }
+      return realDigest(algorithm, data);
+    });
+  }
+
+  it('uses actual SHA-256 of the exact newline tuple, with an explicit helper expectation', async () => {
+    const expected = createHash('sha256').update(tuple).digest('hex');
+    expect(expected).not.toBe(approvedDigest);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', expected)).toBe(true);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'different-parent', expected)).toBe(false);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt\nparent', 'parent', expected)).toBe(false);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', 'invalid')).toBe(false);
+  });
+
+  it('does not authorize an arbitrary fully consistent receipt merely by setting the new run', async () => {
+    const h = paidFixture();
+    expect(await inspectHistoricalReceipt(h.db, uid)).toEqual({ kind: 'hold', reason: 'historical_receipt_authorization_mismatch' });
+  });
+
+  it.each([false, true])('acknowledges only the approved exact tuple; missing payment profile=%s', async missingProfile => {
+    const h = paidFixture(); if (missingProfile) h.payment.profile_id = null as any;
+    const digest = approveSyntheticTuple(), before = structuredClone(h.rows);
+    expect(await inspectHistoricalReceipt(h.db, uid, { amount: 100, currency: 'BYN', paidAt, status: 'successful', type: 'payment' }))
+      .toEqual({ kind: 'preserved', orderId: h.order.id, parentOrderId: h.parent.id });
+    expect(digest).toHaveBeenCalledTimes(1);
+    expect(new TextDecoder().decode(digest.mock.calls[0][1] as ArrayBuffer)).toBe(tuple);
+    expect(h.rows).toEqual(before); expect(h.reads).toEqual(['orders_v2', 'payments_v2', 'orders_v2']);
+  });
+
+  it.each(['receipt', 'parent', 'uid'])('holds a consistent different %s despite the approved run', async field => {
+    const h = paidFixture(); approveSyntheticTuple(); let lookupUid = uid;
+    if (field === 'receipt') { h.payment.id = 'other-receipt'; h.order.meta.historical_receipt_payment_id = h.payment.id; }
+    if (field === 'parent') { h.parent.id = 'other-parent'; h.order.meta.historical_parent_order_id = h.parent.id; h.order.meta.parent_order_id = h.parent.id; }
+    if (field === 'uid') {
+      lookupUid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'; h.payment.provider_payment_id = lookupUid;
+      h.order.provider_payment_id = lookupUid; h.order.order_number = `REBILL-${lookupUid.slice(0, 12)}`;
+      h.order.meta.materialized_from_payment_uid = lookupUid;
+    }
+    const before = structuredClone(h.rows);
+    expect(await inspectHistoricalReceipt(h.db, lookupUid)).toEqual({ kind: 'hold', reason: 'historical_receipt_authorization_mismatch' });
+    expect(h.rows).toEqual(before);
+  });
+
+  it.each([
+    ['unknown run', (h: any) => { h.order.meta.historical_repair_run = 'other'; }],
+    ['legacy markers with new run', (h: any) => { h.order.meta.historical_access_mode = 'retained_on_parent'; }],
+    ['new markers with old run', (h: any) => { h.order.meta.historical_repair_run = HISTORICAL_RECEIPT_RUN; }],
+    ['wrong profile', (h: any) => { h.payment.profile_id = 'other'; }],
+    ['refund', (h: any) => { h.payment.refunded_amount = 1; }],
+    ['amount', (h: any) => { h.payment.amount = 200; }],
+    ['date', (h: any) => { h.payment.paid_at = '2026-09-01T00:00:00Z'; }],
+    ['fake fulfillment', (h: any) => { h.order.meta.grant_status = 'success'; }],
+  ])('checks the full existing proof before hashing: %s', async (_name, mutate) => {
+    const h = paidFixture(), digest = approveSyntheticTuple(); mutate(h);
+    const before = structuredClone(h.rows);
+    expect((await inspectHistoricalReceipt(h.db, uid)).kind).toBe('hold');
+    expect(digest).not.toHaveBeenCalled(); expect(h.rows).toEqual(before);
+  });
+
+  it.each([{ amount: 9999 }, { currency: 'EUR' }, { status: 'failed' }, { type: 'refund' }])(
+    'holds incoming event drift before digest authorization: %j', async patch => {
+      const h = paidFixture(), digest = approveSyntheticTuple();
+      const response = await historicalWebhookReplay(h.db, { transaction: { ...h.tx, ...patch } }, {});
+      expect(response?.status).toBe(202); expect(digest).not.toHaveBeenCalled();
+    });
+
+  it('keeps old-run preservation independent of the new digest gate', async () => {
+    const h = fixture(), digest = approveSyntheticTuple();
+    expect((await inspectHistoricalReceipt(h.db, uid)).kind).toBe('preserved');
+    expect(digest).not.toHaveBeenCalled();
+  });
+
+  it.each(['off', 'dry_run', 'on'] as const)('returns a receipt-only 200 and never grants on new-run mode=%s replay', async mode => {
+    const h = paidFixture(); approveSyntheticTuple(); const before = structuredClone(h.rows);
+    const response = await historicalWebhookReplay(h.db, { transaction: h.tx }, {});
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toEqual({ ok: true, status: 'historical_receipt_preserved', access_changed: false });
+    const mutation = vi.fn(() => { throw Error('unexpected mutation'); });
+    const deps: any = { inspectHistoricalReceipt: (value: string) => inspectHistoricalReceipt(h.db, value),
+      writeAudit: mutation, findRebillOrderByOrderNumber: mutation, checkSbsMismatchBeforeRebill: mutation,
+      insertRebillOrder: mutation, insertPaymentRow: mutation, updatePaymentOrderId: mutation,
+      invokeGrantAccess: mutation, mergeOrderMeta: mutation };
+    const result = await runRebillFlow(deps, { mode, payment: { uid, amount: 100, paid_at: paidAt }, parentOrder: h.parent as any, subscriptionId: 'sbs_test' });
+    expect(result).toMatchObject({ decision: 'resumed_repoint_only', proceedLegacy: false, reason: 'historical_receipt_preserved' });
+    expect(mutation).not.toHaveBeenCalled(); expect(h.rows).toEqual(before);
+  });
+
+  it('holds digest infrastructure failure without a fallback', async () => {
+    const h = paidFixture(); vi.spyOn(webcrypto.subtle, 'digest').mockRejectedValue(new Error('unavailable'));
+    expect(await inspectHistoricalReceipt(h.db, uid)).toEqual({ kind: 'hold', reason: 'historical_receipt_lookup_failed' });
+  });
 });
