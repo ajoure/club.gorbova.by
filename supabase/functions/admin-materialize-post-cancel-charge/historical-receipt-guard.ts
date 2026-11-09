@@ -3,6 +3,23 @@
 // No provider calls, queue claims, audit inserts, or other writes here.
 // deno-lint-ignore-file no-explicit-any
 export const HISTORICAL_RECEIPT_RUN = '20261026_legacy_periodic_repair';
+export const PAID_RECEIPT_REPAIR_RUN = '20261109_paid_receipt_repair';
+// Only this reviewed receipt/parent tuple is authorized. Private case IDs and
+// provider UIDs remain outside source control; a run marker alone is no proof.
+const PAID_RECEIPT_REPAIR_DIGEST = 'e007b3314bc03da0f8dff92de8024337a1ddb8e31521cad9f5204c7f546d6a6c';
+
+/** Deterministic, read-only tuple proof. Callers cannot change the production
+ * allowlist: inspectHistoricalReceipt always supplies the constant above. */
+export async function matchesFinancialReceiptTuple(
+  run: string, uid: string, paymentId: string, parentId: string, expectedDigest: string,
+): Promise<boolean> {
+  const fields = ['financial-receipt-preservation-v1', run, uid, paymentId, parentId];
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest) ||
+      fields.some(value => typeof value !== 'string' || !value || /[\r\n]/.test(value))) return false;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fields.join('\n')));
+  const actual = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+  return actual === expectedDigest;
+}
 
 export type HistoricalReceiptDecision =
   | { kind: 'none' }
@@ -50,10 +67,16 @@ export async function inspectHistoricalReceipt(
     }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return { kind: 'hold', reason: 'historical_receipt_invalid_uid' };
     const m = order.meta;
-    if (m.reconstructed_historical_deal !== true || m.historical_repair_run !== HISTORICAL_RECEIPT_RUN ||
-        m.historical_access_mode !== 'retained_on_parent' || m.do_not_grant_access !== true ||
-        m.grant_status !== 'historical_retained_on_parent' ||
-        m.materialization_status !== 'reconstructed_historical_deal' ||
+    const legacyMarkers = m.historical_repair_run === HISTORICAL_RECEIPT_RUN &&
+      m.historical_access_mode === 'retained_on_parent' &&
+      m.grant_status === 'historical_retained_on_parent' &&
+      m.materialization_status === 'reconstructed_historical_deal';
+    const paidRepairMarkers = m.historical_repair_run === PAID_RECEIPT_REPAIR_RUN &&
+      m.historical_access_mode === 'unchanged_existing_rights' &&
+      m.grant_status === 'not_invoked_financial_reconstruction' &&
+      m.materialization_status === 'financial_reconstructed_preserved';
+    if (m.reconstructed_historical_deal !== true || (!legacyMarkers && !paidRepairMarkers) ||
+        m.do_not_grant_access !== true ||
         !m.historical_parent_order_id || !m.historical_receipt_payment_id ||
         m.parent_order_id !== m.historical_parent_order_id ||
         m.materialized_from_payment_uid !== uid || order.order_number !== `REBILL-${uid.slice(0, 12)}` || order.provider !== 'bepaid' ||
@@ -82,6 +105,11 @@ export async function inspectHistoricalReceipt(
         !['payment', 'charge', 'sale'].includes(String(incoming.type)))) {
       return { kind: 'hold', reason: 'historical_receipt_event_mismatch' };
     }
+    // The new run must pass every existing stored/event proof above before its
+    // single authorized tuple can be acknowledged. Never resume access here.
+    if (paidRepairMarkers && !await matchesFinancialReceiptTuple(
+      PAID_RECEIPT_REPAIR_RUN, uid, payment.id, parent.id, PAID_RECEIPT_REPAIR_DIGEST,
+    )) return { kind: 'hold', reason: 'historical_receipt_authorization_mismatch' };
     return { kind: 'preserved', orderId: order.id, parentOrderId: parent.id };
   } catch {
     return { kind: 'hold', reason: 'historical_receipt_lookup_failed' };
