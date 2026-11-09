@@ -4,21 +4,25 @@
 // deno-lint-ignore-file no-explicit-any
 export const HISTORICAL_RECEIPT_RUN = '20261026_legacy_periodic_repair';
 export const PAID_RECEIPT_REPAIR_RUN = '20261109_paid_receipt_repair';
-// Only this reviewed receipt/parent tuple is authorized. Private case IDs and
+// Only the reviewed receipt/parent tuples are authorized. Private case IDs and
 // provider UIDs remain outside source control; a run marker alone is no proof.
-const PAID_RECEIPT_REPAIR_DIGEST = 'e007b3314bc03da0f8dff92de8024337a1ddb8e31521cad9f5204c7f546d6a6c';
+const PAID_RECEIPT_REPAIR_DIGESTS: readonly string[] = [
+  'e007b3314bc03da0f8dff92de8024337a1ddb8e31521cad9f5204c7f546d6a6c',
+  '656e05477acea6202b6a5fc022f86bc6929d540b920fcf4d7017fc4b34227b4c',
+];
 
 /** Deterministic, read-only tuple proof. Callers cannot change the production
  * allowlist: inspectHistoricalReceipt always supplies the constant above. */
 export async function matchesFinancialReceiptTuple(
-  run: string, uid: string, paymentId: string, parentId: string, expectedDigest: string,
+  run: string, uid: string, paymentId: string, parentId: string, expectedDigest: string | readonly string[],
 ): Promise<boolean> {
   const fields = ['financial-receipt-preservation-v1', run, uid, paymentId, parentId];
-  if (!/^[a-f0-9]{64}$/.test(expectedDigest) ||
+  const allowed = typeof expectedDigest === 'string' ? [expectedDigest] : expectedDigest;
+  if (!allowed.length || allowed.some(digest => !/^[a-f0-9]{64}$/.test(digest)) ||
       fields.some(value => typeof value !== 'string' || !value || /[\r\n]/.test(value))) return false;
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fields.join('\n')));
   const actual = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-  return actual === expectedDigest;
+  return allowed.includes(actual);
 }
 
 export type HistoricalReceiptDecision =
@@ -106,9 +110,9 @@ export async function inspectHistoricalReceipt(
       return { kind: 'hold', reason: 'historical_receipt_event_mismatch' };
     }
     // The new run must pass every existing stored/event proof above before its
-    // single authorized tuple can be acknowledged. Never resume access here.
+    // exact authorized tuple can be acknowledged. Never resume access here.
     if (paidRepairMarkers && !await matchesFinancialReceiptTuple(
-      PAID_RECEIPT_REPAIR_RUN, uid, payment.id, parent.id, PAID_RECEIPT_REPAIR_DIGEST,
+      PAID_RECEIPT_REPAIR_RUN, uid, payment.id, parent.id, PAID_RECEIPT_REPAIR_DIGESTS,
     )) return { kind: 'hold', reason: 'historical_receipt_authorization_mismatch' };
     return { kind: 'preserved', orderId: order.id, parentOrderId: parent.id };
   } catch {

@@ -144,8 +144,9 @@ it('wires early boundaries before authenticated webhook queue, importer profile/
 });
 
 
-describe('one reviewed paid-receipt repair, without new access', () => {
+describe('reviewed paid-receipt repairs, without new access', () => {
   const approvedDigest = 'e007b3314bc03da0f8dff92de8024337a1ddb8e31521cad9f5204c7f546d6a6c';
+  const secondDigest = '656e05477acea6202b6a5fc022f86bc6929d540b920fcf4d7017fc4b34227b4c';
   const tuple = ['financial-receipt-preservation-v1', PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent'].join('\n');
   beforeEach(() => { vi.stubGlobal('crypto', webcrypto); });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -161,11 +162,11 @@ describe('one reviewed paid-receipt repair, without new access', () => {
   // No synthetic tuple is added to the production allowlist. Only the crypto
   // boundary maps this exact synthetic tuple to the approved digest; every
   // different input uses real SHA-256 and fails the production allowlist.
-  function approveSyntheticTuple() {
+  function approveSyntheticTuple(approved = approvedDigest) {
     const realDigest = webcrypto.subtle.digest.bind(webcrypto.subtle);
     return vi.spyOn(webcrypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
       if (new TextDecoder().decode(data as ArrayBuffer) === tuple) {
-        return Uint8Array.from(approvedDigest.match(/../g)!, byte => parseInt(byte, 16)).buffer;
+        return Uint8Array.from(approved.match(/../g)!, byte => parseInt(byte, 16)).buffer;
       }
       return realDigest(algorithm, data);
     });
@@ -178,6 +179,9 @@ describe('one reviewed paid-receipt repair, without new access', () => {
     expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'different-parent', expected)).toBe(false);
     expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt\nparent', 'parent', expected)).toBe(false);
     expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', 'invalid')).toBe(false);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', [approvedDigest, expected])).toBe(true);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', [])).toBe(false);
+    expect(await matchesFinancialReceiptTuple(PAID_RECEIPT_REPAIR_RUN, uid, 'receipt', 'parent', [expected, 'invalid'])).toBe(false);
   });
 
   it('does not authorize an arbitrary fully consistent receipt merely by setting the new run', async () => {
@@ -185,9 +189,9 @@ describe('one reviewed paid-receipt repair, without new access', () => {
     expect(await inspectHistoricalReceipt(h.db, uid)).toEqual({ kind: 'hold', reason: 'historical_receipt_authorization_mismatch' });
   });
 
-  it.each([false, true])('acknowledges only the approved exact tuple; missing payment profile=%s', async missingProfile => {
+  it.each([[false, approvedDigest], [true, approvedDigest], [false, secondDigest], [true, secondDigest]] as const)('acknowledges a reviewed exact tuple; missing payment profile=%s digest=%s', async (missingProfile, approved) => {
     const h = paidFixture(); if (missingProfile) h.payment.profile_id = null as any;
-    const digest = approveSyntheticTuple(), before = structuredClone(h.rows);
+    const digest = approveSyntheticTuple(approved), before = structuredClone(h.rows);
     expect(await inspectHistoricalReceipt(h.db, uid, { amount: 100, currency: 'BYN', paidAt, status: 'successful', type: 'payment' }))
       .toEqual({ kind: 'preserved', orderId: h.order.id, parentOrderId: h.parent.id });
     expect(digest).toHaveBeenCalledTimes(1);
