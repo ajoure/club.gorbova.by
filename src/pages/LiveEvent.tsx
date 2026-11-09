@@ -351,6 +351,8 @@ function LiveEventLegacy() {
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
             },
             signal: abortController.signal,
+            // A cached 410 can otherwise survive a changed room/access state.
+            cache: "no-store",
           }
         );
 

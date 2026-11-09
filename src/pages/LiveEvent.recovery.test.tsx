@@ -41,6 +41,20 @@ describe("live room recovery in the actual page", () => {
     expect(screen.getByRole("link", { name: "Перейти к списку эфиров" })).toHaveAttribute("href", "/live");
     expect(screen.queryByRole("heading", { name: "Ошибка" })).not.toBeInTheDocument();
   });
+  it("bypasses a cached replay rejection when the room has current server data", async () => {
+    // Browser reproduction: a heuristic cached 410 can outlive the server state.
+    // The cached branch represents the actual default-fetch result, not an API failure.
+    let serverRequests = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, options?: RequestInit) => {
+      if (options?.cache !== "no-store") return ended();
+      serverRequests++;
+      return { status: 200, json: async () => ({ status: "ok", title: "Current room", event_type: "live_stream", room_phase: "closed" }) };
+    }));
+    render(room());
+    expect(await screen.findByRole("heading", { name: "Current room" })).toBeInTheDocument();
+    expect(screen.queryByText("Эфир завершён. Запись пока недоступна.")).not.toBeInTheDocument();
+    expect(serverRequests).toBe(1);
+  });
   it("recognizes a gateway 401 without parsing JSON, then recovers when the SDK refreshes the token", async () => {
     const json = vi.fn();
     const fetch = vi.fn().mockResolvedValueOnce({ status: 401, json }).mockResolvedValue(ended());
