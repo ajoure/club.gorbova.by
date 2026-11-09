@@ -35,6 +35,7 @@ import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { useUnansweredQuestionsCount } from "@/hooks/useUnansweredQuestionsCount";
 import { isAdminRole } from "@/lib/liveRoomRoles";
 import { decideRoomEntryIdentity } from "@/lib/roomEntryIdentity";
+import { createLiveResolveRecovery, liveResolveState, type LivePageState } from "@/lib/liveResolveRecovery";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -46,7 +47,7 @@ interface ResolvedSource {
 }
 
 interface LiveResolveResult {
-  status: "ok" | "room_closed" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "removed_from_room" | "error";
+  status: "ok" | "room_closed" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "removed_from_room" | "replay_disabled" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -69,7 +70,7 @@ interface LiveResolveResult {
   room_settings?: Record<string, any> | null;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "room_open_waiting" | "error";
+type PageState = LivePageState;
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 const RESOLVE_POLL_INTERVAL_MS = 12_000;
@@ -135,14 +136,16 @@ function LiveEventLegacy() {
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMobile = useIsMobile();
 
-  // Refs to read latest session/data without triggering effect restarts on TOKEN_REFRESHED.
+  // Heartbeat reads the current session without remounting the room.
   const sessionRef = useRef(session);
   useEffect(() => { sessionRef.current = session; }, [session]);
   const dataRef = useRef<LiveResolveResult | null>(null);
   useEffect(() => { dataRef.current = data; }, [data]);
 
-  // accessToken as primitive — only used for cold-start gate, not as effect-restart trigger.
-  const hasAccessToken = !!session?.access_token;
+  // A refreshed token must recover a previously failed cold-start request.
+  const sessionToken = session?.access_token;
+  const hasAccessToken = !!sessionToken;
+  const [resolveAttempt, setResolveAttempt] = useState(0);
 
   // Hooks must be called unconditionally — keep before any early returns
   const eventIdForCta = data?.event_id || "";
@@ -324,7 +327,12 @@ function LiveEventLegacy() {
       }
     };
 
+    let resolving = false;
+    const recovery = createLiveResolveRecovery(() => { void resolve(true); });
+
     const resolve = async (isPoll = false) => {
+      if (cancelled || resolving) return;
+      resolving = true;
       // Silent refresh guard: never flip back to "loading" if we already have valid data.
       // Only the very first cold-start (no data yet) shows the Loader.
       const hasValidData = !!dataRef.current;
@@ -347,9 +355,11 @@ function LiveEventLegacy() {
         );
 
         if (cancelled) return;
-        const json: LiveResolveResult = await response.json();
+        // Gateway 401 payloads need not contain our JSON status field.
+        const json: LiveResolveResult = response.status === 401
+          ? { status: "auth_required" }
+          : await response.json();
         if (cancelled) return;
-        setData(json);
 
         // PROOF DEBUG — runtime branch trace
         console.debug('[live-resolve]', {
@@ -367,56 +377,16 @@ function LiveEventLegacy() {
           presenter_user_id: (json as any).presenter_user_id,
         });
 
-        let nextState: PageState = "error";
-        switch (json.status) {
-          case "not_found":
-            nextState = "not_found"; break;
-          case "unpublished":
-            nextState = "unpublished"; break;
-          case "access_denied":
-            nextState = "access_denied"; break;
-          case "invite_required":
-            nextState = "invite_required"; break;
-          case "session_missing":
-            nextState = "session_expired"; break;
-          case "source_unavailable":
-            nextState = "source_unavailable"; break;
-          case "removed_from_room":
-            nextState = "removed_from_room"; break;
-          case "room_closed":
-            nextState = "scheduled"; break;
-          case "ok": {
-            const ps = json.platform_status;
-            const es = json.event_status;
-            const sourceKind = json.resolved_source?.resolved_source_kind;
-            // Sprint 2 PATCH 2.5: room_phase из live-resolve — отдельный SoT для UI-веток.
-            // Если комната открыта но эфир ещё не начат → waiting (вход разрешён, чат активен).
-            const roomPhase = json.room_phase;
-
-            // Backwards-compatible client guard: even while an older
-            // live-resolve deployment still returns status=ok, a closed live
-            // room must render only the scheduled screen and never heartbeat.
-            if (json.event_type === "live_stream" && roomPhase === "closed") {
-              nextState = "scheduled";
-            } else if (roomPhase === "waiting") {
-              nextState = "room_open_waiting";
-            } else if (ps === "scheduled" || es === "scheduled") {
-              // Fallback: если комната ещё closed — старый scheduled-экран.
-              nextState = "scheduled";
-            } else if (sourceKind === "live_pending") {
-              nextState = "live_pending";
-            } else if (ps === "replay_available" || (es === "ended" && json.replay_enabled)) {
-              nextState = "live";
-            } else if (es === "ended" && !json.replay_enabled) {
-              nextState = "ended_no_replay";
-            } else {
-              nextState = "live";
-            }
-            break;
-          }
-          default:
-            nextState = "error";
+        const nextState = liveResolveState(json);
+        if (nextState === "error" && (response.status >= 500 || response.status === 429 || json.status === "error")) {
+          // A transient response must not replace an already mounted player.
+          if (!dataRef.current) setState("error");
+          stopPolling();
+          recovery.fail();
+          return;
         }
+        recovery.reset();
+        setData(json);
         setState(nextState);
 
         const shouldPoll = nextState === "scheduled"
@@ -434,17 +404,26 @@ function LiveEventLegacy() {
         // Don't downgrade state to "error" if we already have valid data — keep room mounted.
         if (!dataRef.current) setState("error");
         stopPolling();
+        recovery.fail();
+      } finally {
+        resolving = false;
       }
     };
 
-    resolve(false);
+    const wake = () => { if (document.visibilityState === "visible") recovery.wake(); };
+    window.addEventListener("online", wake);
+    document.addEventListener("visibilitychange", wake);
+    void resolve(false);
 
     return () => {
       cancelled = true;
       stopPolling();
+      recovery.dispose();
+      window.removeEventListener("online", wake);
+      document.removeEventListener("visibilitychange", wake);
       abortController.abort();
     };
-  }, [slug, hasAccessToken]);
+  }, [slug, hasAccessToken, sessionToken, resolveAttempt]);
 
   // Do not create or refresh a participant session before the required room
   // identity has been confirmed. This prevents a transient anonymous/"Гость"
@@ -475,6 +454,17 @@ function LiveEventLegacy() {
           Просмотр продолжен с другого устройства. Одновременный просмотр невозможен.
         </p>
         <Button onClick={() => window.location.reload()}>Обновить</Button>
+      </div>
+    );
+  }
+
+  if (state === "auth_required") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <Lock className="h-16 w-16 text-muted-foreground" />
+        <h1 className="text-2xl font-bold text-foreground">Нужно обновить подключение</h1>
+        <p className="text-muted-foreground text-center max-w-md">Не удалось подтвердить вход в аккаунт. Повторите подключение; если сессия истекла, войдите в аккаунт снова.</p>
+        <Button onClick={() => setResolveAttempt(value => value + 1)}>Повторить подключение</Button>
       </div>
     );
   }
@@ -627,6 +617,7 @@ function LiveEventLegacy() {
         <p className="text-muted-foreground text-center max-w-md">
           Эфир завершён. Запись пока недоступна.
         </p>
+        <Button asChild><a href="/live">Перейти к списку эфиров</a></Button>
       </div>
     );
   }
@@ -639,7 +630,7 @@ function LiveEventLegacy() {
         <p className="text-muted-foreground text-center max-w-md">
           Произошла ошибка при загрузке страницы. Попробуйте обновить страницу.
         </p>
-        <Button onClick={() => window.location.reload()}>Обновить</Button>
+        <Button onClick={() => setResolveAttempt(value => value + 1)}>Повторить подключение</Button>
       </div>
     );
   }

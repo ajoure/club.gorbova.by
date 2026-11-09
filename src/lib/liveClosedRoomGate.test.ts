@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { liveResolveState } from './liveResolveRecovery';
 import {
   getLiveRoomPhase,
   isClosedLiveRoom,
@@ -36,7 +37,8 @@ describe('closed room integration contract', () => {
     expect(resolver).toContain('if (isClosedLiveRoom(event))');
     expect(heartbeat).toContain('if (isClosedLiveRoom(event))');
     expect(heartbeat).toContain("return jsonResponse({ status: 'room_closed' }, 403)");
-    expect(page).toContain('case "room_closed"');
-    expect(page).toContain('json.event_type === "live_stream" && roomPhase === "closed"');
+    expect(page).toContain('liveResolveState(json)');
+    expect(liveResolveState({ status: 'room_closed' })).toBe('scheduled');
+    expect(liveResolveState({ status: 'ok', event_type: 'live_stream', room_phase: 'closed' })).toBe('scheduled');
   });
 });
