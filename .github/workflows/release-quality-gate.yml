@@ -30,6 +30,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Durable support metadata checkpoint contracts
+        run: python3 -B -m unittest discover -s tests/python -p 'test_support_metadata_checkpoint.py' -v
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       # The repository has a pre-existing global ESLint backlog.  Do not turn
