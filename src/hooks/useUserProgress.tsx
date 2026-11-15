@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { extractTrainingAssetReferences, type TrainingAssetReference } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
@@ -32,16 +32,30 @@ export function useUserProgress(lessonId: string) {
   const { user } = useAuth();
   const [progress, setProgress] = useState<LessonProgress | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
+  const scope = JSON.stringify([user?.id || null, lessonId]);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const readSequence = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const fetchProgress = useCallback(async () => {
+    const request = ++readSequence.current;
+    const requestedScope = scope;
+    const isCurrent = () => mounted.current && currentScope.current === requestedScope && readSequence.current === request;
     if (!user?.id || !lessonId) {
       setProgress(null);
+      setLoadedScope(null);
+      setLoadError(false);
       setLoading(false);
       return;
     }
 
     try {
       setLoading(true);
+      setLoadError(false);
       
       const { data, error } = await supabase
         .from("user_lesson_progress")
@@ -49,6 +63,7 @@ export function useUserProgress(lessonId: string) {
         .eq("user_id", user.id)
         .eq("lesson_id", lessonId);
 
+      if (!isCurrent()) return;
       if (error) throw error;
 
       const blockProgress: Record<string, BlockProgress> = {};
@@ -76,6 +91,7 @@ export function useUserProgress(lessonId: string) {
         }
       });
 
+      setLoadedScope(requestedScope);
       setProgress({
         lessonId,
         blockProgress,
@@ -86,11 +102,11 @@ export function useUserProgress(lessonId: string) {
         isCompleted: false, // Will be set based on all blocks
       });
     } catch (error) {
-      console.error("Error fetching progress:", error);
+      if (isCurrent()) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [user?.id, lessonId]);
+  }, [user?.id, lessonId, scope]);
 
   useEffect(() => {
     fetchProgress();
@@ -108,7 +124,7 @@ export function useUserProgress(lessonId: string) {
     }
 
     try {
-      const existingProgress = progress?.blockProgress[blockId];
+      const existingProgress = loadedScope === scope ? progress?.blockProgress[blockId] : undefined;
       const attempts = (existingProgress?.attempts || 0) + 1;
 
       const progressData = {
@@ -141,7 +157,7 @@ export function useUserProgress(lessonId: string) {
   };
 
   const getBlockProgress = (blockId: string): BlockProgress | null => {
-    return progress?.blockProgress[blockId] || null;
+    return loadedScope === scope ? progress?.blockProgress[blockId] || null : null;
   };
 
   const resetBlockProgress = async (blockId: string): Promise<boolean> => {
@@ -246,8 +262,10 @@ export function useUserProgress(lessonId: string) {
   };
 
   return {
-    progress,
-    loading,
+    progress: loadedScope === scope ? progress : null,
+    loading: !!user?.id && !!lessonId && (loading || loadedScope !== scope) && !loadError,
+    loadError,
+    loadState: !user?.id || !lessonId ? "unavailable" : loadError ? "error" : loadedScope === scope ? "ready" : "loading",
     refetch: fetchProgress,
     saveBlockResponse,
     getBlockProgress,

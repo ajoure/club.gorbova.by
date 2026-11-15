@@ -1,3 +1,4 @@
+import { StandardSequentialFormProvider } from "@/components/lesson/StandardSequentialForm";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { useParams, useNavigate, Link, useLocation, useSearchParams } from "react-router-dom";
@@ -386,6 +387,7 @@ export default function LibraryLesson() {
             {blocks.length > 0 ? (
               <Card className="mb-6">
                 <CardContent className="py-6">
+                  <StandardSequentialFormProvider lessonId={currentLesson.id}>
                   <LessonBlockRenderer 
                     key={`blocks-${autoplayNonce || activeTimecode || 0}`} 
                     blocks={blocks} 
@@ -394,6 +396,7 @@ export default function LibraryLesson() {
                     autoplayNonce={autoplayNonce}
                     onSeekApplied={handleSeekApplied}
                   />
+                  </StandardSequentialFormProvider>
                 </CardContent>
               </Card>
             ) : (

@@ -229,7 +229,7 @@ export default function AdminLessonBlockEditor() {
                   <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               ) : blocks.length > 0 ? (
-                <LessonBlockRenderer blocks={blocks} lessonId={lessonId} />
+                <LessonBlockRenderer blocks={blocks} lessonId={lessonId} sequentialFormMode="preview" />
               ) : (
                 <div className="text-center py-12 text-muted-foreground">
                   <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />

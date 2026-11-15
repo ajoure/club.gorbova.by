@@ -1,3 +1,4 @@
+import { StandardSequentialFormProvider } from "@/components/lesson/StandardSequentialForm";
 /**
  * Site Questionnaire — тонкий wrapper над canonical training engine.
  * Reuse 1:1: lesson_blocks + user_lesson_progress + LessonBlockRenderer.
@@ -103,13 +104,15 @@ export function SiteQuestionnaireBlock({ content }: Props) {
         {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
         {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
         <div className="bg-card rounded-lg border p-4 md:p-6">
+          <StandardSequentialFormProvider lessonId={lessonId}>
           <LessonBlockRenderer
             blocks={(blocks || []) as LessonBlock[]}
             lessonId={lessonId}
           />
+          </StandardSequentialFormProvider>
         </div>
         <p className="text-[11px] text-muted-foreground text-center">
-          Ответы автоматически сохраняются. При повторном прохождении ответы будут обновлены.
+          Ответы сохраняются в вашем аккаунте.
         </p>
       </div>
     </section>
