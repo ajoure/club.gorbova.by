@@ -1,3 +1,4 @@
+import { StandardSequentialForm } from "./StandardSequentialForm";
 import { LessonBlock } from "@/hooks/useLessonBlocks";
 import { useUserProgress } from "@/hooks/useUserProgress";
 import { HeadingBlock } from "@/components/admin/lesson-editor/blocks/HeadingBlock";
@@ -85,6 +86,7 @@ export interface LessonBlockRendererProps {
   onSeekApplied?: (seconds: number, nonce: number) => void;
   /** Kvest-specific props for interactive blocks */
   kvestProps?: KvestBlockProps;
+  sequentialFormMode?: "persisted" | "preview";
 }
 
 export function LessonBlockRenderer({ 
@@ -93,7 +95,8 @@ export function LessonBlockRenderer({
   activeTimecode, 
   autoplayNonce, 
   onSeekApplied,
-  kvestProps 
+  kvestProps,
+  sequentialFormMode = "persisted"
 }: LessonBlockRendererProps) {
   const { progress, saveBlockResponse, resetBlockProgress, refetch: refetchBlockProgress } = useUserProgress(lessonId || '');
 
@@ -361,6 +364,8 @@ export function LessonBlockRenderer({
           />
         );
       case 'sequential_form':
+        if (sequentialFormMode === 'preview') return <SequentialFormBlock content={block.content as any} onChange={() => {}} isEditing={false} previewOnly />;
+        if (!kvestProps) return <StandardSequentialForm blockId={block.id} content={block.content as any} />;
         return (
           <SequentialFormBlock 
             content={block.content as any} 

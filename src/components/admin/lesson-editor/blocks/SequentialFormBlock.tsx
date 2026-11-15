@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,6 +54,12 @@ interface SequentialFormBlockProps {
   answers?: Record<string, string>;
   onAnswersChange?: (answers: Record<string, string>) => void;
   onComplete?: () => void;
+  previewOnly?: boolean;
+  submissionPending?: boolean;
+  onRetrySave?: () => void;
+  onSubmit?: (answers: Record<string, string>) => Promise<boolean>;
+  onDraftChange?: (answers: Record<string, string>) => void;
+  saveStatus?: "idle" | "saving" | "saved" | "error";
   isCompleted?: boolean;
   userRole?: string;
   // PATCH-4/5: AI summary props
@@ -94,8 +100,11 @@ export function SequentialFormBlock({
   userRole,
   savedSummary,
   onSummaryGenerated,
-  onReset
+  onReset, onSubmit, onDraftChange, saveStatus, submissionPending = false, onRetrySave, previewOnly = false
 }: SequentialFormBlockProps) {
+  const submitInFlight = useRef(false);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   
@@ -128,10 +137,10 @@ export function SequentialFormBlock({
 
   // Commit local answers to parent (on blur, navigation, or completion)
   const commitAnswers = useCallback(() => {
-    if (Object.keys(localAnswers).length > 0) {
+    if (onSubmit || Object.keys(localAnswers).length > 0) {
       onAnswersChange?.(localAnswers);
     }
-  }, [localAnswers, onAnswersChange]);
+  }, [localAnswers, onAnswersChange, onSubmit]);
 
   // Count filled answers (use local state for responsiveness)
   const filledCount = useMemo(() => {
@@ -157,7 +166,13 @@ export function SequentialFormBlock({
 
   // Update local answer only (no parent call on every keystroke)
   const updateLocalAnswer = (stepId: string, value: string) => {
-    setLocalAnswers(prev => ({ ...prev, [stepId]: value }));
+    if (onDraftChange) {
+      const next = { ...localAnswers, [stepId]: value };
+      setLocalAnswers(next);
+      onDraftChange(next);
+    } else {
+      setLocalAnswers(prev => ({ ...prev, [stepId]: value }));
+    }
   };
 
   // Add step (editing mode)
@@ -227,6 +242,15 @@ export function SequentialFormBlock({
 
   // PATCH-4: Handle completion with AI summary
   const handleComplete = async () => {
+    if (previewOnly) return;
+    if (onSubmit) {
+      if (submitInFlight.current || submissionPending) return;
+      submitInFlight.current = true; setManualSubmitting(true); setSubmitFailed(false);
+      try { if (!await onSubmit({ ...localAnswers })) setSubmitFailed(true); }
+      catch { setSubmitFailed(true); }
+      finally { submitInFlight.current = false; setManualSubmitting(false); }
+      return;
+    }
     commitAnswers();
     
     // Generate summary if not already exists
@@ -388,7 +412,7 @@ export function SequentialFormBlock({
           <button
             key={step.id}
             onClick={() => !isCompleted && goToStep(idx)}
-            disabled={isCompleted}
+            disabled={isCompleted || manualSubmitting || submissionPending}
             className={`
               flex-1 h-2 rounded-full transition-all
               ${localAnswers[step.id] 
@@ -429,7 +453,7 @@ export function SequentialFormBlock({
               onBlur={commitAnswers}
               placeholder="Ваш ответ..."
               rows={4}
-              disabled={isCompleted}
+              disabled={isCompleted || manualSubmitting || submissionPending}
             />
           ) : currentStep.inputType === 'number' ? (
             <Input
@@ -438,7 +462,7 @@ export function SequentialFormBlock({
               onChange={(e) => updateLocalAnswer(currentStep.id, e.target.value)}
               onBlur={commitAnswers}
               placeholder="0"
-              disabled={isCompleted}
+              disabled={isCompleted || manualSubmitting || submissionPending}
             />
           ) : (
             <Input
@@ -446,7 +470,7 @@ export function SequentialFormBlock({
               onChange={(e) => updateLocalAnswer(currentStep.id, e.target.value)}
               onBlur={commitAnswers}
               placeholder="Ваш ответ..."
-              disabled={isCompleted}
+              disabled={isCompleted || manualSubmitting || submissionPending}
             />
           )}
         </CardContent>
@@ -475,13 +499,13 @@ export function SequentialFormBlock({
           ) : (
             <Button
               onClick={handleComplete}
-              disabled={!allFilled || isGenerating}
+              disabled={previewOnly || !allFilled || isGenerating || manualSubmitting || submissionPending}
               variant="default"
             >
-              {isGenerating ? (
+              {(isGenerating || manualSubmitting) ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Генерация итога...
+                  {onSubmit ? "Сохранение…" : "Генерация итога..."}
                 </>
               ) : (
                 <>
@@ -494,12 +518,18 @@ export function SequentialFormBlock({
         </div>
       )}
 
+      {onSubmit && (submitFailed || saveStatus === 'error') && <div role="alert">
+        <p>Не удалось сохранить ответы.</p>
+        {onRetrySave && <Button variant="outline" onClick={onRetrySave} disabled={manualSubmitting || submissionPending}>Повторить сохранение</Button>}
+      </div>}
+      {onSubmit && saveStatus === 'saving' && <p role="status">Сохранение…</p>}
+      {previewOnly && <p role="status">Предпросмотр: ответы не сохраняются</p>}
       {/* Completion status */}
       {isCompleted && !summary && (
         <div className="flex flex-col items-center gap-3 py-4">
           <div className="flex items-center gap-2 text-primary">
             <CheckCircle2 className="h-5 w-5" />
-            <span className="font-medium">Формула сформирована</span>
+            <span className="font-medium">{onSubmit ? "Ответы сохранены" : "Формула сформирована"}</span>
           </div>
           {onReset && (
             <Button 
