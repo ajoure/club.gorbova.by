@@ -124,7 +124,17 @@ class SchemaBoundaryTests(unittest.TestCase):
                 list(ddl_statements(source.encode()))
 
     def test_dump_session_settings_are_not_executed(self):
-        self.assertEqual(list(ddl_statements(b"SET ROLE service_role; SET statement_timeout=0;")), [])
+        self.assertEqual(list(ddl_statements(b"SET statement_timeout=0; SET client_encoding='UTF8';")), [])
+
+    def test_dump_identity_switches_cannot_be_silently_ignored(self):
+        for source in (
+            'SET ROLE service_role;', 'SET ROLE postgres;',
+            'SET SESSION AUTHORIZATION sandbox_exec;',
+            'SET SESSION AUTHORIZATION postgres;',
+            'RESET ROLE;', 'RESET SESSION AUTHORIZATION;', 'RESET ALL;',
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(GateFailed, '^dump_session_identity_change$'):
+                list(ddl_statements(source.encode()))
 
 
 class DiskBoundaryTests(unittest.TestCase):

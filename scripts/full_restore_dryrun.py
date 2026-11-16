@@ -162,6 +162,10 @@ def ddl_statements(content):
         end = start + raw.stmt_len if raw.stmt_len else len(content)
         text = content[start:end]
         if kind == 'VariableSetStmt':
+            # Ignoring a grantor/owner switch would silently change ACL intent.
+            # Our --no-owner export must not depend on session identity changes.
+            if raw.stmt.name is None or raw.stmt.name.lower() in {'role', 'session_authorization'}:
+                raise GateFailed('dump_session_identity_change')
             continue  # Never let dump SET/RESET override local safety settings.
         if kind == 'SelectStmt' and re.search(r"SELECT\s+pg_catalog\.set_config\('search_path',\s*'',\s*false\)", text):
             continue
