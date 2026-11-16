@@ -34,6 +34,15 @@ DDL_KINDS = {
 }
 COPY_APP = re.compile(rb'^COPY (\w+)\.(\w+) \((.*?)\) FROM stdin;\s*$')
 PLATFORM_ROLES = frozenset({'sandbox_exec', 'sandbox_exec_hdjgkjceownmmnrqqtuz'})
+EXPECTED_PLATFORM_ACLS = {
+    'pre-data': {'removed_grantees': {'sandbox_exec_hdjgkjceownmmnrqqtuz': 1138, 'sandbox_exec': 410}, 'omitted_platform_only_statements': 1548},
+    'post-data': {'removed_grantees': {'sandbox_exec_hdjgkjceownmmnrqqtuz': 3, 'sandbox_exec': 2}, 'omitted_platform_only_statements': 5},
+}
+
+
+def validate_acl_snapshot(adjustments, native_statements, native_rows):
+    if adjustments != EXPECTED_PLATFORM_ACLS or native_statements != 12 or len(native_rows) != 48:
+        raise GateFailed('archive_acl_snapshot_drift')
 
 
 def role_names(node):
@@ -332,6 +341,7 @@ def plan(args, temp):
     phases['platform_acl_adjustments'] = adjustments
     phases['native_default_acl_rows'] = sorted(native_defaults)
     phases['native_default_acl_statements'] = native_default_statements
+    validate_acl_snapshot(adjustments, native_default_statements, native_defaults)
     app_data = [o for o in objects if o['schema'] in APP and o['type'] == 'TABLE DATA']
     app_keys = {o['schema'] + '.' + o['identity'].split()[0] for o in app_data}
     if len(app_data) != 402 or app_keys != set(app['rows_by_table']):
@@ -415,6 +425,9 @@ def execute(args, temp, phases, auth, app, budget, report):
         with conn.cursor() as cur:
             cur.execute('BEGIN')
             report['advisory_lock_acquired'] = preflight(cur, auth_tables)
+            report['target_postgres_major'] = scalar(cur, "SELECT current_setting('server_version_num')::int / 10000")
+            if report['target_postgres_major'] != 17:
+                raise GateFailed('unsupported_target_postgres_major')
             before, sequences = catalog(cur), sequence_state(cur)
             report['native_default_acl_rows_verified'] = verify_native_default_acl(cur, phases['native_default_acl_rows'])
             cur.execute('SELECT rolname FROM pg_roles')

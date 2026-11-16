@@ -13,12 +13,35 @@ from full_restore_dryrun import (DiskGuard, GateFailed, ddl_statements, execute_
                                 heavy_ddl, copy_load, set_new_sequence,
                                 verify_readback, finish_rehearsal, main,
                                 adapt_platform_acl, role_names,
-                                native_default_acl_rows, verify_native_default_acl)
+                                native_default_acl_rows, verify_native_default_acl,
+                                validate_acl_snapshot, EXPECTED_PLATFORM_ACLS)
 from pglast import parse_sql
 from unittest.mock import Mock, MagicMock, patch
 
 
 class SchemaBoundaryTests(unittest.TestCase):
+    def test_frozen_acl_counts_fail_before_database_connection(self):
+        rows = set(range(48))
+        validate_acl_snapshot(EXPECTED_PLATFORM_ACLS, 12, rows)
+        changed = json.loads(json.dumps(EXPECTED_PLATFORM_ACLS))
+        changed['pre-data']['omitted_platform_only_statements'] -= 1
+        for adjustments, count, values in ((changed, 12, rows), (EXPECTED_PLATFORM_ACLS, 11, rows), (EXPECTED_PLATFORM_ACLS, 12, set(range(47)))):
+            with self.assertRaisesRegex(GateFailed, '^archive_acl_snapshot_drift$'):
+                validate_acl_snapshot(adjustments, count, values)
+
+    def test_mixed_column_grant_preserves_complete_semantic_tree(self):
+        source = 'GRANT SELECT(id),UPDATE(name) ON TABLE public.probe TO sandbox_exec,authenticated WITH GRANT OPTION GRANTED BY postgres;'
+        original = parse_sql(source)[0].stmt
+        result, _ = self.adapted(source)
+        original.grantees = tuple(role for role in original.grantees if role.rolename != 'sandbox_exec')
+        def semantic(value):
+            if isinstance(value, dict):
+                return {key: semantic(item) for key, item in value.items() if key not in {'location', 'stmt_location', 'stmt_len'}}
+            if isinstance(value, (list, tuple)):
+                return [semantic(item) for item in value]
+            return value
+        self.assertEqual(semantic(original()), semantic(result[2]()))
+
     def test_native_defaults_require_exact_semantic_equality(self):
         source = 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;'
         expected = native_default_acl_rows(parse_sql(source)[0].stmt)
