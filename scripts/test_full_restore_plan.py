@@ -2,11 +2,30 @@
 import datetime as dt
 import unittest
 
-from full_restore_dryrun import DiskGuard, GateFailed, ddl_statements
+from full_restore_dryrun import DiskGuard, GateFailed, ddl_statements, execute_ddl
 from pglast import parse_sql
+from unittest.mock import Mock
 
 
 class SchemaBoundaryTests(unittest.TestCase):
+    def test_runtime_rechecks_exact_slice_before_execution(self):
+        cursor = Mock()
+        statement = "CREATE TABLE public.probe(id int);"
+        execute_ddl(cursor, 'CreateStmt', statement)
+        cursor.execute.assert_called_once_with(statement)
+        for kind, source in (
+            ('CreateStmt', statement + ' COMMIT;'),
+            ('CreateStmt', statement + statement),
+            ('CreateStmt', 'CREATE VIEW public.probe AS SELECT 1;'),
+            ('SelectStmt', 'SELECT 1;'),
+            ('CreateStmt', ''),
+        ):
+            with self.subTest(kind=kind, source=source):
+                cursor.reset_mock()
+                with self.assertRaises(GateFailed):
+                    execute_ddl(cursor, kind, source)
+                cursor.execute.assert_not_called()
+
     def test_cyrillic_and_body_semicolons_keep_statement_boundaries(self):
         source = ("CREATE FUNCTION public.probe() RETURNS text LANGUAGE sql "
                   "AS $$SELECT 'строка; ещё';$$; CREATE TABLE public.probe_data(id int);")

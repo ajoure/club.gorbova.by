@@ -147,6 +147,15 @@ def ddl_statements(content):
         yield kind, text, raw.stmt
 
 
+def execute_ddl(cur, expected_kind, statement):
+    # Reparse the exact string passed to psycopg, independently of dump offsets.
+    parsed = parse_sql(statement)
+    if (expected_kind not in DDL_KINDS or len(parsed) != 1
+            or type(parsed[0].stmt).__name__ != expected_kind):
+        raise GateFailed('runtime_schema_statement_boundary_mismatch')
+    cur.execute(statement)
+
+
 def catalog(cur):
     # Metadata only. Captures existing app objects/default ACLs and managed
     # counters; callers compare before/after rollback, never persist SQL bodies.
@@ -287,7 +296,7 @@ def execute(args, temp, phases, auth, app, budget, report):
             cur.execute("CREATE EXTENSION pgmq VERSION '1.5.1'")
             for kind, statement, node in phases['pre-data']:
                 disk.check()
-                cur.execute(statement)
+                execute_ddl(cur, kind, statement)
                 disk.check()
             report['pre_data_completed'] = True
             required = required_copy_columns(cur)
@@ -308,7 +317,7 @@ def execute(args, temp, phases, auth, app, budget, report):
             for kind, statement, node in phases['post-data']:
                 heavy = heavy_ddl(kind, node, app['rows_by_table'])
                 disk.check(force=heavy)
-                cur.execute(statement)
+                execute_ddl(cur, kind, statement)
                 disk.check(force=heavy)
             cur.execute('SET CONSTRAINTS ALL IMMEDIATE')
             for namespace, name, value, called in phases['sequence_values']:
