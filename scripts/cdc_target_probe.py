@@ -42,7 +42,7 @@ class Probe:
         self.started = time.monotonic()
         self.manifest = dict(target=TARGET, nonce=self.nonce, schema=self.schema,
                              stream=self.stream, schema_created=False, stream_created=False,
-                             creation_intent=True, synthetic_only=True)
+                             schema_creation_intent=False, synthetic_only=True)
         write_json(args.manifest, self.manifest, exclusive=True)
         self.connections = []
         self.control = self.reader = self.writer = self.sink = None
@@ -119,6 +119,8 @@ class Probe:
         self.manifest['before'] = self.before
         self.save_manifest()
         self.writer, self.reader, self.sink = self.connect(), self.connect(), self.connect()
+        self.manifest['schema_creation_intent'] = True
+        self.save_manifest()
         with self.writer.cursor() as cur:
             cur.execute('BEGIN')
             try:
@@ -164,10 +166,19 @@ class Probe:
         if column not in TYPES:
             raise GateFailed('unknown_fixture_column')
         if column == 'raw':
-            if value is not None and (not isinstance(value, str) or any(c not in '0123456789abcdefABCDEF' for c in value)):
+            if value is not None and (not isinstance(value, str) or not re.fullmatch(r'(?:[0-9a-fA-F]{2})*', value)):
                 raise GateFailed('unsupported_bytea_encoding')
             return sql.SQL("decode(%s,'hex')"), value
+        if column in {'doc', 'jb'} and value is not None and not isinstance(value, str):
+            raise GateFailed('json_text_contract_not_supported')
         return sql.SQL('CAST(%s AS {})').format(sql.SQL(TYPES[column])), value
+
+    def finish_transaction(self, conn, command):
+        if command not in {'COMMIT', 'ROLLBACK'}:
+            raise GateFailed('invalid_fixture_transaction_end')
+        self.execute(conn, command)
+        if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            raise GateFailed('fixture_transaction_not_idle')
 
     def apply(self, txn):
         self.guard()
@@ -275,14 +286,14 @@ class Probe:
         self.check('T3', any(event['action'] == 'T' for txn in truncated for event in txn.events) and self.equal())
         self.execute(self.writer, 'BEGIN')
         self.insert_pk(4)
-        self.writer.rollback()
+        self.finish_transaction(self.writer, 'ROLLBACK')
         self.check('T4', not self.drain() and self.equal())
         self.execute(self.writer, 'BEGIN')
         self.insert_pk(501)
         short = self.connect()
         self.execute(short, sql.SQL('INSERT INTO {} (id,body) VALUES(502,%s)').format(self.table('src_pk')), ('short',))
         first = self.drain()
-        self.writer.commit()
+        self.finish_transaction(self.writer, 'COMMIT')
         second = self.drain()
         self.check('T5', bool(first and second) and lsn(first[-1].commit_lsn) < lsn(second[0].commit_lsn) and self.equal())
         self.execute(self.writer, sql.SQL('INSERT INTO {} VALUES(NULL,10.00),(NULL,10.00)').format(self.table('src_bag')))
@@ -346,24 +357,30 @@ class Probe:
         self.execute(self.writer, 'BEGIN')
         for i in range(40):
             self.insert_pk(10000 + i, body=big[i:i + 32768])
-        self.writer.commit()
+        self.finish_transaction(self.writer, 'COMMIT')
         pending = self.peek(limit=1)
         self.check('T9', len(pending) == 1 and len(pending[0].events) == 40)
         try:
             self.advance(pending[0])
         except GateFailed as exc:
-            self.check('T9_no_partial_ack', str(exc) == 'ack_without_durable_commit')
+            self.check('T9_no_ack_before_receipt', str(exc) == 'ack_without_durable_commit')
         else:
             raise GateFailed('partial_ack_unexpectedly_allowed')
-        self.check('T10', self.report['last_transport']['raw_bytes'] > 786432 and self.report['last_transport']['frames'] > 40)
+        self.check('T10', self.report['last_transport']['raw_bytes'] > 786432 and self.report['last_transport']['frames'] >= len(pending[0].events) + 2)
         for txn in pending:
             self.apply(txn)  # Simulated lost ACK response: do not advance yet.
         replayed = self.peek(limit=1)
         self.check('T11', [t.digest for t in replayed] == [t.digest for t in pending] and all(not self.apply(t) for t in replayed) and self.equal())
         for txn in replayed:
             self.advance(txn)
+            self.advance(txn)  # Exact acknowledged boundary must be a no-op.
         self.check('T12', not self.peek())
+        reader_pid = self.execute(self.reader, 'SELECT pg_backend_pid()')[0][0]
+        if not self.execute(self.control, 'SELECT pg_terminate_backend(%s)', (reader_pid,))[0][0]:
+            raise GateFailed('owned_reader_termination_failed')
         self.reader.close()
+        if self.execute(self.control, 'SELECT active FROM pg_replication_slots WHERE slot_name=%s', (self.stream,)) != [(False,)]:
+            raise GateFailed('owned_stream_still_active')
         self.insert_pk(1301)
         self.reader = self.connect()
         self.drain()
@@ -391,14 +408,14 @@ class Probe:
                 cur.execute('SELECT plugin,database,active FROM pg_replication_slots WHERE slot_name=%s', (self.stream,))
                 row = cur.fetchone()
                 if row:
-                    if not self.manifest['stream_created'] or row != ('wal2json', 'postgres', False):
+                    if not self.manifest.get('stream_creation_intent') or row != ('wal2json', 'postgres', False):
                         errors.append('unverified_stream_ownership')
                     else:
                         cur.execute('SELECT pg_drop_replication_slot(%s)', (self.stream,))
                 cur.execute('SELECT obj_description(n.oid,\'pg_namespace\'),pg_get_userbyid(n.nspowner) FROM pg_namespace n WHERE n.nspname=%s', (self.schema,))
                 row = cur.fetchone()
                 if row and not errors:
-                    if not self.manifest['schema_created'] or row != ('gorbova-cdc-probe:' + self.nonce, 'postgres'):
+                    if not self.manifest.get('schema_creation_intent') or row != ('gorbova-cdc-probe:' + self.nonce, 'postgres'):
                         errors.append('unverified_schema_ownership')
                     else:
                         cur.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(self.schema)))

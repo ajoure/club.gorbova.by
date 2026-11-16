@@ -54,7 +54,7 @@ def transactions(records, schema):
             result.append(Transaction(xid, end, tuple(events), hashlib.sha256('\n'.join(encoded).encode()).hexdigest()))
             previous, events, xid = position, None, None
         elif action in {'I', 'U', 'D', 'T'}:
-            if events is None or str(value.get('xid')) != xid:
+            if events is None or ('xid' in value and str(value['xid']) != xid):
                 raise GateFailed('change_outside_transaction')
             if value.get('schema') != schema or value.get('table') not in {'src_pk', 'src_bag'}:
                 raise GateFailed('foreign_change_refused')

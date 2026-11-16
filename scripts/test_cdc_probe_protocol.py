@@ -67,6 +67,31 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(GateFailed, 'unsupported_decoding_action'):
             transactions(['{"action":"M"}'], SCHEMA)
 
+    def test_change_without_xid_uses_open_transaction(self):
+        raw = records()
+        event = json.loads(raw[1])
+        del event['xid']
+        raw[1] = json.dumps(event)
+        self.assertEqual(len(transactions(raw, SCHEMA)[0].events), 1)
+
+    def test_change_with_foreign_xid_refused(self):
+        raw = records()
+        event = json.loads(raw[1])
+        event['xid'] = 2
+        raw[1] = json.dumps(event)
+        with self.assertRaisesRegex(GateFailed, 'change_outside_transaction'):
+            transactions(raw, SCHEMA)
+
+    def test_decoder_type_contract_preserves_exact_text(self):
+        probe = Probe.__new__(Probe)
+        self.assertEqual(probe.value('raw', '00ff')[1], '00ff')
+        with self.assertRaisesRegex(GateFailed, 'unsupported_bytea_encoding'):
+            probe.value('raw', 'abc')
+        text = '{ "repeated":1, "repeated":2.00 }'
+        self.assertEqual(probe.value('doc', text)[1], text)
+        with self.assertRaisesRegex(GateFailed, 'json_text_contract_not_supported'):
+            probe.value('doc', {'repeated': 2})
+
     def test_utf8_split_reassembled_exactly(self):
         raw = ['Ж😀' * 30000]
         restored, evidence = framed_roundtrip(raw, frame_bytes=5)
