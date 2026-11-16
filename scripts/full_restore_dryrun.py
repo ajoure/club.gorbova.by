@@ -5,21 +5,18 @@ Source SQL/data remain in memory. Managed schemas, cron/Vault data and source
 event triggers are excluded, not declared migrated. Run only after review/CI.
 """
 import argparse
-import base64
 import collections
-import datetime as dt
 import hashlib
 import json
 import re
 import subprocess
 import tempfile
-import time
-import urllib.request
 from pathlib import Path
 
 import psycopg
 from psycopg import sql
 from pglast import parse_sql
+from migration_disk_guard import DiskGuard
 
 from auth_restore_dryrun import (
     TARGET, IDENTIFIER, GateFailed, credentials, fingerprint,
@@ -34,59 +31,6 @@ DDL_KINDS = {
     'GrantStmt', 'AlterDefaultPrivilegesStmt', 'CommentStmt', 'AlterPublicationStmt',
 }
 COPY_APP = re.compile(rb'^COPY (\w+)\.(\w+) \((.*?)\) FROM stdin;\s*$')
-
-
-class DiskGuard:
-    """Bounded in-process checks, not a persistent monitor or resize service."""
-    def __init__(self, initial):
-        result = subprocess.run(['security', 'find-generic-password', '-s',
-                                 'Supabase CLI', '-w'], capture_output=True, text=True)
-        if result.returncode:
-            raise GateFailed('disk_api_keychain_unavailable')
-        self.token = result.stdout.strip()
-        if self.token.startswith('go-keyring-base64:'):
-            self.token = base64.b64decode(self.token.split(':', 1)[1]).decode()
-        self.last_request = self.last_check = 0.0
-        self.maximum_fraction = 0.0
-        self.initial_fs = initial['filesystem']['fs_size_bytes']
-        self.checks = 0
-        config = self.get('')
-        if config['attributes']['size_gb'] != 8:
-            raise GateFailed('unexpected_disk_allocation')
-        self.check(force=True)
-
-    def get(self, suffix):
-        # Stay below the Management API request budget; no DDL/COPY progresses
-        # while a forced measurement is pending. No retries with a stale value.
-        time.sleep(max(0, 0.60 - (time.monotonic() - self.last_request)))
-        request = urllib.request.Request(
-            'https://api.supabase.com/v1/projects/' + TARGET + '/config/disk' + suffix,
-            headers={'Authorization': 'Bearer ' + self.token, 'Accept': 'application/json'})
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                result = json.load(response)
-        except Exception:
-            raise GateFailed('disk_metric_unavailable') from None
-        self.last_request = time.monotonic()
-        return result
-
-    def check(self, force=False):
-        # Lightweight catalog DDL is checked at most two seconds apart. Data
-        # chunks and nonempty-table index builds always force fresh metrics.
-        if not force and time.monotonic() - self.last_check < 2:
-            return
-        measurement = self.get('/util')
-        timestamp = dt.datetime.fromisoformat(measurement['timestamp'].replace('Z', '+00:00'))
-        age = (dt.datetime.now(dt.timezone.utc) - timestamp).total_seconds()
-        metrics = measurement['metrics']
-        if not -5 <= age <= 30 or metrics['fs_size_bytes'] != self.initial_fs:
-            raise GateFailed('stale_metric_or_disk_resize')
-        fraction = metrics['fs_used_bytes'] / metrics['fs_size_bytes']
-        self.maximum_fraction = max(self.maximum_fraction, fraction)
-        self.last_check = time.monotonic()
-        self.checks += 1
-        if fraction >= 0.70:
-            raise GateFailed('disk_budget_threshold')
 
 
 def load_json(path):
@@ -385,6 +329,7 @@ def execute(args, temp, phases, auth, app, budget, report):
             # Each command remains bounded; disk checks happen between chunks
             # and heavy DDL, with measured largest index ~117 MiB.
             cur.execute("SET LOCAL statement_timeout='15min'")
+            disk.bind_monitor(lambda: target_connection(args, 'gorbova-copy-disk-accounting'))
             cur.execute("SET LOCAL check_function_bodies=false")
             cur.execute("SET LOCAL standard_conforming_strings=on")
             cur.execute("CREATE EXTENSION pgmq VERSION '1.5.1'")
@@ -440,9 +385,16 @@ def execute(args, temp, phases, auth, app, budget, report):
             report['gate'] = str(exc)
             report['injected_failure_triggered'] = str(exc) == 'injected_failure'
     finally:
-        finish_rehearsal(conn, args, readback_baseline, report)
+        try:
+            finish_rehearsal(conn, args, readback_baseline, report)
+        finally:
+            disk.close()
         report['disk_checks'] = disk.checks
+        report['disk_accounting_checks'] = disk.accounting_checks
+        report['maximum_accounted_disk_fraction'] = disk.maximum_accounted_fraction
         report['maximum_disk_fraction_observed'] = disk.maximum_fraction
+        report['disk_metric_freshness_waits'] = disk.freshness_waits
+        report['disk_metric_freshness_wait_seconds'] = disk.freshness_wait_seconds
 
 
 def main():
@@ -477,6 +429,8 @@ def main():
             prepare_or_execute(args, report)
     except Exception as exc:
         report.update(passed=False, error_class=type(exc).__name__, sqlstate=getattr(exc, 'sqlstate', None))
+        if args.readback_from:
+            report['uncertain'] = True
         if isinstance(exc, GateFailed):
             report['gate'] = str(exc)
     with args.report.open('x') as output:

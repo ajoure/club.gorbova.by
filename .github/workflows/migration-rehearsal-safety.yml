@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/*restore*.py'
+      - 'scripts/migration_disk_guard.py'
       - 'scripts/auth_restore_requirements.txt'
       - '.github/workflows/migration-rehearsal-safety.yml'
   workflow_dispatch:
