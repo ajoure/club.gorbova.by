@@ -67,8 +67,21 @@ def table_count(cur, table):
 
 
 def sequence_state(cur):
-    cur.execute('SELECT last_value, is_called FROM auth.refresh_tokens_id_seq')
-    return list(cur.fetchone())
+    cur.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth' AND c.relkind='S' ORDER BY c.relname")
+    names = [row[0] for row in cur.fetchall()]
+    result = {}
+    for name in names:
+        cur.execute(sql.SQL('SELECT last_value, is_called FROM auth.{}').format(sql.Identifier(name)))
+        result[name] = list(cur.fetchone())
+    return result
+
+
+def sequence_columns(cur):
+    cur.execute("SELECT c.relname,a.attname FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE n.nspname='auth' AND a.attnum>0 AND NOT a.attisdropped AND (a.attidentity<>'' OR pg_get_expr(d.adbin,d.adrelid) LIKE 'nextval(%')")
+    result = collections.defaultdict(set)
+    for table, column in cur.fetchall():
+        result[table].add(column)
+    return result
 
 
 def fingerprint(chunks):
@@ -92,6 +105,8 @@ def preflight(cur, tables):
     cur.execute("SET LOCAL datestyle='ISO, MDY'")
     cur.execute("SET LOCAL intervalstyle='postgres'")
     cur.execute('SET LOCAL extra_float_digits=3')
+    cur.execute("SET LOCAL bytea_output='hex'")
+    cur.execute("SET LOCAL client_encoding='UTF8'")
     cur.execute("SET LOCAL statement_timeout='120s'")
     cur.execute("SET LOCAL lock_timeout='5s'")
     if not scalar(cur, 'SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()'):
@@ -105,6 +120,7 @@ def preflight(cur, tables):
             raise GateFailed('target_auth_not_empty')
     if not scalar(cur, "SELECT pg_try_advisory_xact_lock(hashtext('gorbova.copy.auth.dryrun.v1'))"):
         raise GateFailed('target_auth_resource_busy')
+    return True
 
 
 def run(args):
@@ -112,30 +128,35 @@ def run(args):
     baseline = json.loads(args.baseline.read_text())
     if manifest['target'] != TARGET or not manifest['preserve_target_managed_schema_and_migration_history']:
         raise GateFailed('wrong_manifest')
-    if hashlib.file_digest(args.archive.open('rb'), 'sha256').hexdigest() != manifest['sha256']:
-        raise GateFailed('archive_checksum_mismatch')
+    with args.archive.open('rb') as stream:
+        if hashlib.file_digest(stream, 'sha256').hexdigest() != manifest['sha256']:
+            raise GateFailed('archive_checksum_mismatch')
     ordered = manifest['data_order']
     tables = [item['table'] for item in ordered]
     if len(tables) != 26 or len(set(tables)) != 26 or 'schema_migrations' in tables:
         raise GateFailed('unexpected_auth_table_set')
     if any(not IDENTIFIER.fullmatch(t) for t in tables):
         raise GateFailed('invalid_table_identifier')
+    if args.inject_failure_after is not None and args.inject_failure_after not in tables:
+        raise GateFailed('invalid_injection_target')
     expected = {item['table']: item['snapshot_rows'] for item in ordered}
     report = dict(target=TARGET, mode='rollback_only', archive_sha256=manifest['sha256'],
                   commit_supported=False, injected_failure_after=args.inject_failure_after,
-                  raw_rows_persisted=False, credentials_printed=False, passed=False)
+                  raw_rows_persisted=False, credentials_printed=False, passed=False,
+                  injected_failure_triggered=False, advisory_lock_acquired=False)
     connection = psycopg.connect(**credentials(args.cli_workdir), sslmode='verify-full',
                                 sslrootcert=str(args.ca), connect_timeout=15,
                                 application_name='gorbova-copy-auth-rollback-only', autocommit=True)
-    before = None
+    before = migrations_before = None
     loaded = collections.Counter()
     headers = {}
     process = None
     try:
         with connection.cursor() as cur:
             cur.execute('BEGIN')
-            preflight(cur, tables)
+            report['advisory_lock_acquired'] = preflight(cur, tables)
             before = sequence_state(cur)
+            required_sequence_columns = sequence_columns(cur)
             migrations_before = table_count(cur, 'schema_migrations')
             # Never include SEQUENCE SET: setval is not transactional.
             with tempfile.TemporaryDirectory(prefix='auth-dryrun-', dir=args.temp_dir) as td:
@@ -157,6 +178,8 @@ def run(args):
                     names = [s.strip().strip('"') for s in match[2].split(',')]
                     if any(not IDENTIFIER.fullmatch(n) for n in names):
                         raise GateFailed('invalid_copy_column')
+                    if not required_sequence_columns[table].issubset(names):
+                        raise GateFailed('copy_would_invoke_sequence_default')
                     headers[table] = names
                     observed.append(table)
                     statement = sql.SQL('COPY auth.{} ({}) FROM STDIN').format(
@@ -172,6 +195,7 @@ def run(args):
                     if not terminated or loaded[table] != expected[table]:
                         raise GateFailed('copy_count_mismatch')
                     if args.inject_failure_after == table:
+                        report['injected_failure_triggered'] = True
                         raise GateFailed('injected_failure')
                 if process.wait(timeout=30) or observed != tables:
                     raise GateFailed('archive_stream_failed_or_reordered')
@@ -213,8 +237,11 @@ def run(args):
                 remaining = sum(table_count(cur, table) for table in tables)
                 report['after_rollback_auth_rows'] = remaining
                 report['sequence_unchanged'] = before is not None and sequence_state(cur) == before
-                report['rollback_verified'] = remaining == 0 and report['sequence_unchanged']
-                report['passed'] = report['passed'] and report['rollback_verified']
+                report['managed_history_unchanged'] = migrations_before is not None and table_count(cur, 'schema_migrations') == migrations_before
+                report['advisory_lock_released'] = scalar(cur, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()") == 0
+                report['rollback_verified'] = remaining == 0 and report['sequence_unchanged'] and report['managed_history_unchanged'] and report['advisory_lock_released']
+                scenario_pass = report['passed'] if args.inject_failure_after is None else report['injected_failure_triggered'] and report.get('gate') == 'injected_failure'
+                report['passed'] = scenario_pass and report['rollback_verified']
         finally:
             connection.rollback()
             connection.close()
