@@ -161,17 +161,96 @@ def catalog(cur):
     # counters; callers compare before/after rollback, never persist SQL bodies.
     cur.execute("""SELECT jsonb_build_object(
       'namespaces',(SELECT coalesce(jsonb_agg(jsonb_build_array(nspname,nspowner,nspacl::text) ORDER BY nspname),'[]') FROM pg_namespace WHERE nspname IN ('public','private','referral_private','drizzle','pgmq')),
-      'relations',(SELECT coalesce(jsonb_agg(jsonb_build_array(n.nspname,c.relname,c.relkind,c.relowner,c.relacl::text) ORDER BY n.nspname,c.relname),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','private','referral_private','drizzle')),
-      'routines',(SELECT coalesce(jsonb_agg(jsonb_build_array(n.nspname,p.proname,p.oid,p.proacl::text) ORDER BY p.oid),'[]') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','private','referral_private','drizzle')),
+      'relations',(SELECT coalesce(jsonb_agg(jsonb_build_array(n.nspname,c.relname,c.relkind,c.relowner,c.relacl::text,c.relrowsecurity,c.relforcerowsecurity,c.relreplident) ORDER BY n.nspname,c.relname),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('auth','public','private','referral_private','drizzle')),
+      'routines',(SELECT coalesce(jsonb_agg(jsonb_build_array(n.nspname,p.proname,p.oid,p.proacl::text,md5(row_to_json(p)::text)) ORDER BY p.oid),'[]') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('auth','public','private','referral_private','drizzle')),
+      'auth_structure',(SELECT coalesce(jsonb_agg(jsonb_build_array(c.oid,md5(row_to_json(a)::text),md5(coalesce(pg_get_expr(d.adbin,d.adrelid),''))) ORDER BY c.oid,a.attnum),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE n.nspname='auth' AND a.attnum>0 AND NOT a.attisdropped),
+      'auth_constraints',(SELECT coalesce(jsonb_agg(jsonb_build_array(c.oid,md5(row_to_json(c)::text)) ORDER BY c.oid),'[]') FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='auth'),
+      'auth_indexes',(SELECT coalesce(jsonb_agg(jsonb_build_array(i.indexrelid,md5(row_to_json(i)::text)) ORDER BY i.indexrelid),'[]') FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth'),
+      'auth_policies',(SELECT coalesce(jsonb_agg(jsonb_build_array(p.oid,md5(row_to_json(p)::text)) ORDER BY p.oid),'[]') FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth'),
+      'auth_types',(SELECT coalesce(jsonb_agg(jsonb_build_array(t.oid,md5(row_to_json(t)::text)) ORDER BY t.oid),'[]') FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='auth'),
+      'publications',(SELECT coalesce(jsonb_agg(jsonb_build_array(p.oid,md5(row_to_json(p)::text)) ORDER BY p.oid),'[]') FROM pg_publication p),
+      'publication_relations',(SELECT coalesce(jsonb_agg(jsonb_build_array(p.oid,md5(row_to_json(p)::text)) ORDER BY p.oid),'[]') FROM pg_publication_rel p),
+      'publication_namespaces',(SELECT coalesce(jsonb_agg(jsonb_build_array(p.oid,md5(row_to_json(p)::text)) ORDER BY p.oid),'[]') FROM pg_publication_namespace p),
+      'event_triggers',(SELECT coalesce(jsonb_agg(jsonb_build_array(e.oid,md5(row_to_json(e)::text)) ORDER BY e.oid),'[]') FROM pg_event_trigger e),
       'default_acl',(SELECT coalesce(jsonb_agg(jsonb_build_array(d.defaclrole,d.defaclnamespace,d.defaclobjtype,d.defaclacl::text) ORDER BY d.oid),'[]') FROM pg_default_acl d),
       'extensions',(SELECT jsonb_agg(jsonb_build_array(extname,extversion) ORDER BY extname) FROM pg_extension),
       'auth_history',(SELECT count(*) FROM auth.schema_migrations),
+      'auth_schema',(SELECT jsonb_build_array(nspowner,nspacl::text) FROM pg_namespace WHERE nspname='auth'),
+      'auth_trigger_definitions',(SELECT coalesce(jsonb_agg(jsonb_build_array(t.oid,md5(row_to_json(t)::text)) ORDER BY t.oid),'[]') FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth'),
       'cron',(SELECT count(*) FROM cron.job),
       'http_queue',(SELECT count(*) FROM net.http_request_queue),
       'vault',(SELECT count(*) FROM vault.secrets),
       'storage_objects',(SELECT count(*) FROM storage.objects),
       'auth_triggers',(SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth' AND NOT t.tgisinternal))""")
     return cur.fetchone()[0]
+
+
+def target_connection(args, name):
+    return psycopg.connect(**credentials(args.cli_workdir), sslmode='verify-full',
+                           sslrootcert=str(args.ca), connect_timeout=15,
+                           autocommit=True, application_name=name)
+
+
+def verify_readback(cur, baseline):
+    result = {
+        'catalog_unchanged': catalog(cur) == baseline['catalog'],
+        'auth_sequences_unchanged': sequence_state(cur) == baseline['auth_sequences'],
+        'after_rollback_auth_rows': sum(table_count(cur, table) for table in baseline['auth_tables']),
+        # Check the shared resource key across ALL sessions, including a lost
+        # original connection. A lock in another backend forbids any retry.
+        'advisory_lock_released': scalar(cur, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=(hashtext('gorbova.copy.auth.dryrun.v1')::bigint & 4294967295)::oid") == 0,
+    }
+    result['rollback_verified'] = (result['catalog_unchanged']
+                                   and result['auth_sequences_unchanged']
+                                   and result['after_rollback_auth_rows'] == 0
+                                   and result['advisory_lock_released'])
+    return result
+
+
+def readback_only(args, baseline):
+    if (baseline.get('target') != TARGET or len(baseline.get('auth_tables', [])) != 26
+            or len(set(baseline['auth_tables'])) != 26
+            or any(not IDENTIFIER.fullmatch(t) for t in baseline['auth_tables'])):
+        raise GateFailed('invalid_readback_baseline')
+    conn = target_connection(args, 'gorbova-copy-independent-readback')
+    try:
+        with conn.cursor() as cur:
+            cur.execute('BEGIN READ ONLY')
+            cur.execute('SET LOCAL ROLE postgres')
+            cur.execute("SET LOCAL statement_timeout='120s'")
+            cur.execute("SET LOCAL lock_timeout='5s'")
+            return verify_readback(cur, baseline)
+    finally:
+        try:
+            conn.rollback()
+        finally:
+            conn.close()
+
+
+def set_new_sequence(cur, before, namespace, name, value, called):
+    if namespace not in APP or any(row[0] == namespace and row[1] == name for row in before['relations']):
+        raise GateFailed('refusing_to_change_existing_sequence')
+    if scalar(cur, 'SELECT relkind FROM pg_class WHERE oid=%s::regclass', (namespace + '.' + name,)) != 'S':
+        raise GateFailed('app_sequence_missing')
+    scalar(cur, 'SELECT pg_catalog.setval(%s::regclass,%s,%s)', (namespace + '.' + name, value, called))
+
+
+def finish_rehearsal(conn, args, baseline, report):
+    try:
+        conn.rollback()
+    except Exception as exc:
+        report['rollback_connection_error_class'] = type(exc).__name__
+    finally:
+        conn.close()
+    report['rollback_verified'] = False
+    if baseline is not None:
+        try:
+            report.update(readback_only(args, baseline))
+        except Exception as exc:
+            report['readback_error_class'] = type(exc).__name__
+    scenario = report.get('passed', False) if args.inject_failure is None else report.get('injected_failure_triggered', False)
+    report['passed'] = scenario and report['rollback_verified']
+    report['uncertain'] = not report['rollback_verified']
 
 
 def plan(args, temp):
@@ -276,21 +355,36 @@ def execute(args, temp, phases, auth, app, budget, report):
     disk = DiskGuard(budget)
     baseline = load_json(args.auth_baseline)
     auth_tables = [x['table'] for x in auth['data_order']]
-    conn = psycopg.connect(**credentials(args.cli_workdir), sslmode='verify-full',
-                          sslrootcert=str(args.ca), connect_timeout=15, autocommit=True,
-                          application_name='gorbova-copy-full-rollback-only')
+    before_path = Path(str(args.report) + '.baseline.json')
+    if before_path.exists():
+        raise GateFailed('baseline_already_exists_readback_required')
+    conn = target_connection(args, 'gorbova-copy-full-rollback-only')
     before = sequences = None
+    readback_baseline = None
     try:
         with conn.cursor() as cur:
             cur.execute('BEGIN')
             report['advisory_lock_acquired'] = preflight(cur, auth_tables)
             before, sequences = catalog(cur), sequence_state(cur)
+            if scalar(cur, 'SELECT count(*) FROM pg_replication_slots'):
+                raise GateFailed('target_replication_slots_present')
             if any(before[k] for k in ('cron', 'http_queue', 'vault', 'storage_objects')):
                 raise GateFailed('target_not_isolated')
             if any(x[0] != 'public' for x in before['namespaces']):
                 raise GateFailed('target_private_or_queue_schema_already_present')
             if not scalar(cur, 'SELECT rolbypassrls FROM pg_roles WHERE rolname=current_user'):
                 raise GateFailed('verification_role_must_bypass_rls')
+            readback_baseline = dict(target=TARGET, catalog=before,
+                                     auth_sequences=sequences, auth_tables=auth_tables)
+            # Write metadata BEFORE any restore DDL/COPY. Survives a lost
+            # process; never overwrite it or restart a rehearsal without readback.
+            with before_path.open('x') as output:
+                output.write(json.dumps(readback_baseline, indent=2) + '\n')
+            report['readback_baseline'] = str(before_path)
+            # Large COPY/hash/index commands may exceed the Auth-only 120s.
+            # Each command remains bounded; disk checks happen between chunks
+            # and heavy DDL, with measured largest index ~117 MiB.
+            cur.execute("SET LOCAL statement_timeout='15min'")
             cur.execute("SET LOCAL check_function_bodies=false")
             cur.execute("SET LOCAL standard_conforming_strings=on")
             cur.execute("CREATE EXTENSION pgmq VERSION '1.5.1'")
@@ -308,12 +402,7 @@ def execute(args, temp, phases, auth, app, budget, report):
             for namespace, name, value, called in phases['sequence_values']:
                 # All app relations were absent before this transaction. A setval
                 # on these newly created objects disappears with their rollback.
-                if any(row[0] == namespace and row[1] == name for row in before['relations']):
-                    raise GateFailed('refusing_to_change_existing_sequence')
-                kind = scalar(cur, 'SELECT relkind FROM pg_class WHERE oid=%s::regclass', (namespace + '.' + name,))
-                if kind != 'S':
-                    raise GateFailed('app_sequence_missing')
-                scalar(cur, 'SELECT pg_catalog.setval(%s::regclass,%s,%s)', (namespace + '.' + name, value, called))
+                set_new_sequence(cur, before, namespace, name, value, called)
             for kind, statement, node in phases['post-data']:
                 heavy = heavy_ddl(kind, node, app['rows_by_table'])
                 disk.check(force=heavy)
@@ -351,53 +440,41 @@ def execute(args, temp, phases, auth, app, budget, report):
             report['gate'] = str(exc)
             report['injected_failure_triggered'] = str(exc) == 'injected_failure'
     finally:
-        conn.rollback()
-        try:
-            with conn.cursor() as cur:
-                cur.execute('BEGIN READ ONLY')
-                cur.execute('SET LOCAL ROLE postgres')
-                report['catalog_unchanged'] = before is not None and catalog(cur) == before
-                report['auth_sequences_unchanged'] = sequences is not None and sequence_state(cur) == sequences
-                report['after_rollback_auth_rows'] = sum(table_count(cur, table) for table in auth_tables)
-                report['advisory_lock_released'] = scalar(cur, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()") == 0
-                report['rollback_verified'] = report['catalog_unchanged'] and report['auth_sequences_unchanged'] and report['after_rollback_auth_rows'] == 0 and report['advisory_lock_released']
-                scenario = report.get('passed', False) if args.inject_failure is None else report.get('injected_failure_triggered', False)
-                report['passed'] = scenario and report['rollback_verified']
-        finally:
-            conn.rollback()
-            conn.close()
+        finish_rehearsal(conn, args, readback_baseline, report)
         report['disk_checks'] = disk.checks
         report['maximum_disk_fraction_observed'] = disk.maximum_fraction
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('archive', 'objects', 'auth-manifest', 'auth-baseline', 'app-baseline',
-                 'capacity', 'pg-restore', 'cli-workdir', 'ca', 'temp-dir', 'report'):
+    for name in ('cli-workdir', 'ca', 'report'):
         parser.add_argument('--' + name, type=Path, required=True)
+    archive_arguments = ('archive', 'objects', 'auth-manifest', 'auth-baseline',
+                         'app-baseline', 'capacity', 'pg-restore', 'temp-dir')
+    for name in archive_arguments:
+        parser.add_argument('--' + name, type=Path)
+    parser.add_argument('--readback-from', type=Path,
+                        help='Read-only verification from a saved pre-restore baseline; never restores data')
     parser.add_argument('--run-rollback-rehearsal', action='store_true')
     parser.add_argument('--inject-failure', choices=['first-app-table'])
     args = parser.parse_args()
+    if args.readback_from and (args.run_rollback_rehearsal or args.inject_failure):
+        parser.error('readback cannot be combined with restore or fault injection')
+    if not args.readback_from and any(getattr(args, name.replace('-', '_')) is None for name in archive_arguments):
+        parser.error('all archive arguments are required for plan or rehearsal')
     if args.report.exists():
         print(json.dumps({'passed': False, 'gate': 'report_already_exists', 'database_connected': False}))
         return 1
     report = dict(target=TARGET, mode='plan_only', commit_supported=False,
                   raw_sql_or_rows_persisted=False, credentials_printed=False, passed=False)
     try:
-        with tempfile.TemporaryDirectory(prefix='full-rehearsal-', dir=args.temp_dir) as td:
-            temp = Path(td)
-            phases, auth, app, budget = plan(args, temp)
-            report['schema_statement_kinds'] = {phase: dict(collections.Counter(x[0] for x in phases[phase])) for phase in ('pre-data', 'post-data')}
-            report['schema_statement_hashes'] = {phase: hashlib.sha256('\n'.join(x[1] for x in phases[phase]).encode()).hexdigest() for phase in ('pre-data', 'post-data')}
-            report['planned_heavy_ddl_checks'] = sum(heavy_ddl(kind, node, app['rows_by_table']) for kind, _, node in phases['post-data'])
-            report['planned_app_sequence_values'] = len(phases['sequence_values'])
-            report['planned_app_tables'] = len(app['rows_by_table'])
-            report['planned_total_rows'] = sum(app['rows_by_table'].values()) + sum(x['snapshot_rows'] for x in auth['data_order'])
-            if args.run_rollback_rehearsal:
-                report['mode'] = 'rollback_only'
-                execute(args, temp, phases, auth, app, budget, report)
-            else:
-                report.update(passed=True, database_connected=False)
+        if args.readback_from:
+            report['mode'] = 'readback_only'
+            report.update(readback_only(args, load_json(args.readback_from)))
+            report['passed'] = report['rollback_verified']
+            report['uncertain'] = not report['rollback_verified']
+        else:
+            prepare_or_execute(args, report)
     except Exception as exc:
         report.update(passed=False, error_class=type(exc).__name__, sqlstate=getattr(exc, 'sqlstate', None))
         if isinstance(exc, GateFailed):
@@ -406,6 +483,23 @@ def main():
         output.write(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
     return 0 if report['passed'] else 1
+
+
+def prepare_or_execute(args, report):
+    with tempfile.TemporaryDirectory(prefix='full-rehearsal-', dir=args.temp_dir) as td:
+        temp = Path(td)
+        phases, auth, app, budget = plan(args, temp)
+        report['schema_statement_kinds'] = {phase: dict(collections.Counter(x[0] for x in phases[phase])) for phase in ('pre-data', 'post-data')}
+        report['schema_statement_hashes'] = {phase: hashlib.sha256('\n'.join(x[1] for x in phases[phase]).encode()).hexdigest() for phase in ('pre-data', 'post-data')}
+        report['planned_heavy_ddl_checks'] = sum(heavy_ddl(kind, node, app['rows_by_table']) for kind, _, node in phases['post-data'])
+        report['planned_app_sequence_values'] = len(phases['sequence_values'])
+        report['planned_app_tables'] = len(app['rows_by_table'])
+        report['planned_total_rows'] = sum(app['rows_by_table'].values()) + sum(x['snapshot_rows'] for x in auth['data_order'])
+        if args.run_rollback_rehearsal:
+            report['mode'] = 'rollback_only'
+            execute(args, temp, phases, auth, app, budget, report)
+        else:
+            report.update(passed=True, database_connected=False)
 
 
 if __name__ == '__main__':
