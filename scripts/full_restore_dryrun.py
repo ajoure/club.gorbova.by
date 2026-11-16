@@ -16,6 +16,8 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 from pglast import parse_sql
+from pglast.stream import RawStream
+from pglast.visitors import Visitor
 from migration_disk_guard import DiskGuard
 
 from auth_restore_dryrun import (
@@ -31,6 +33,83 @@ DDL_KINDS = {
     'GrantStmt', 'AlterDefaultPrivilegesStmt', 'CommentStmt', 'AlterPublicationStmt',
 }
 COPY_APP = re.compile(rb'^COPY (\w+)\.(\w+) \((.*?)\) FROM stdin;\s*$')
+PLATFORM_ROLES = frozenset({'sandbox_exec', 'sandbox_exec_hdjgkjceownmmnrqqtuz'})
+
+
+def role_names(node):
+    names = collections.Counter()
+    class Roles(Visitor):
+        def visit_RoleSpec(self, ancestors, item):
+            if item.rolename:
+                names[item.rolename] += 1
+    Roles()(node)
+    return names
+
+
+def adapt_platform_acl(kind, statement, node, removed):
+    """Exclude only source-platform ACL recipients, never runtime identities.
+
+Do not create Lovable's LOGIN/BYPASSRLS roles in our independent project.
+Any reference outside an ACL recipient is a new finding, not a rewrite.
+"""
+    references = role_names(node)
+    excluded = {name: count for name, count in references.items() if name in PLATFORM_ROLES}
+    if not excluded:
+        return kind, statement, node
+    grant = node if kind == 'GrantStmt' else node.action if kind == 'AlterDefaultPrivilegesStmt' else None
+    if grant is None:
+        raise GateFailed('platform_role_outside_acl_recipients')
+    recipients = collections.Counter(r.rolename for r in grant.grantees if r.rolename in PLATFORM_ROLES)
+    if dict(recipients) != excluded:
+        raise GateFailed('platform_role_outside_acl_recipients')
+    removed.update(recipients)
+    grant.grantees = tuple(r for r in grant.grantees if r.rolename not in PLATFORM_ROLES)
+    if not grant.grantees:
+        return None
+    rendered = RawStream()(node)
+    parsed = parse_sql(rendered)
+    if len(parsed) != 1 or type(parsed[0].stmt).__name__ != kind or any(name in PLATFORM_ROLES for name in role_names(parsed[0].stmt)):
+        raise GateFailed('invalid_platform_acl_rewrite')
+    return kind, rendered, parsed[0].stmt
+
+
+def native_default_acl_rows(node):
+    if type(node).__name__ != 'AlterDefaultPrivilegesStmt':
+        return None
+    options = {option.defname: option.arg for option in node.options or []}
+    owners = [role.rolename for role in options.get('roles', ())]
+    if 'supabase_admin' not in owners:
+        return None
+    schemas = [item.sval for item in options.get('schemas', ())]
+    grant = node.action
+    privileges = {
+        'OBJECT_TABLE': ('r', ('INSERT', 'SELECT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')),
+        'OBJECT_FUNCTION': ('f', ('EXECUTE',)),
+        'OBJECT_SEQUENCE': ('S', ('USAGE', 'SELECT', 'UPDATE')),
+    }
+    if (owners != ['supabase_admin'] or schemas != ['public']
+            or set(options) != {'roles', 'schemas'} or not grant.is_grant
+            or grant.grant_option or grant.privileges or grant.grantor
+            or grant.objtype.name not in privileges
+            or any(role.rolename not in {'postgres', 'anon', 'authenticated', 'service_role'} for role in grant.grantees)):
+        raise GateFailed('unsupported_native_default_acl')
+    kind, names = privileges[grant.objtype.name]
+    return {('supabase_admin', 'public', kind, role.rolename, name, 'supabase_admin', False)
+            for role in grant.grantees for name in names}
+
+
+def verify_native_default_acl(cur, expected):
+    cur.execute("""SELECT owner.rolname,n.nspname,d.defaclobjtype::text,
+        CASE WHEN acl.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END,
+        acl.privilege_type,pg_get_userbyid(acl.grantor),acl.is_grantable
+        FROM pg_default_acl d JOIN pg_roles owner ON owner.oid=d.defaclrole
+        JOIN pg_namespace n ON n.oid=d.defaclnamespace
+        CROSS JOIN LATERAL aclexplode(d.defaclacl) acl
+        WHERE owner.rolname='supabase_admin' AND n.nspname='public'""")
+    actual = {tuple(row) for row in cur.fetchall()}
+    if actual != {tuple(row) for row in expected}:
+        raise GateFailed('native_default_acl_drift')
+    return len(actual)
 
 
 def load_json(path):
@@ -221,11 +300,34 @@ def plan(args, temp):
     schema_list = temp / 'schema.list'
     schema_list.write_text('\n'.join(str(o['toc_id']) + ';' for o in selected) + '\n')
     phases = {}
+    adjustments = {}
+    source_hashes = {}
+    native_defaults = set()
+    native_default_statements = 0
     for section in ('pre-data', 'post-data'):
         result = subprocess.run(dump(args, schema_list, section=section), capture_output=True)
         if result.returncode:
             raise GateFailed('schema_extract_failed')
-        phases[section] = list(ddl_statements(result.stdout))
+        original = list(ddl_statements(result.stdout))
+        source_hashes[section] = hashlib.sha256('\n'.join(x[1] for x in original).encode()).hexdigest()
+        removed = collections.Counter()
+        rewritten = [adapt_platform_acl(*item, removed) for item in original]
+        phases[section] = []
+        for item in rewritten:
+            if item is None:
+                continue
+            requirement = native_default_acl_rows(item[2])
+            if requirement is not None:
+                native_defaults.update(requirement)
+                native_default_statements += 1
+            else:
+                phases[section].append(item)
+        adjustments[section] = dict(removed_grantees=dict(removed),
+                                    omitted_platform_only_statements=sum(x is None for x in rewritten))
+    phases['source_schema_statement_hashes'] = source_hashes
+    phases['platform_acl_adjustments'] = adjustments
+    phases['native_default_acl_rows'] = sorted(native_defaults)
+    phases['native_default_acl_statements'] = native_default_statements
     app_data = [o for o in objects if o['schema'] in APP and o['type'] == 'TABLE DATA']
     app_keys = {o['schema'] + '.' + o['identity'].split()[0] for o in app_data}
     if len(app_data) != 402 or app_keys != set(app['rows_by_table']):
@@ -310,6 +412,13 @@ def execute(args, temp, phases, auth, app, budget, report):
             cur.execute('BEGIN')
             report['advisory_lock_acquired'] = preflight(cur, auth_tables)
             before, sequences = catalog(cur), sequence_state(cur)
+            report['native_default_acl_rows_verified'] = verify_native_default_acl(cur, phases['native_default_acl_rows'])
+            cur.execute('SELECT rolname FROM pg_roles')
+            present_roles = {row[0] for row in cur.fetchall()}
+            required_roles = {name for phase in ('pre-data', 'post-data') for _, _, node in phases[phase] for name in role_names(node)}
+            report['missing_required_schema_roles'] = sorted(required_roles - present_roles)
+            if report['missing_required_schema_roles']:
+                raise GateFailed('required_schema_roles_missing')
             if scalar(cur, 'SELECT count(*) FROM pg_replication_slots'):
                 raise GateFailed('target_replication_slots_present')
             if any(before[k] for k in ('cron', 'http_queue', 'vault', 'storage_objects')):
@@ -332,8 +441,10 @@ def execute(args, temp, phases, auth, app, budget, report):
             disk.bind_monitor(lambda: target_connection(args, 'gorbova-copy-disk-accounting'))
             cur.execute("SET LOCAL check_function_bodies=false")
             cur.execute("SET LOCAL standard_conforming_strings=on")
+            report['schema_progress'] = dict(phase='pgmq-extension')
             cur.execute("CREATE EXTENSION pgmq VERSION '1.5.1'")
-            for kind, statement, node in phases['pre-data']:
+            for index, (kind, statement, node) in enumerate(phases['pre-data']):
+                report['schema_progress'] = dict(phase='pre-data', index=index, kind=kind)
                 disk.check()
                 execute_ddl(cur, kind, statement)
                 disk.check()
@@ -348,7 +459,8 @@ def execute(args, temp, phases, auth, app, budget, report):
                 # All app relations were absent before this transaction. A setval
                 # on these newly created objects disappears with their rollback.
                 set_new_sequence(cur, before, namespace, name, value, called)
-            for kind, statement, node in phases['post-data']:
+            for index, (kind, statement, node) in enumerate(phases['post-data']):
+                report['schema_progress'] = dict(phase='post-data', index=index, kind=kind)
                 heavy = heavy_ddl(kind, node, app['rows_by_table'])
                 disk.check(force=heavy)
                 execute_ddl(cur, kind, statement)
@@ -443,6 +555,9 @@ def prepare_or_execute(args, report):
     with tempfile.TemporaryDirectory(prefix='full-rehearsal-', dir=args.temp_dir) as td:
         temp = Path(td)
         phases, auth, app, budget = plan(args, temp)
+        report['source_schema_statement_hashes'] = phases['source_schema_statement_hashes']
+        report['platform_acl_adjustments'] = phases['platform_acl_adjustments']
+        report['native_default_acl_statements_preserved'] = phases['native_default_acl_statements']
         report['schema_statement_kinds'] = {phase: dict(collections.Counter(x[0] for x in phases[phase])) for phase in ('pre-data', 'post-data')}
         report['schema_statement_hashes'] = {phase: hashlib.sha256('\n'.join(x[1] for x in phases[phase]).encode()).hexdigest() for phase in ('pre-data', 'post-data')}
         report['planned_heavy_ddl_checks'] = sum(heavy_ddl(kind, node, app['rows_by_table']) for kind, _, node in phases['post-data'])

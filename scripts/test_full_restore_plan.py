@@ -1,5 +1,6 @@
 """Safety boundaries for archive SQL and disk budget; no database/credentials."""
 import datetime as dt
+import collections
 import io
 import json
 import tempfile
@@ -10,12 +11,82 @@ from types import SimpleNamespace
 
 from full_restore_dryrun import (DiskGuard, GateFailed, ddl_statements, execute_ddl,
                                 heavy_ddl, copy_load, set_new_sequence,
-                                verify_readback, finish_rehearsal, main)
+                                verify_readback, finish_rehearsal, main,
+                                adapt_platform_acl, role_names,
+                                native_default_acl_rows, verify_native_default_acl)
 from pglast import parse_sql
 from unittest.mock import Mock, MagicMock, patch
 
 
 class SchemaBoundaryTests(unittest.TestCase):
+    def test_native_defaults_require_exact_semantic_equality(self):
+        source = 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;'
+        expected = native_default_acl_rows(parse_sql(source)[0].stmt)
+        self.assertEqual(len(expected), 8)
+        self.assertIn(('supabase_admin', 'public', 'r', 'authenticated', 'MAINTAIN', 'supabase_admin', False), expected)
+        cursor = Mock()
+        cursor.fetchall.return_value = sorted(expected)
+        self.assertEqual(verify_native_default_acl(cursor, expected), 8)
+        changed = list(sorted(expected)[0])
+        changed[-1] = True
+        for actual in (set(), expected - {sorted(expected)[0]}, expected | {tuple(changed)}):
+            with self.subTest(actual=actual), self.assertRaisesRegex(GateFailed, '^native_default_acl_drift$'):
+                cursor.fetchall.return_value = sorted(actual)
+                verify_native_default_acl(cursor, expected)
+
+    def test_native_defaults_reject_unreviewed_semantics(self):
+        for source in (
+            'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA private GRANT ALL ON TABLES TO authenticated;',
+            'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;',
+            'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated WITH GRANT OPTION;',
+            'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated;',
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(GateFailed, '^unsupported_native_default_acl$'):
+                native_default_acl_rows(parse_sql(source)[0].stmt)
+
+    def adapted(self, source):
+        node = parse_sql(source)[0].stmt
+        removed = collections.Counter()
+        result = adapt_platform_acl(type(node).__name__, source, node, removed)
+        return result, removed
+
+    def test_platform_only_acl_is_omitted_without_creating_roles(self):
+        result, removed = self.adapted('GRANT EXECUTE ON FUNCTION public.probe() TO sandbox_exec;')
+        self.assertIsNone(result)
+        self.assertEqual(removed, {'sandbox_exec': 1})
+
+    def test_mixed_acl_keeps_runtime_grantees_and_privileges(self):
+        source = 'GRANT SELECT,UPDATE ON public.probe TO sandbox_exec,authenticated,anon WITH GRANT OPTION;'
+        original = parse_sql(source)[0].stmt
+        privileges, objects = repr(original.privileges), repr(original.objects)
+        result, removed = self.adapted(source)
+        node = result[2]
+        self.assertEqual(set(role_names(node)), {'authenticated', 'anon'})
+        self.assertEqual(repr(node.privileges), privileges)
+        self.assertEqual(repr(node.objects), objects)
+        self.assertTrue(node.grant_option)
+        self.assertEqual(removed, {'sandbox_exec': 1})
+
+    def test_default_acl_keeps_owner_and_service_role(self):
+        result, removed = self.adapted('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO sandbox_exec,service_role;')
+        self.assertEqual(set(role_names(result[2])), {'postgres', 'service_role'})
+        self.assertEqual(removed, {'sandbox_exec': 1})
+
+    def test_owner_policy_and_grantor_references_cannot_be_rewritten(self):
+        for source in (
+            'ALTER DEFAULT PRIVILEGES FOR ROLE sandbox_exec GRANT EXECUTE ON FUNCTIONS TO service_role;',
+            'CREATE POLICY probe ON public.probe TO sandbox_exec USING(true);',
+            'GRANT SELECT ON public.probe TO authenticated GRANTED BY sandbox_exec;',
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(GateFailed, '^platform_role_outside_acl_recipients$'):
+                self.adapted(source)
+
+    def test_unknown_role_and_public_are_preserved(self):
+        result, removed = self.adapted('REVOKE SELECT ON public.probe FROM sandbox_exec,PUBLIC,custom_role;')
+        self.assertEqual(set(role_names(result[2])), {'custom_role'})
+        self.assertEqual(len(result[2].grantees), 2)
+        self.assertFalse(result[2].is_grant)
+
     def test_runtime_rechecks_exact_slice_before_execution(self):
         cursor = Mock()
         statement = "CREATE TABLE public.probe(id int);"
