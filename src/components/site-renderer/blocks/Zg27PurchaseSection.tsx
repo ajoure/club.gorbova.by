@@ -59,8 +59,12 @@ export function Zg27PurchaseSection({ content }: { content: Record<string, unkno
     const attemptGeneration = scopeRef.current.generation;
     setBusy(true); setCheckoutError('');
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (scopeRef.current.generation !== attemptGeneration) return;
+      if (!user?.id || session?.user.id !== user.id) throw new Error('zg27_login_required');
       const installment = selected.amounts_minor.length > 1;
       const { data, error } = await supabase.functions.invoke(installment ? 'public-create-installment-link' : 'zg27-create-full-link', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
         body: { product_id: quote.product_id, tariff_id: selected.tariff_id, offer_id: selected.offer_id, page_slug: pageSlug,
           ...(installment ? { zg27_consent: { accepted: true, policy_version: quote.policy_version,
             amounts_minor: selected.amounts_minor, interval_days: selected.interval_days, total_minor: selected.total_minor } } : {}) },

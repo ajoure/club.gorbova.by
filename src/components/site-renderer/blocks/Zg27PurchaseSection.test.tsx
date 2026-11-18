@@ -58,7 +58,7 @@ describe('ZG27 purchase section commercial scenario', () => {
     const pay = screen.getByRole('button', { name: /Перейти к оплате/ }); expect(pay).toBeDisabled();
     expect(screen.getAllByText(/296,67.*296,67.*296,66/)).toHaveLength(2);
     fireEvent.click(screen.getByRole('checkbox')); expect(pay).toBeEnabled(); fireEvent.click(pay);
-    await waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('public-create-installment-link', { body: {
+    await waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('public-create-installment-link', { headers: { Authorization: 'Bearer synthetic' }, body: {
       product_id: quote.product_id, tariff_id: 'tariff-repeat', offer_id: 'offer-3', page_slug: 'zg27povtor',
       zg27_consent: { accepted: true, policy_version: 'zg27-v1', amounts_minor: [29667,29667,29666], interval_days: 30, total_minor: 89000 },
     } }));
