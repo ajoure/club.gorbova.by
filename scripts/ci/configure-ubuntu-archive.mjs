@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 // GitHub's Ubuntu image uses mirror+file indirection. Editing only the
-// deb822 URI leaves the higher-priority Azure mirror selected by APT.
+// deb822 URI leaves the higher-priority regional mirror selected by APT.
 const root = resolve(process.argv[2] ?? '/etc/apt');
 const files = ['apt-mirrors.txt', 'sources.list', 'sources.list.d/ubuntu.sources']
   .filter(name => existsSync(join(root, name)))
@@ -17,11 +17,11 @@ if (files.some(file => file.text.includes('mirror+file:/etc/apt/apt-mirrors.txt'
 
 let switched = 0;
 for (const file of files) {
-  const next = file.text.replace(/https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu(?=\/|\s|$)/g, () => {
+  const next = file.text.replace(/https?:\/\/(?:azure|[a-z]{2}-[a-z]+-\d+\.ec2)\.archive\.ubuntu\.com\/ubuntu(?=\/|\s|$)/g, () => {
     switched += 1;
     return 'https://archive.ubuntu.com/ubuntu';
   });
   // Keep priorities, suites, components, Signed-By and all other repositories.
   if (next !== file.text) writeFileSync(join(root, file.name), next);
 }
-console.log(`Ubuntu APT sources: ${files.length} files inspected; ${switched} Azure URIs switched to the primary HTTPS archive`);
+console.log(`Ubuntu APT sources: ${files.length} files inspected; ${switched} regional URIs switched to the primary HTTPS archive`);

@@ -49,6 +49,7 @@ jobs:
           node --experimental-strip-types --test scripts/tests/custdev-workspace.test.mjs scripts/tests/custdev-handler.test.mjs
           npx eslint src/components/lesson/blocks/CustdevWorkshop.tsx src/hooks/useCustdevWorkspace.ts src/lib/custdev-export.ts supabase/functions/_shared/custdev-*.ts supabase/functions/training-custdev/*.ts
       - name: Sales knowledge and dialogue contracts (offline)
+        timeout-minutes: 10
         # The AAC regression uses a real decoder, never a mocked PCM buffer.
         # Install explicitly: GitHub's Ubuntu runner does not bundle ffmpeg.
         run: |

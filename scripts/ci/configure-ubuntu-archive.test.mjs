@@ -27,7 +27,20 @@ test('routes the actual runner mirror-list priority 1 to Ubuntu while retaining 
     run();
     assert.equal(read('apt-mirrors.txt'), mirrors.replace('http://azure.archive.ubuntu.com', 'https://archive.ubuntu.com'));
     assert.equal(read('sources.list.d/ubuntu.sources'), source);
-    assert.match(run(), /0 Azure URIs switched/);
+    assert.match(run(), /0 regional URIs switched/);
+  });
+});
+
+test('routes the AWS regional mirror observed in the stalled ZG27 runner without changing trust or priority', () => {
+  const mirrors = 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://security.ubuntu.com/ubuntu/\tpriority:3\n';
+  const source = 'Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: resolute resolute-updates\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n';
+  const legacy = 'deb http://eu-west-1.ec2.archive.ubuntu.com/ubuntu resolute main\n# http://us-east-2.ec2.archive.ubuntu.com.example/ubuntu\n';
+  fixture({ 'apt-mirrors.txt': mirrors, 'sources.list.d/ubuntu.sources': source, 'sources.list': legacy }, (read, run) => {
+    run();
+    assert.equal(read('apt-mirrors.txt'), mirrors.replace('http://us-east-2.ec2.archive.ubuntu.com', 'https://archive.ubuntu.com'));
+    assert.equal(read('sources.list.d/ubuntu.sources'), source);
+    assert.equal(read('sources.list'), legacy.replace('http://eu-west-1.ec2.archive.ubuntu.com/ubuntu', 'https://archive.ubuntu.com/ubuntu'));
+    assert.match(run(), /0 regional URIs switched/);
   });
 });
 
