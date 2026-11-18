@@ -62,6 +62,17 @@ type OrderRow = {
 const POLL_INTERVAL_MS = 2500;
 const POLL_TIMEOUT_MS = 60000;
 
+// The canonical hosted checkout returns status=success/decline/fail, while
+// saved-card and older callers return payment=*. Both enter receipt polling;
+// a URL status itself never confirms payment or activates a subscription.
+function paymentReturnState(params: URLSearchParams): string | null {
+  const explicit = params.get('payment');
+  if (explicit) return explicit;
+  if (!params.get('order')) return null;
+  const states: Record<string, string> = { success: 'processing', decline: 'failed', fail: 'failed' };
+  return states[params.get('status') ?? ''] ?? null;
+}
+
 export function GlobalPaymentHandler() {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -92,6 +103,7 @@ export function GlobalPaymentHandler() {
   const clearPaymentParams = () => {
     const next = new URLSearchParams(searchParams);
     next.delete("payment");
+    next.delete("status");
     next.delete("order");
     setSearchParams(next);
   };
@@ -247,7 +259,7 @@ export function GlobalPaymentHandler() {
   };
 
   useEffect(() => {
-    const paymentParam = searchParams.get("payment");
+    const paymentParam = paymentReturnState(searchParams);
 
     // Skip if no payment param
     if (!paymentParam) {
@@ -281,7 +293,7 @@ export function GlobalPaymentHandler() {
 
   // Separate effect to handle dialog closing when payment param is removed
   useEffect(() => {
-    const paymentParam = searchParams.get("payment");
+    const paymentParam = paymentReturnState(searchParams);
     if (!paymentParam && (successOpen || failedOpen)) {
       stopPolling();
       setSuccessOpen(false);
@@ -295,6 +307,8 @@ export function GlobalPaymentHandler() {
   useEffect(() => () => stopPolling(), []);
 
   const goToPurchases = () => {
+    queryClient.invalidateQueries({ queryKey: ["user-orders-v2"] });
+    queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
     clearPaymentParams();
     if (location.pathname !== "/purchases") {
       window.location.href = "/purchases";
@@ -312,11 +326,6 @@ export function GlobalPaymentHandler() {
   const handleFailedClose = () => {
     setFailedOpen(false);
     clearPaymentParams();
-  };
-
-  const handleRetry = () => {
-    handleFailedClose();
-    window.location.href = "/pay";
   };
 
   const formatDateRu = (dateIso: string) => format(new Date(dateIso), "d MMMM yyyy", { locale: ru });
@@ -467,27 +476,21 @@ export function GlobalPaymentHandler() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <XCircle className="h-6 w-6 text-destructive" />
-              Оплата не прошла
+              Платёжная форма вернула отказ
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
               <p className="text-sm text-foreground">
-                Платёж не был подтверждён банком. Доступ не выдан.
+                Проверьте актуальный статус заказа в «Моих покупках». Если деньги уже списались, не оплачивайте повторно — дождитесь подтверждения или обратитесь в поддержку.
               </p>
-              <ul className="mt-2 text-sm text-muted-foreground space-y-1">
-                <li>• Недостаточно средств на карте</li>
-                <li>• Карта заблокирована банком</li>
-                <li>• Превышен лимит операций</li>
-                <li>• Платёж был отменён</li>
-              </ul>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Button onClick={handleRetry} className="w-full">
+              <Button onClick={() => { handleFailedClose(); goToPurchases(); }} className="w-full">
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Попробовать снова
+                Проверить статус в моих покупках
               </Button>
 
               <Button variant="outline" onClick={handleFailedClose} className="w-full">
