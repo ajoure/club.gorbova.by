@@ -1,3 +1,5 @@
+import { resolveZg27DebtToken } from './zg27-debt-proof.ts';
+import { ZG27_PRODUCT_ID } from './zg27-policy.ts';
 // ============================================================================
 // token-resolver.ts — Stage 1 helper (installment-only scope)
 // ----------------------------------------------------------------------------
@@ -52,11 +54,12 @@ export function isSkip(r: ResolveTokenResult): r is ResolveTokenSkip {
 export async function getSubscriptionToken(
   supabase: any,
   subscriptionId: string,
+  installmentId?: string,
 ): Promise<ResolveTokenResult> {
   // 1. Загружаем подписку
   const { data: sub, error: subErr } = await supabase
     .from('subscriptions_v2')
-    .select('id, status, payment_method_id, payment_token')
+    .select('id, status, payment_method_id, payment_token,product_id')
     .eq('id', subscriptionId)
     .maybeSingle();
 
@@ -64,6 +67,10 @@ export async function getSubscriptionToken(
     return { skip: true, reason: 'no_subscription', details: { subscriptionId, error: subErr?.message } };
   }
 
+  if (sub.product_id === ZG27_PRODUCT_ID) {
+    const proof = installmentId ? await resolveZg27DebtToken(supabase, subscriptionId, installmentId) : null;
+    return proof ? { ...proof, source: 'payment_methods' } : { skip: true, reason: 'subscription_inactive' };
+  }
   if (!['active', 'trial'].includes(sub.status)) {
     return { skip: true, reason: 'subscription_inactive', details: { status: sub.status } };
   }

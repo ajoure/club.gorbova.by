@@ -1,3 +1,4 @@
+import { assertZg27Checkout, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 // Phase 2 — stripe-create-checkout
 // Admin-only entrypoint to create a Stripe Checkout Session for an existing test order.
 // Strictly add-only: does NOT touch bepaid-*, create-payment-checkout.ts, payment_links.
@@ -53,22 +54,6 @@ Deno.serve(async (req) => {
       return errorResponse('missing_required_fields', 400);
     }
 
-    // MP-A2-1: SOT resolver — no hardcoded 'stripe_poland' default.
-    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
-    const account_code = acct.account_code;
-
-    // Re-fetch the full connection row (status/test_mode already validated by resolver,
-    // but we still surface the legacy not-test guard for parity with previous behavior).
-    if (!acct.test_mode) {
-      return jsonResponse({
-        ok: false,
-        fallback: true,
-        code: 'sandbox_checkout_requires_test_keys',
-        message:
-          'Подключены боевые ключи Stripe. Тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки переключите подключение на тестовые ключи Stripe (pk_test_/sk_test_).',
-      });
-    }
-
     // Verify order exists & is pending stripe
     const { data: order, error: ordErr } = await supabase
       .from('orders_v2')
@@ -84,7 +69,33 @@ Deno.serve(async (req) => {
       return errorResponse(`order_invalid_status:${order.status}`, 400);
     }
 
+    try {
+      const quote = await assertZg27Checkout({ db: supabase, userId: order.user_id, productId: order.product_id,
+        tariffId: order.tariff_id, offerId: order.offer_id, amountMinor: Math.round(Number(order.final_price) * 100), currency: order.currency });
+      if (quote.applicable) {
+        if ((body.user_id && body.user_id !== order.user_id) || (body.product_id && body.product_id !== order.product_id)
+          || (body.offer_id && body.offer_id !== order.offer_id) || body.tariff_id !== order.tariff_id
+          || body.amount !== Math.round(Number(order.final_price) * 100) || body.currency !== order.currency) return errorResponse('zg27_order_identity_mismatch', 403);
+      }
+    } catch (error) { return errorResponse(error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable', error instanceof Zg27CheckoutError ? error.status : 503); }
+
     if (!await cbAlumniOfferAllowed(supabase,body.offer_id??order.offer_id,order.user_id)) return errorResponse('alumni_eligibility_required',403);
+
+    // MP-A2-1: SOT resolver — no hardcoded 'stripe_poland' default.
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const account_code = acct.account_code;
+
+    // Re-fetch the full connection row (status/test_mode already validated by resolver,
+    // but we still surface the legacy not-test guard for parity with previous behavior).
+    if (!acct.test_mode) {
+      return jsonResponse({
+        ok: false,
+        fallback: true,
+        code: 'sandbox_checkout_requires_test_keys',
+        message:
+          'Подключены боевые ключи Stripe. Тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки переключите подключение на тестовые ключи Stripe (pk_test_/sk_test_).',
+      });
+    }
 
     // MP-A2-1: business_stream via SOT resolver (offer → product → body override → 'unspecified').
     let bs: string | null = body.business_stream ?? null;

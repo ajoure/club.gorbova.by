@@ -1,3 +1,5 @@
+import { ZG27_PRODUCT_ID } from '../_shared/zg27-policy.ts';
+import { settleZg27InstallmentReceipt } from '../_shared/zg27-installment-receipt.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { getSubscriptionToken, isSkip } from '../_shared/token-resolver.ts';
@@ -217,7 +219,7 @@ Deno.serve(async (req) => {
       .select(`
         *,
         subscriptions_v2 (
-          id, user_id, payment_method_id, payment_token, status, meta,
+          id, user_id, product_id, payment_method_id, payment_token, status, meta,
           products_v2 ( name, currency )
         )
       `)
@@ -273,7 +275,8 @@ Deno.serve(async (req) => {
       }
 
       const subStatus = subscription.status;
-      if (subStatus === 'canceled' || subStatus === 'expired' || subStatus === 'superseded') {
+      if (subStatus === 'canceled' || subStatus === 'superseded'
+        || (subStatus === 'expired' && isSkip(await getSubscriptionToken(supabase, subscription.id, installment.id)))) {
         console.log(`Пропуск платежа ${installment.id}: подписка в статусе ${subStatus}`);
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
@@ -316,7 +319,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const tokenResult = await getSubscriptionToken(supabase, subscription.id);
+      const tokenResult = await getSubscriptionToken(supabase, subscription.id, installment.id);
 
       if (isSkip(tokenResult)) {
         console.log(`Skipping installment ${installment.id}: ${tokenResult.reason}`, tokenResult.details);
@@ -386,6 +389,13 @@ Deno.serve(async (req) => {
           throw new Error(`Failed to create payment record: ${paymentError.message}`);
         }
 
+        // Persist the owned attempt link BEFORE dispatch: async webhook may win the HTTP race.
+        if (subscription.product_id === ZG27_PRODUCT_ID) {
+          const { error: attemptLinkError } = await supabase.from('installment_payments').update({ payment_id: payment.id })
+            .eq('id', installment.id).eq('status', 'processing');
+          if (attemptLinkError) throw new Error('installment_attempt_link_failed');
+        }
+
         // Charge the card
         const currency = subscription.products_v2?.currency || 'BYN';
         const productName = subscription.products_v2?.name || 'Продукт';
@@ -401,7 +411,7 @@ Deno.serve(async (req) => {
               token: effectiveToken, // Use verified token from payment_methods
             },
             additional_data: {
-              contract: ['recurring', 'unscheduled'],
+              contract: subscription.product_id === ZG27_PRODUCT_ID ? ['recurring'] : ['recurring', 'unscheduled'],
             },
           },
         };
@@ -430,6 +440,7 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'X-API-Version': '2',
+            ...(subscription.product_id === ZG27_PRODUCT_ID ? { RequestID: payment.id } : {}),
           },
           body: JSON.stringify(chargePayload),
         });
@@ -440,6 +451,13 @@ Deno.serve(async (req) => {
         providerTransactionStatus = txStatus || null;
         const txUid = chargeResult.transaction?.uid;
 
+        if (subscription.product_id === ZG27_PRODUCT_ID) {
+          const settled=await settleZg27InstallmentReceipt(supabase,payment.id,chargeResult.transaction);
+          if(settled.status==='succeeded')results.successful++;
+          else if(settled.status==='failed')results.failed++;
+          else results.skipped++;
+          continue;
+        }
         if (txStatus === 'successful') {
           // Update payment
           await supabase
@@ -578,6 +596,11 @@ Deno.serve(async (req) => {
             },
           );
         } else {
+          if (subscription.product_id === ZG27_PRODUCT_ID) {
+            const { data: confirmed, error: readError } = await supabase.from('payments_v2').select('status').eq('id', payment.id).maybeSingle();
+            if (readError) throw new Error('zg27_installment_response_reconcile');
+            if (confirmed?.status === 'succeeded') { results.successful++; continue; }
+          }
           // Payment failed
           const errorMessage = chargeResult.transaction?.message || chargeResult.errors?.base?.[0] || 'Payment failed';
           
@@ -654,7 +677,7 @@ Deno.serve(async (req) => {
             charge_attempts: (installment.charge_attempts || 0) + (providerRequestStarted ? 1 : 0),
             error_message: error instanceof Error ? error.message : 'Unknown error',
           })
-          .eq('id', installment.id);
+          .eq('id', installment.id).eq('status', 'processing');
 
         await supabase.from('audit_logs').insert({
           actor_type: 'system',

@@ -1,3 +1,7 @@
+import { assertZg27Checkout, requireZg27Recipient, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
+import { zg27InstallmentContract } from '../_shared/zg27-installments.ts';
+import { freezeZg27Consent } from '../_shared/zg27-hosted-installments.ts';
+import { ZG27_PRODUCT_ID } from '../_shared/zg27-policy.ts';
 /**
  * public-create-installment-link
  *
@@ -45,6 +49,7 @@ import {
 import { resolveComposableCheckout } from '../_shared/resolve-composable-checkout.ts';
 
 interface CreateInstallmentLinkRequest {
+  zg27_consent?: unknown;
   product_id: string;
   tariff_id?: string | null;
   offer_id: string;
@@ -125,6 +130,34 @@ Deno.serve(async (req) => {
     // GATE: payment_method='internal_installment'
     if (offer.payment_method !== 'internal_installment') {
       return errorResponse('not_installment_offer', 400);
+    }
+
+    if (product_id === ZG27_PRODUCT_ID) {
+      try {
+        await requireZg27Recipient(req, supabase, authUserId);
+        const quote = await assertZg27Checkout({ db: supabase, userId: authUserId, productId: product_id,
+          tariffId: tariff_id, offerId: offer_id });
+        if (!quote.applicable || addon_offer_ids.length) return errorResponse('zg27_fixed_price_required', 403);
+        const plan = zg27InstallmentContract({ productId: product_id, tariffId: tariff_id, offerId: offer_id,
+          offerTariffId: offer.tariff_id, amountByn: Number(offer.amount), currency: 'BYN', count: Number(offer.installment_count),
+          intervalDays: Number(offer.installment_interval_days), firstDelayDays: Number(offer.first_payment_delay_days) });
+        const consent = freezeZg27Consent(plan, body.zg27_consent, authUserId!);
+        const token = crypto.randomUUID();
+        const origin = CANONICAL_PUBLIC_HOST;
+        const publicUrl = `${origin}/pay/${token}`;
+        const { data: scopedLink, error } = await supabase.from('payment_links').insert({
+          product_id, tariff_id, offer_id, amount: plan.total_minor, currency: 'BYN', payment_type: 'subscription',
+          status: 'active', user_id: authUserId, created_by: authUserId, max_uses: 1,
+          url_token: token, public_url: publicUrl, expires_at: new Date(Date.now() + 86400000).toISOString(),
+          meta: { auth_policy: 'required', source: 'zg27_hosted_installment', zg27_installment: plan,
+            zg27_schedule_consent: consent, installment_count: plan.amounts_minor.length },
+        }).select('id,url_token,public_url').single();
+        if (error || !scopedLink) return errorResponse('zg27_link_creation_failed', 500);
+        return jsonResponse({ success: true, url_token: scopedLink.url_token, public_url: scopedLink.public_url,
+          installment: { amounts_minor: plan.amounts_minor, total_minor: plan.total_minor, interval_days: 30 } });
+      } catch (error) {
+        return errorResponse(error instanceof Zg27CheckoutError ? error.code : 'zg27_schedule_consent_required', error instanceof Zg27CheckoutError ? error.status : 403);
+      }
     }
 
     // Публичный путь: точное количество платежей = tariff_offers.installment_count.

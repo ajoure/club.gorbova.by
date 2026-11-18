@@ -1,3 +1,4 @@
+import { assertZg27Checkout, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 import { claimPendingPurchase, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
 /**
  * invoice-checkout-issue
@@ -152,6 +153,12 @@ Deno.serve(async (req) => {
   if (primaryQuoteItem.product_id !== body.product_id) {
     return json({ error: "quote_product_mismatch" }, 400);
   }
+
+  try {
+    const quote = await assertZg27Checkout({ db: admin, userId: user.id, productId: body.product_id,
+      tariffId: primaryQuoteItem.tariff_id, offerId: body.offer_id, amountMinor: Math.round(Number(composableQuote.total) * 100), currency: composableQuote.currency });
+    if (quote.applicable) return json({ error: 'zg27_invoice_unavailable' }, 409);
+  } catch (error) { return json({ error: error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable' }, error instanceof Zg27CheckoutError ? error.status : 503); }
 
   // 1. Профиль пользователя (profiles.user_id = auth.user.id).
   const { data: profile } = await admin

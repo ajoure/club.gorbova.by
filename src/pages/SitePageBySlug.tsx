@@ -37,6 +37,7 @@ import { applySitePageSeo } from "@/lib/sitePageSeo";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set([
+  "open-zg27-payment",
   "open-offer",
   "open-slot",
   "open-product-lead",
@@ -295,6 +296,15 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
       const detail = ce.detail;
       if (!detail || !ALLOWED_ACTIONS.has(detail.action)) return;
 
+      if (detail.action === "open-zg27-payment") {
+        const target = document.getElementById('zg27-payment');
+        if (target && blocks.some((block) => block.type === 'zg27_checkout'
+          && block.content.product_id === 'e71c0dbb-baf2-4b6c-a950-bf0f728708af')) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+
       if (detail.action === "open-offer") {
         const productId = String(detail.payload?.product_id || "");
         const offerId = String(detail.payload?.offer_id || "");
@@ -469,7 +479,7 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
     }
     window.addEventListener("lovable:site-action", onSiteAction as EventListener);
     return () => window.removeEventListener("lovable:site-action", onSiteAction as EventListener);
-  }, []);
+  }, [blocks]);
 
 
   // Resolve offer + tariff once product data arrives.

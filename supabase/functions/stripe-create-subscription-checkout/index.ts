@@ -1,3 +1,4 @@
+import { assertZg27Checkout, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 // Phase 3.1 Stage 1 — stripe-create-subscription-checkout
 //
 // Pre-create writer для Stripe Subscription Checkout.
@@ -104,6 +105,12 @@ Deno.serve(async (req) => {
     for (const k of ['user_id', 'product_id', 'tariff_id', 'tariff_offer_id'] as const) {
       if (!body[k]) return json(400, { ok: false, error: `missing_${k}` });
     }
+
+    try {
+      const quote = await assertZg27Checkout({ db: admin, userId: body.user_id, productId: body.product_id,
+        tariffId: body.tariff_id, offerId: body.tariff_offer_id });
+      if (quote.applicable) return json(409, { ok: false, error: 'zg27_requires_application_managed_installments' });
+    } catch (error) { return json(error instanceof Zg27CheckoutError ? error.status : 503, { ok: false, error: error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable' }); }
 
     // ---- 2) Resolve Stripe account ----
     // SOT режима — acquiring_connections.test_mode. Live subscription checkout
