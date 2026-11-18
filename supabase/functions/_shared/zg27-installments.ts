@@ -95,7 +95,7 @@ export async function generateZg27InstallmentSchedule(params: any): Promise<
     const matches = (existing: any[]) => existing.length === rows.length && rows.every(expected => {
       const found = existing.filter(v => v.payment_number === expected.payment_number);
       return found.length === 1 && ['pending', 'processing', 'succeeded', 'failed'].includes(found[0].status)
-        && ['subscription_id', 'order_id', 'user_id', 'total_payments', 'currency'].every(k => found[0][k] === expected[k])
+        && (['subscription_id', 'order_id', 'user_id', 'total_payments', 'currency'] as const).every(k => found[0][k] === expected[k])
         && Math.abs(Number(found[0].amount) * 100 - Math.round(expected.amount * 100)) < 0.000001
         && Date.parse(found[0].due_date) === Date.parse(expected.due_date)
         && (expected.payment_number !== 1 || (found[0].status === 'succeeded' && found[0].payment_id === pay.id));
