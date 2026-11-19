@@ -20,6 +20,13 @@ BEGIN
  IF n<>2 OR (SELECT count(*) FROM public.tariffs WHERE product_id=product AND id IN(first_tariff,repeat_tariff) AND is_active IS TRUE)<>2 THEN RAISE EXCEPTION 'zg27_tariffs_baseline_mismatch'; END IF;
  SELECT count(*) INTO n FROM public.tariff_offers WHERE tariff_id IN(first_tariff,repeat_tariff);
  IF n<>6 THEN RAISE EXCEPTION 'zg27_offers_count_mismatch'; END IF;
+ -- Legacy repeat/full omitted its slot. Repair only that known empty slot;
+ -- retain the existing dynamic-slot trigger and every other button mapping.
+ IF EXISTS(SELECT 1 FROM public.tariff_offers WHERE id='3a85b4bc-d479-4aa5-bf34-d66625610315'::uuid
+   AND (coalesce(meta->>'slot_role','') NOT IN('','button_1') OR meta->>'site_button_variant' IS DISTINCT FROM 'primary'))
+   OR EXISTS(SELECT 1 FROM public.tariff_offers WHERE tariff_id=repeat_tariff
+     AND id<>'3a85b4bc-d479-4aa5-bf34-d66625610315'::uuid AND meta->>'slot_role'='button_1')
+ THEN RAISE EXCEPTION 'zg27_repeat_full_slot_baseline_mismatch'; END IF;
  -- Lock and validate every target before writing any configuration.
  FOR o IN SELECT * FROM (VALUES
  ('2fd031d9-f94e-4dac-991a-4e11bc7d0bbb'::uuid,first_tariff,1,1290::numeric,'first'),
@@ -93,7 +100,9 @@ BEGIN
  ('f94cb0b9-b98d-4162-b0b6-ca17e3d5841a'::uuid,repeat_tariff,3,890::numeric,'repeat')
  ) v(id,tariff,cycles,total,tier) LOOP
  UPDATE public.tariff_offers SET amount=o.total,installment_count=o.cycles,installment_interval_days=30,first_payment_delay_days=0,
- meta=(coalesce(meta,'{}')||jsonb_build_object('zg27',jsonb_build_object('policy_version','zg27-v1','tier',o.tier,'cycles',o.cycles)))||CASE WHEN o.cycles>1 THEN jsonb_build_object('installment',coalesce(meta->'installment','{}')||jsonb_build_object('max_months',o.cycles,'interval_days',30,'first_payment_delay_days',0,'rounding_mode','last_payment_remainder')) ELSE '{}'::jsonb END
+ meta=(coalesce(meta,'{}')||jsonb_build_object('zg27',jsonb_build_object('policy_version','zg27-v1','tier',o.tier,'cycles',o.cycles)))
+ ||CASE WHEN o.id='3a85b4bc-d479-4aa5-bf34-d66625610315'::uuid THEN jsonb_build_object('slot_role','button_1') ELSE '{}'::jsonb END
+ ||CASE WHEN o.cycles>1 THEN jsonb_build_object('installment',coalesce(meta->'installment','{}')||jsonb_build_object('max_months',o.cycles,'interval_days',30,'first_payment_delay_days',0,'rounding_mode','last_payment_remainder')) ELSE '{}'::jsonb END
  WHERE id=o.id AND tariff_id=o.tariff;
  GET DIAGNOSTICS n=ROW_COUNT; IF n<>1 THEN RAISE EXCEPTION 'zg27_offer_rowcount'; END IF;
  END LOOP;
