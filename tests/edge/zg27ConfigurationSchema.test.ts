@@ -12,6 +12,7 @@ describe('actual ZG27 configuration block schema', () => {
       const output = join(dir, 'blocks.json');
       execFileSync(process.execPath, ['tests/sql/zg27-configuration.mjs'], {
         env: { ...process.env, ZG27_CONFIG_BLOCK_OUTPUT: output }, encoding: 'utf8',
+        timeout: 20_000,
       });
       const blocks = JSON.parse(readFileSync(output, 'utf8'));
       expect(blocks).toHaveLength(2);
@@ -23,5 +24,5 @@ describe('actual ZG27 configuration block schema', () => {
           ? '970a6a71-2727-4c85-a0d9-5c031a520001' : '970a6a71-2727-4c85-a0d9-5c031a520002');
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, 25_000); // Cold PostgreSQL/WASM fixtures include the native trigger/index rollback matrix.
 });
