@@ -86,6 +86,8 @@ def main():
     check("SELECT md5(prosrc) FROM pg_proc WHERE oid='public.user_has_training_lesson_access(uuid,uuid)'::regprocedure;", 'f637058db4edb7f6daea8257727e8b60', 'real baseline body')
     before = value("SELECT jsonb_agg(jsonb_build_array(oid,proacl,proowner)) FROM pg_proc WHERE oid IN('public.has_month_purchase_bulk(uuid,jsonb)'::regprocedure,'public.user_has_training_lesson_access(uuid,uuid)'::regprocedure);")
     sql(SCRIPT)
+    sql((ROOT / 'scripts/club-paid-lessons/receipt_fixture.sql').read_text())
+    sql((ROOT / 'supabase/migrations/20261119162522_club_paid_lesson_corrections.sql').read_text())
     after = value("SELECT jsonb_agg(jsonb_build_array(oid,proacl,proowner)) FROM pg_proc WHERE oid IN('public.has_month_purchase_bulk(uuid,jsonb)'::regprocedure,'public.user_has_training_lesson_access(uuid,uuid)'::regprocedure);")
     require(before == after, 'OID/ACL/owner preserved')
     u, p, tariff, subscription, payment, lesson, other, parent, root, rule = [uid(i) for i in range(1, 11)]
@@ -178,6 +180,7 @@ def main():
     require(current == baseline, 'no final financial/subscription/order mutation')
     denied(SCRIPT, 'repeat migration stops without changing existing evidence')
     check('SELECT count(*) FROM private.club_paid_lesson_correction_audit;', 1, 'repeat migration atomic/no extra audit')
+    sql((ROOT / 'scripts/club-paid-lessons/receipt_contract.sql').read_text())
     print(json.dumps({'postgres': 'PASS', 'assertions': checks, 'fixture': 'synthetic only'}))
 
 
