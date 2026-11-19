@@ -15,7 +15,7 @@ function initial(actor:string):Run{
   }catch{/* no card or private identity stored */}
   return {run_id:crypto.randomUUID(),started_at:new Date().toISOString(),cases:{}};
 }
-export default function AdminZg27HostedSandbox({actorId}:{actorId:string}){
+export default function AdminZg27HostedSandbox({actorId,navigate=(url:string)=>window.location.assign(url)}:{actorId:string;navigate?:(url:string)=>void}){
   const [run,setRun]=useState(()=>initial(actorId)),[selected,setSelected]=useState<CaseId>('first_1'),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
   const running=useRef(false),generation=useRef(0),mounted=useRef(false),latest=useRef(run);latest.current=run;
   useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;generation.current++}},[]);
@@ -24,18 +24,35 @@ export default function AdminZg27HostedSandbox({actorId}:{actorId:string}){
     const updated={...latest.current,cases:{...latest.current.cases,[caseId]:next}};
     localStorage.setItem(`${PREFIX}:${actorId}`,JSON.stringify(updated));latest.current=updated;setRun(updated);
   }
+  function newRun(){
+    if(running.current||!mounted.current)return;
+    try{
+      const key=`${PREFIX}:${actorId}`,old=localStorage.getItem(key)??JSON.stringify(latest.current);
+      if(JSON.parse(old).run_id!==latest.current.run_id)throw Error('cursor_changed');
+      const archive=`${PREFIX}:archive:${actorId}:${latest.current.run_id}`,prior=localStorage.getItem(archive);
+      if(prior!==null&&prior!==old)throw Error('archive_conflict');
+      if(prior===null)localStorage.setItem(archive,old); // Exact old bytes retained, including unknown/started attempts.
+      const next:Run={run_id:crypto.randomUUID(),started_at:new Date().toISOString(),cases:{}};
+      localStorage.setItem(key,JSON.stringify(next));latest.current=next;setRun(next);setSelected('first_1');generation.current++;
+      setNotice('Создан новый отдельный TEST-прогон без оплаты. Старый сохранён в архиве; его неизвестные результаты не считаются разрешёнными.');
+    }catch{setNotice('Не удалось сохранить архив старого прогона. Новый прогон не создан.');}
+  }
   async function session(){const {data,error}=await supabase.auth.getSession();if(error||data.session?.user?.id!==actorId||!data.session?.access_token)throw Error('session_changed');return data.session.access_token;}
   async function action(operation:'hosted_create'|'hosted_inspect'|'hosted_finish_test'){
     if(running.current||!mounted.current)return;
     const caseId=selected,prior=latest.current.cases[caseId]??{stage:'new'};
     if(operation==='hosted_create'&&prior.stage!=='new'||operation==='hosted_finish_test'&&(prior.stage!=='first_verified'||prior.finish_started)||operation!=='hosted_create'&&!TOKEN.test(prior.checkout_token??''))return;
-    running.current=true;setBusy(true);const epoch=++generation.current,active=()=>mounted.current&&generation.current===epoch;
+    if(operation!=='hosted_inspect'){const age=Date.now()-Date.parse(run.started_at);if(!Number.isFinite(age)||age< -120000||age>3600000){persist(caseId,{...prior,code:'run_expired_not_sent'});setNotice('Срок прогона истёк: run_expired_not_sent. Запрос не отправлен. Можно вручную начать новый отдельный TEST-прогон.');return;}}
+    running.current=true;setBusy(true);const epoch=++generation.current,active=()=>mounted.current&&generation.current===epoch;let dispatched=false;
     try{
       const jwt=await session();if(!active())return;
       if(operation!=='hosted_inspect')persist(caseId,{...prior,finish_started:operation==='hosted_finish_test'||prior.finish_started,stage:operation==='hosted_create'?'creating':'finishing'});
+      dispatched=true;
       const {data,error}=await supabase.functions.invoke('zg27-sandbox-acceptance',{headers:{Authorization:`Bearer ${jwt}`},body:{operation,run_id:run.run_id,started_at:run.started_at,case_id:caseId,
         ...(operation==='hosted_create'?{}:{checkout_token:prior.checkout_token})}});
       if(!active())return;await session();if(!active())return;
+      const http=(error as {context?:{status?:unknown}}|null)?.context?.status;
+      if(error&&typeof http==='number'&&[400,401,403].includes(http)){persist(caseId,{...prior,code:`http_${http}_not_sent`});setNotice(`Запрос не отправлен провайдеру: http_${http}_not_sent. Повтор старой оплаты не выполнялся.`);return;}
       if(error||data?.operation!==operation||data?.case_id!==caseId)throw Error('result_unknown');
       const code=typeof data.code==='string'&&/^[a-z_]{1,64}$/.test(data.code)?data.code:undefined;
       const values={...prior,finish_started:operation==='hosted_finish_test'||prior.finish_started,code,confirmed:Number.isSafeInteger(data.confirmed_payments)?data.confirmed_payments:undefined,sum:Number.isSafeInteger(data.sum_minor)?data.sum_minor:undefined};
@@ -47,7 +64,8 @@ export default function AdminZg27HostedSandbox({actorId}:{actorId:string}){
         persist(caseId,{...values,stage:prior.finish_started||['unknown','finishing','stopped'].includes(prior.stage)?'unknown':'first_verified'});setNotice('Первый TEST-платёж подтверждён.');
       }else if(data.status==='awaiting_customer'){persist(caseId,{...values,stage:prior.stage==='unknown'?'unknown':'awaiting_customer'});setNotice('Платёж ещё не завершён. Доступна только проверка результата.');}
       else{persist(caseId,{...values,stage:'stopped'});setNotice('Прогон остановлен. Повторная оплата отключена.');}
-    }catch{if(active()){persist(caseId,{...prior,finish_started:operation==='hosted_finish_test'||prior.finish_started,stage:'unknown',code:'result_unknown'});setNotice('Результат неизвестен. Повторная отправка отключена; доступна только сверка.');}}
+    }catch{if(active()){if(!dispatched){persist(caseId,{...prior,code:'session_not_sent'});setNotice('Сессия изменилась: session_not_sent. Запрос не отправлен.');}
+      else{persist(caseId,{...prior,finish_started:operation==='hosted_finish_test'||prior.finish_started,stage:'unknown',code:'result_unknown'});setNotice('Результат неизвестен. Повторная отправка отключена; доступна только сверка.');}}}
     finally{if(active()){running.current=false;setBusy(false)}}
   }
   async function openCheckout(){
@@ -58,13 +76,13 @@ export default function AdminZg27HostedSandbox({actorId}:{actorId:string}){
       const {data,error}=await supabase.functions.invoke('zg27-sandbox-acceptance',{headers:{Authorization:`Bearer ${jwt}`},body:{operation:'hosted_inspect',run_id:run.run_id,started_at:run.started_at,case_id:selected,checkout_token:item.checkout_token}});
       if(!active())return;await session();if(!active())return;
       if(error||data?.operation!=='hosted_inspect'||data?.case_id!==selected||data?.status!=='awaiting_customer'||data?.checkout_verified!==true){setNotice('Checkout не подтверждён или платёж уже обработан. Используйте проверку результата; окно оплаты не открыто.');return;}
-      const tab=window.open(`https://checkout.bepaid.by/v2/checkout?token=${item.checkout_token}`,'_blank','noopener,noreferrer');
-      if(!tab)setNotice('Открытие TEST-страницы запрошено. Если браузер заблокировал окно, разрешите всплывающие окна для этого сайта.');
+      navigate(`https://checkout.bepaid.by/v2/checkout?token=${item.checkout_token}`);
     }catch{if(active())setNotice('Сессия или результат проверки изменились. Платёжная страница не открыта.');}
     finally{if(active()){running.current=false;setBusy(false)}}
   }
   return <AdminLayout><section className="mx-auto max-w-3xl space-y-4 p-4">
     <h1>ZG27 — hosted TEST-проверка</h1>
+    <Button disabled={busy} onClick={newRun}>Начать новый отдельный TEST-прогон</Button>
     <p>Только sandbox: 0 реальных денег. Заказы, пользователи и права не создаются. Первый платёж проходит через настоящий виджет bePaid; остальные TEST-платежи выполняются сразу вместо интервала 30 дней.</p>
     <div>{CASES.map((c,i)=><Button key={c} disabled={busy||CASES.slice(0,i).some(p=>run.cases[p]?.stage!=='passed')} onClick={()=>setSelected(c)}>{c.replace('first','Первое участие').replace('repeat','Повторное участие').replace('_',' — платежей: ')}</Button>)}</div>
     <p>TEST-график: {AMOUNTS[selected].map(n=>(n/100).toFixed(2)).join(' + ')} BYN. Первый платёж в виджете, остальные — автоматические TEST-списания по этому конечному графику. В рабочем договоре интервал 30 дней.</p>

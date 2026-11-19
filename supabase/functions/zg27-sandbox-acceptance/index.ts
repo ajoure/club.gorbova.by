@@ -24,7 +24,14 @@ Deno.serve(async(req)=>{
     const creds=await getBepaidCredsStrict(db);if(isBepaidCredsError(creds))return errorResponse('sandbox_credentials_unavailable',503);
     // Never switches integration.test_mode; test:true is immutable on EACH request.
     const options={actorId:auth.actor.id,authorization:createBepaidAuthHeader(creds),notificationUrl};
-    if(dispatch.operation==='hosted'){const result=await(hosted??=makeHostedRunner())(dispatch.input,options);return jsonResponse(result);}
+    if(dispatch.operation==='hosted'){
+      const result=await(hosted??=makeHostedRunner())(dispatch.input,options);
+      if(result.status==='stopped')console.warn('zg27_hosted_sandbox_stopped',{code:'code' in result?result.code:undefined,
+        provider_http_status:'provider_http_status' in result?result.provider_http_status:undefined,
+        validation_fields:'validation_fields' in result?result.validation_fields:undefined,
+        verification_fields:'verification_fields' in result?result.verification_fields:undefined});
+      return jsonResponse(result);
+    }
     if(dispatch.operation==='inspect'){
       const result=await inspectCase(dispatch.input,options);
       console.warn('zg27_sandbox_inspection',{status:result.status,code:'code' in result?result.code:undefined,

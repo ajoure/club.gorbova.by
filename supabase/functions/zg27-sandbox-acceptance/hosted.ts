@@ -1,4 +1,4 @@
-import { CASES, requestId, validateInput, type Input } from './runner.ts';
+import { CASES, requestId, validateInput, validationFields, type Input } from './runner.ts';
 import { zg27HostedWidgetFields } from '../_shared/zg27-hosted-installments.ts';
 export type HostedInput=Input&{operation:'hosted_create'|'hosted_inspect'|'hosted_finish_test';checkout_token?:string};
 const TOKEN=/^[a-f0-9]{64}$/i,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -15,16 +15,31 @@ export function validateHosted(raw:unknown,now=Date.now()):HostedInput{
 type Options={actorId:string;authorization:string;notificationUrl:string;fetcher?:typeof fetch};
 type RecordValue=Record<string,any>;
 const record=(v:unknown):v is RecordValue=>Boolean(v)&&typeof v==='object'&&!Array.isArray(v);
+const VERIFICATION_FIELDS=['test','type','token','tracking','amount','currency','finished','expired','contract'] as const;
+type VerificationField=typeof VERIFICATION_FIELDS[number];
+/** Private typed failure. It never retains a provider body, error values or request identity. */
+class HostedFailure extends Error{
+  readonly provider_http_status?:number;
+  readonly validation_fields:string[];
+  readonly verification_fields:VerificationField[];
+  constructor(code:string,metadata:{provider_http_status?:number;validation_fields?:string[];verification_fields?:VerificationField[]}={}){
+    super(code);
+    this.provider_http_status=Number.isInteger(metadata.provider_http_status)&&metadata.provider_http_status!>=100&&metadata.provider_http_status!<=599?metadata.provider_http_status:undefined;
+    this.validation_fields=(metadata.validation_fields??[]).slice(0,24);
+    this.verification_fields=VERIFICATION_FIELDS.filter(field=>metadata.verification_fields?.includes(field));
+  }
+}
 async function provider(url:string,init:RequestInit,options:Options){
   const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),10000);
   try{
     const response=await(options.fetcher??fetch)(url,{...init,redirect:'error',signal:abort.signal,headers:{Authorization:options.authorization,Accept:'application/json','Content-Type':'application/json','X-API-Version':'2',...init.headers}});
-    const reader=response.body?.getReader();if(!reader)throw Error('provider_unknown');let size=0;const chunks:Uint8Array[]=[];
-    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536){await reader.cancel();throw Error('provider_unknown')}chunks.push(value)}}finally{reader.releaseLock()}
+    const reader=response.body?.getReader();if(!reader)throw new HostedFailure('provider_unknown',{provider_http_status:response.status});let size=0;const chunks:Uint8Array[]=[];
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536){await reader.cancel();throw new HostedFailure('provider_unknown',{provider_http_status:response.status})}chunks.push(value)}}finally{reader.releaseLock()}
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength}
-    if(response.status===404)return {notFound:true as const};
-    if(!response.ok)throw Error('provider_http_unconfirmed');
-    const data=JSON.parse(new TextDecoder().decode(bytes));return {data};
+    if(response.status===404)return {notFound:true as const,provider_http_status:response.status};
+    let data;try{data=JSON.parse(new TextDecoder().decode(bytes))}catch{throw new HostedFailure(response.ok?'provider_result_unknown':'provider_http_unconfirmed',{provider_http_status:response.status})}
+    if(!response.ok)throw new HostedFailure('provider_http_unconfirmed',{provider_http_status:response.status,validation_fields:validationFields(data)});
+    return {data,provider_http_status:response.status};
   }finally{clearTimeout(timer)}
 }
 async function binding(input:HostedInput,actorId:string,index=0){
@@ -55,9 +70,15 @@ async function transaction(tracking:string,amount:number,options:Options){
 async function checkout(input:HostedInput,options:Options){
   const r=await provider(`https://checkout.bepaid.by/ctp/api/checkouts/${input.checkout_token}`,{method:'GET'},options);
   const c=r.data?.checkout,{tracking}=await binding(input,options.actorId);
-  if(!record(c)||c.test!==true||c.transaction_type!=='payment'||c.token!==input.checkout_token||c.order?.tracking_id!==tracking||c.order?.amount!==CASES[input.case_id][0]||c.order?.currency!=='BYN'||typeof c.finished!=='boolean'||typeof c.expired!=='boolean')throw Error('checkout_unconfirmed');
-  const contract=c.order?.additional_data?.contract;
-  if(CASES[input.case_id].length>1?JSON.stringify(contract)!==JSON.stringify(['recurring']):contract!==undefined&&JSON.stringify(contract)!=='[]')throw Error('checkout_unconfirmed');
+  const contract=c?.order?.additional_data?.contract;
+  const checks:Record<VerificationField,boolean>={
+    test:record(c)&&c.test===true,type:record(c)&&c.transaction_type==='payment',token:record(c)&&c.token===input.checkout_token,
+    tracking:record(c)&&c.order?.tracking_id===tracking,amount:record(c)&&c.order?.amount===CASES[input.case_id][0],currency:record(c)&&c.order?.currency==='BYN',
+    finished:record(c)&&typeof c.finished==='boolean',expired:record(c)&&typeof c.expired==='boolean',
+    contract:CASES[input.case_id].length>1?JSON.stringify(contract)===JSON.stringify(['recurring']):contract===undefined||JSON.stringify(contract)==='[]',
+  };
+  const failed=VERIFICATION_FIELDS.filter(field=>!checks[field]);
+  if(failed.length)throw new HostedFailure('checkout_unconfirmed',{provider_http_status:r.provider_http_status,verification_fields:failed});
   return c;
 }
 async function firstReceipt(input:HostedInput,options:Options){
@@ -78,7 +99,7 @@ async function execute(input:HostedInput,options:Options){
       const payload=await hostedPayload(input,options.actorId,options.notificationUrl);
       const {id}=await binding(input,options.actorId);
       const r=await provider('https://checkout.bepaid.by/ctp/api/checkouts',{method:'POST',headers:{RequestID:id},body:JSON.stringify(payload)},options);
-      const token=r.data?.checkout?.token;if(typeof token!=='string'||!TOKEN.test(token))throw Error('checkout_unconfirmed');
+      const token=r.data?.checkout?.token;if(typeof token!=='string'||!TOKEN.test(token))throw new HostedFailure('checkout_unconfirmed',{provider_http_status:r.provider_http_status,verification_fields:['token']});
       // Payment token is public browser transport. Card token never leaves this module.
       const verified=await checkout({...input,checkout_token:token},options);if(verified.expired)throw Error('checkout_expired');
       return {...base,status:'hosted_ready',test_confirmed:true,checkout_token:token,checkout_url:`https://checkout.bepaid.by/v2/checkout?token=${token}`};
@@ -101,7 +122,8 @@ async function execute(input:HostedInput,options:Options){
     }
     return {...base,status:'passed',test_confirmed:true,confirmed_payments:confirmed,sum_minor:sum};
   }catch(error){const code=error instanceof Error&&CODES.has(error.message)?error.message:'provider_result_unknown';
-    return {...base,status:code==='awaiting_customer'?'awaiting_customer':'stopped',test_confirmed:false,checkout_verified:code==='awaiting_customer',code};}
+    return {...base,status:code==='awaiting_customer'?'awaiting_customer':'stopped',test_confirmed:false,checkout_verified:code==='awaiting_customer',code,
+      ...(error instanceof HostedFailure?{...(error.provider_http_status?{provider_http_status:error.provider_http_status}:{}),validation_fields:error.validation_fields,verification_fields:error.verification_fields}:{})};}
 }
 /** Single-flight only; browser persists started stages and never retries an uncertain POST.
  * H2H cross-isolate replay additionally checks existing exact receipts and stable RequestID (<24h).

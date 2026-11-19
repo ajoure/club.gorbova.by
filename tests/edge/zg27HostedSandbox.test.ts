@@ -89,4 +89,30 @@ describe('isolated hosted widget→verified first CIT→finite TEST MIT',()=>{
     if(role!=='customer')expect(await r.json()).toMatchObject({status:'hosted_ready',test_confirmed:true});
   });
 
+  it('HTTP400 validation diagnostics contain closed field names, never provider values/token/URL',async()=>{
+    const send=vi.fn(async()=>new Response(JSON.stringify({errors:{amount:['private-amount'],return_url:['https://private.invalid/token'],secret_field:['private-secret']},message:'private-message',checkout:{token:TOKEN}}),{status:400}));
+    const r=await makeHostedRunner()(args(),{...options,fetcher:send});
+    expect(r).toMatchObject({status:'stopped',code:'provider_http_unconfirmed',provider_http_status:400,validation_fields:['amount','return_url'],verification_fields:[]});
+    expect(JSON.stringify(r)).not.toMatch(/private|secret_field|https:|aaaaaaaa|checkout_token/);expect(send).toHaveBeenCalledOnce();
+  });
+  it('failed checkout TEST predicate reports only its closed name and HTTP status, no further calls',async()=>{
+    const f=await fixture('repeat_3',{checkout:{test:false,message:'private-provider-message'}});
+    const r=await makeHostedRunner()(args(),{...options,fetcher:f.send});
+    expect(r).toMatchObject({status:'stopped',code:'checkout_unconfirmed',provider_http_status:200,validation_fields:[],verification_fields:['test']});
+    expect(r).not.toHaveProperty('checkout_url');expect(JSON.stringify(r)).not.toMatch(/private|aaaaaaaa|tracking_id/);expect(f.send).toHaveBeenCalledTimes(2);expect(f.post()).toBe(0);
+  });
+  it('actual entrypoint logs only bounded safe hosted stop metadata even if response is lost',async()=>{
+    const warn=vi.fn(),send=vi.fn(async()=>new Response(JSON.stringify({errors:{currency:['private-secret']},message:'private-provider-error'}),{status:400}));
+    const db={rpc:async()=>({data:true,error:null}),from:vi.fn(()=>{throw Error('no business storage')})};
+    const h=load('supabase/functions/zg27-sandbox-acceptance/index.ts',{
+      'npm:@supabase/supabase-js@2':{createClient:()=>db},'../_shared/admin-section-auth.ts':{authenticateAdminActor:async()=>({ok:true,actor:{id:options.actorId}})},
+      '../_shared/bepaid-credentials.ts':{getBepaidCredsStrict:async()=>({}),isBepaidCredsError:()=>false,createBepaidAuthHeader:()=>options.authorization},
+      './runner.ts':{makeRunner,validateInput,callbackUrl},'./hosted.ts':{validateHosted,makeHostedRunner:()=>{const run=makeHostedRunner();return(i:any,o:any)=>run(i,{...o,fetcher:send})}},
+      '../_shared/cors.ts':{jsonResponse:(body:any)=>new Response(JSON.stringify(body)),errorResponse:(e:string,status:number)=>new Response(JSON.stringify({error:e}),{status})},
+    },{console:{warn},Deno:{serve:(fn:any)=>{(db as any).handler=fn},env:{get:()=> 'https://synthetic.supabase.co'}}});
+    const r=await(db as any).handler(new Request('https://synthetic.invalid',{method:'POST',headers:{Authorization:'Bearer synthetic'},body:JSON.stringify(args())}));
+    expect(r.status).toBe(200);expect(warn).toHaveBeenCalledOnce();expect(warn.mock.calls[0]).toEqual(['zg27_hosted_sandbox_stopped',{code:'provider_http_unconfirmed',provider_http_status:400,validation_fields:['currency'],verification_fields:[]}]);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private|actor|run_id|tracking|token|https:/);expect(db.from).not.toHaveBeenCalled();expect(h.effects).not.toHaveBeenCalled();
+  });
+
 });
