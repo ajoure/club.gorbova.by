@@ -12,6 +12,7 @@ async function fixture(key:keyof typeof CASES='repeat_3',patch:any={}){
   const receipts=new Map<string,any>();let paid=false,post=0;
   const first=await requestId(options.actorId,RUN,`hosted_${key}`,0),tracking=`zg27-sandbox:hosted:${first}`;
   const send=vi.fn(async(url:string,init:any)=>{
+    expect(init.headers['X-API-Version']).toBe(url===`https://gateway.bepaid.by/transactions/${first}`?undefined:'2');
     expect(init.redirect).toBe('error');expect(url).toMatch(/^https:\/\/(checkout|gateway)\.bepaid\.by\//);
     if(url.endsWith('/ctp/api/checkouts')){
       expect(init.method).toBe('POST');const c=JSON.parse(init.body).checkout;expect(c.test).toBe(true);expect(c.attempts).toBe(1);expect(c.order.tracking_id).toBe(tracking);
@@ -48,6 +49,18 @@ describe('isolated hosted widget→verified first CIT→finite TEST MIT',()=>{
   });
   it.each([{test:false},{amount:1},{tracking_id:'foreign'},{uid:'foreign'},{credit_card:{}},{status:'failed'}])('first receipt %j blocks ALL MIT',async first=>{
     const f=await fixture('repeat_3',{first});f.paid();expect((await makeHostedRunner()(args('repeat_3','hosted_finish_test'),{...options,fetcher:f.send})).status).toBe('stopped');expect(f.post()).toBe(0);
+  });
+  it.each([400,404])('UID status HTTP%s stops without any MIT or new checkout',async status=>{
+    const f=await fixture('repeat_3');f.paid();
+    const first=await requestId(options.actorId,RUN,'hosted_repeat_3',0);
+    const fetcher=vi.fn(async(url:string,init:any)=>url===`https://gateway.bepaid.by/transactions/${first}`
+      ?new Response(JSON.stringify({response:'unavailable'}),{status}):f.send(url,init));
+    const r=await makeHostedRunner()(args('repeat_3','hosted_inspect'),{...options,fetcher});
+    expect(r.status).toBe('stopped');expect(f.post()).toBe(0);expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
+  });
+  it('different valid UID is rejected even when all other receipt fields match',async()=>{
+    const f=await fixture('repeat_3',{first:{uid:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}});f.paid();
+    expect((await makeHostedRunner()(args('repeat_3','hosted_finish_test'),{...options,fetcher:f.send})).status).toBe('stopped');expect(f.post()).toBe(0);
   });
   it('uncertain second payment is cached, stops at exactly one MIT, never runs third',async()=>{
     const f=await fixture('repeat_3',{throwMit:true});f.paid();const run=makeHostedRunner(),input=args('repeat_3','hosted_finish_test'),opts={...options,fetcher:f.send};
