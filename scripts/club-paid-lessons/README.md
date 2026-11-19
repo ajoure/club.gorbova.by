@@ -61,3 +61,35 @@ metadata/ACL/read-back, один вызов по частному провере
 Нового frontend/Edge-кода нет; эта миграция не разрешает общий Publish.
 Клиентское воспроизведение проверяется отдельно по действующим ограничениям
 поддержки; SQL PASS не выдаётся за просмотр плеера клиентом.
+
+## Historical receipt with a separate current paid cap
+
+The additive migration `20261119162522_club_paid_lesson_corrections.sql`
+adds a separate, service-only exact-lesson writer and read-only preview.
+It pairs a direct historical payment/order/expired-subscription lineage with
+an independently paid current active subscription of the same Club/tariff.
+Expired history is evidence, never a revived entitlement. The historical
+receipt's paid month must equal the requested lesson month. Only the stored
+order agreement price is used; current tariff price is never consulted.
+Read-only legacy payment-kind recognition does not rewrite receipts.
+
+New optional lineage fields are all-null for existing claims. That branch
+calls a byte-identical copy of the old validator; the old 12-argument writer,
+whole-month gate, bulk key semantics and server resolver remain unchanged.
+The new branch has direct order joins, net-money/refund/chargeback checks,
+ambiguous-lineage rejection, a frozen current expiry cap, fresh CAS fingerprint,
+single historical-receipt use and an atomic private audit. Public clients have
+no writer/preview privileges. No payment/order/subscription is mutated.
+
+The native PostgreSQL CI executes all original contracts after installing the
+extension, then `receipt_contract.sql`. For local offline validation using an
+existing PGlite runtime (no dependency installation):
+
+```sh
+PGLITE_MODULE_PATH=/existing/cache/@electric-sql/pglite/dist/index.js node scripts/club-paid-lessons/test_receipt_pglite.mjs
+```
+
+This is a PostgreSQL engine fixture, not a production entitlement or player
+verification. The actual case, customer IDs and production invocation stay
+outside Git. Release and a concrete production correction remain with the
+coordinator after review, exact-SHA deployment and fresh readback.
