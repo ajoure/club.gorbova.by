@@ -25,10 +25,20 @@ export async function handleZg27Quote(req: Request, db: any): Promise<Response> 
     const tier = ZG27_TIERS[eligibility.category as 'first' | 'repeat'];
     if (tier.page !== body.page_slug) return jsonResponse({ status: 'wrong_page', page_slug: tier.page });
     const { data: offers, error: offersError } = await db.from('tariff_offers')
-      .select('id,tariff_id,payment_method,installment_count,is_active').eq('tariff_id', tier.tariffId).eq('is_active', true);
+      .select('id,tariff_id,offer_type,payment_method,installment_count,is_active,meta').eq('tariff_id', tier.tariffId).eq('is_active', true);
     if (offersError || !Array.isArray(offers)) throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
     const quotes = [];
-    for (const offer of offers.filter((o: any) => ['full_payment', 'internal_installment'].includes(o.payment_method))) {
+    let bankOffer = null;
+    const bankOffers = offers.filter((o: any) => o.offer_type === 'bank_installment');
+    if (bankOffers.length > 1) throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
+    if (bankOffers.length === 1) {
+      const bank = bankOffers[0];
+      if (bank.payment_method !== 'full_payment' || bank.meta?.bank_installment?.rr_runtime?.enabled !== true || bank.meta?.bank_installment?.rr_runtime?.provider !== 'rr') throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
+      const validated = await assertZg27Checkout({ db, userId: data.user.id, productId: ZG27_PRODUCT_ID, tariffId: tier.tariffId, offerId: bank.id, pageSlug: body.page_slug });
+      if (!validated.applicable) throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
+      bankOffer = { offer_id: bank.id, tariff_id: tier.tariffId, total_minor: validated.totalMinor, provider: 'rr' };
+    }
+    for (const offer of offers.filter((o: any) => o.offer_type !== 'bank_installment' && ['full_payment', 'internal_installment'].includes(o.payment_method))) {
       const quote = await assertZg27Checkout({ db, userId: data.user.id, productId: ZG27_PRODUCT_ID,
         tariffId: tier.tariffId, offerId: offer.id, pageSlug: body.page_slug });
       if (!quote.applicable) throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
@@ -38,7 +48,7 @@ export async function handleZg27Quote(req: Request, db: any): Promise<Response> 
     quotes.sort((a, b) => a.amounts_minor.length - b.amounts_minor.length);
     if (quotes.length !== 3 || quotes.some((quote, i) => quote.amounts_minor.length !== i + 1)) throw new Zg27CheckoutError('zg27_configuration_unavailable', 503);
     return new Response(JSON.stringify({ status: 'ready', product_id: ZG27_PRODUCT_ID, category: eligibility.category,
-      policy_version: 'zg27-v1', access_end_exclusive: ZG27_ACCESS_END_EXCLUSIVE, offers: quotes }), {
+      policy_version: 'zg27-v1', access_end_exclusive: ZG27_ACCESS_END_EXCLUSIVE, offers: quotes, bank_offer: bankOffer }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
   } catch (error) {

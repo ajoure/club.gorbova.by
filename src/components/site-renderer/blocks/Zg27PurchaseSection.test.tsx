@@ -18,11 +18,11 @@ const content = { product_id: 'e71c0dbb-baf2-4b6c-a950-bf0f728708af', page_slug:
 const quote = { status: 'ready', category: 'repeat', policy_version: 'zg27-v1', product_id: content.product_id,
   offers: [[89000],[44500,44500],[29667,29667,29666]].map((amounts, i) => ({ offer_id: `offer-${i+1}`, tariff_id: 'tariff-repeat',
     amounts_minor: amounts, total_minor: 89000, interval_days: 30 })) };
-function view() {
+function view(autoOpen=true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   function RouteProbe() { return <output data-testid="route">{useLocation().pathname}</output>; }
   const tree = () => <QueryClientProvider client={client}><MemoryRouter initialEntries={['/zg27povtor']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Zg27PurchaseSection content={content} /><RouteProbe /></MemoryRouter></QueryClientProvider>;
-  const result = render(tree()); act(()=>window.dispatchEvent(new CustomEvent('lovable:site-action',{detail:{action:'open-zg27-payment',payload:{}}}))); return { ...result, client, refresh: () => result.rerender(tree()) };
+  const result = render(tree()); if(autoOpen) act(()=>window.dispatchEvent(new CustomEvent('lovable:site-action',{detail:{action:'open-zg27-payment',payload:{}}}))); return { ...result, client, refresh: () => result.rerender(tree()) };
 }
 beforeEach(() => { mock.user = null; mock.invoke.mockReset();mock.inlineAuth.mockClear();mock.legacyQuote.mockReset().mockReturnValue({items:[],total:null}); mock.getSession.mockReset().mockImplementation(async () => ({ data: { session: mock.user ? { user: mock.user, access_token: 'synthetic' } : null } })); });
 afterEach(cleanup);
@@ -122,4 +122,33 @@ describe('ZG27 purchase section commercial scenario', () => {
     expect(screen.queryByText(/Повторное участие:/)).not.toBeInTheDocument();
     expect(screen.getByText('Каноническая форма входа')).toBeInTheDocument();
   });
+  it('bank button bridge requires login before any bank offer/request', async () => {
+    const v=view(false);act(()=>window.dispatchEvent(new CustomEvent('lovable:site-action',{detail:{action:'open-zg27-bank',sourcePageId:'page-a'}})));
+    expect(await screen.findByText('Каноническая форма входа')).toBeInTheDocument();expect(mock.invoke).not.toHaveBeenCalled();
+  });
+  it('bank action keeps the existing three plans separate and shows only canonical bank quote',async()=>{
+    mock.user={id:'user-a'};mock.invoke.mockResolvedValue({data:{...quote,bank_offer:{offer_id:'bank',tariff_id:'tariff-repeat',total_minor:89000,provider:'rr'}},error:null});
+    view(false);act(()=>window.dispatchEvent(new CustomEvent('lovable:site-action',{detail:{action:'open-zg27-bank',sourcePageId:'page-a'}})));
+    expect(await screen.findByRole('button',{name:'Перейти к заявке в банк'})).toBeInTheDocument();
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();expect(mock.invoke.mock.calls.every(([name])=>name==='zg27-public-quote')).toBe(true);
+  });
+
+  for(const slug of ['zg27pervoe','zg27povtor'])it(`actual iframe DOM bank CTA forwards both ${slug} card clicks with bound page identity`,async()=>{
+    mock.user={id:'user-a'};mock.invoke.mockResolvedValue({data:{...quote,bank_offer:{offer_id:'bank',tariff_id:'tariff-repeat',total_minor:89000,provider:'rr'}},error:null});
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}});const html='<main><a href="#zg27-bank" data-lovable-action="open-zg27-bank">Participation bank</a><a href="#zg27-bank" data-lovable-action="open-zg27-bank">Final bank</a></main>';
+    const v=render(<QueryClientProvider client={client}><MemoryRouter future={{v7_startTransition:true,v7_relativeSplatPath:true}}><HtmlIframePreview html={html} pageId={slug} blockId="html"/><Zg27PurchaseSection content={{...content,page_slug:slug}} pageId={slug}/></MemoryRouter></QueryClientProvider>);
+    const frame=v.container.querySelector('iframe')!;const srcdoc=frame.getAttribute('srcdoc')!;
+    const begin=srcdoc.indexOf('function findActionEl');const end=srcdoc.indexOf('// ---- Dynamic slot bridge',begin);expect(begin).toBeGreaterThan(0);expect(end).toBeGreaterThan(begin);
+    const doc=document.implementation.createHTMLDocument();doc.body.innerHTML=html;const emitted:any[]=[];
+    // Execute the ACTUAL generated click bridge against DOM anchors; deliver its message from the exact iframe window.
+    new Function('document','parent',srcdoc.slice(begin,end))(doc,{postMessage:(data:any)=>{emitted.push(data);window.dispatchEvent(new MessageEvent('message',{data,source:frame.contentWindow}))}});
+    for(const anchor of Array.from(doc.querySelectorAll('a'))){
+      act(()=>anchor.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0})));
+      expect(await screen.findByRole('button',{name:'Перейти к заявке в банк'})).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button',{name:'Close'}));expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }
+    expect(emitted).toHaveLength(2);expect(emitted.every(e=>e.action==='open-zg27-bank'&&Object.keys(e.payload).length===0)).toBe(true);
+    expect(frame.getAttribute('srcdoc')).toBe(srcdoc);
+  });
+
 });

@@ -51,6 +51,8 @@ interface LeadRequestDialogProps {
    * при ошибке runtime.
    */
   bankInstallmentRuntime?: BankInstallmentRuntime;
+  /** Scoped fixed-price checkout: no shared external-link fallback or customer credits. */
+  strictBankCheckout?: boolean;
 }
 
 type Step = "auth" | "details" | "telegram" | "success";
@@ -84,6 +86,7 @@ export function LeadRequestDialog({
   bankLinkLabel,
   bankMessageHtml,
   bankInstallmentRuntime,
+  strictBankCheckout = false,
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
@@ -104,6 +107,9 @@ export function LeadRequestDialog({
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [customerCreditMinor, setCustomerCreditMinor] = useState(0);
   const [useCustomerCredit, setUseCustomerCredit] = useState(false);
+  const strictScope = `${open}:${user?.id ?? ''}:${offerId}`;
+  const strictScopeRef = useRef(strictScope); strictScopeRef.current = strictScope;
+  useEffect(() => () => { strictScopeRef.current = ''; }, []);
   const openedAtRef = useRef<number>(Date.now());
   // Tracks previous `open` value so reset only fires on closed → open.
   // PATCH-INLINE-OTP-FIX-BROKEN-FLOW v3: auth session updates (user/session
@@ -150,12 +156,12 @@ export function LeadRequestDialog({
   }, [open, user, profileLoaded]);
 
   useEffect(() => {
-    if (!open || !user || !bankInstallmentRuntime?.enabled) return;
+    if (!open || !user || !bankInstallmentRuntime?.enabled || strictBankCheckout) return;
     (async () => {
       const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
       if (!error) setCustomerCreditMinor(Math.max(0, Number(data?.available_minor ?? 0)));
     })();
-  }, [open, user, bankInstallmentRuntime?.enabled]);
+  }, [open, user, bankInstallmentRuntime?.enabled, strictBankCheckout]);
 
   const canSubmit = useMemo(
     () => details.name.trim().length > 0 && details.phone.trim().length >= 5,
@@ -170,6 +176,7 @@ export function LeadRequestDialog({
     e.preventDefault();
     if (!canSubmit || submitting) return;
     setSubmitting(true);
+    const expectedScope = strictScope;
     try {
       // Sprint B: если оффер настроен на runtime bank installment (РР),
       // идём в public-rr-installment-initiate и редиректим на payment_url.
@@ -182,6 +189,7 @@ export function LeadRequestDialog({
         try {
           const res = await startBankInstallment({
             offerId,
+            ...(strictBankCheckout ? { expectedUserId: user?.id } : {}),
             addonOfferIds,
             runtime: bankInstallmentRuntime,
             legacyBankLinkUrl: bankLinkUrl,
@@ -193,19 +201,21 @@ export function LeadRequestDialog({
               email,
               comment: details.comment.trim() || null,
             },
-            customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
+            customerCreditRequestedMinor: !strictBankCheckout && useCustomerCredit ? customerCreditMinor : 0,
           });
+          if (strictBankCheckout && strictScopeRef.current !== expectedScope) return;
           if (res.mode === "runtime") {
             window.location.href = getAccessAwareUrl(res.paymentUrl);
             return;
           }
           // Резолвер вернул legacy — маловероятно при enabled, но подстрахуемся.
-          if (res.bankLinkUrl) {
+          if (!strictBankCheckout && res.bankLinkUrl) {
             window.location.href = getAccessAwareUrl(res.bankLinkUrl);
             return;
           }
           throw new Error("no_payment_url_and_no_legacy_link");
         } catch (rrErr) {
+          if (strictBankCheckout) throw rrErr;
           console.error("[LeadRequestDialog] rr initiate failed", rrErr);
           toast.error(
             "Не удалось создать заявку в банк. Открываем резервную страницу оформления.",
@@ -384,7 +394,7 @@ export function LeadRequestDialog({
                   вашему аккаунту и будет использован для связи.
                 </p>
               )}
-              {bankInstallmentRuntime?.enabled && customerCreditMinor > 0 && (
+              {!strictBankCheckout && bankInstallmentRuntime?.enabled && customerCreditMinor > 0 && (
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-3">
                   <Checkbox checked={useCustomerCredit} onCheckedChange={(checked) => setUseCustomerCredit(checked === true)} className="mt-0.5" />
                   <span className="space-y-1">

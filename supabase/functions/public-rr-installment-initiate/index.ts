@@ -1,3 +1,4 @@
+import { assertZg27BankOptions, freezeZg27BankSnapshot } from '../_shared/zg27-bank-checkout.ts';
 import { assertZg27Checkout, requireZg27Recipient, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 /**
  * public-rr-installment-initiate (Sprint B / Gate A.1 v3.1 hardened)
@@ -377,12 +378,14 @@ Deno.serve(async (req: Request) => {
   if (!tariff?.is_active) return errorResponse("tariff_inactive", 403);
   if (!product?.is_active) return errorResponse("product_inactive", 403);
 
+  let zg27Quote: Awaited<ReturnType<typeof assertZg27Checkout>> = { applicable: false };
   try {
     const quote = await assertZg27Checkout({ db: supabaseAdmin, userId, productId: product.id,
       tariffId: tariff.id, offerId, amountMinor: Math.round(Number(offer.amount) * 100), currency: product.currency ?? 'BYN' });
     if (quote.applicable) {
       if (!adminMode) await requireZg27Recipient(req, supabaseAdmin, userId);
-      return errorResponse('zg27_bank_installment_unavailable', 409);
+      assertZg27BankOptions(body, addonOfferIds);
+      zg27Quote = quote;
     }
   } catch (error) { return errorResponse(error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable', error instanceof Zg27CheckoutError ? error.status : 503); }
 
@@ -407,7 +410,10 @@ Deno.serve(async (req: Request) => {
   let amountMinor = Math.round(amountNumeric * 100);
   let referralCreditMeta: Record<string, unknown> = {};
   let allocationReason = "referral_discount_or_customer_credit";
-  if (adminMode) {
+  if (zg27Quote.applicable) {
+    // Exact full course price: bank credit repayment belongs to RR, not our finite card plan.
+    referralCreditMeta = { payment_type: "one_time", zg27_bank_checkout: { policy_version: "zg27-v1", category: zg27Quote.category } };
+  } else if (adminMode) {
     const requestedAdjustment = Number(body.adjustment_amount ?? 0);
     const requestedReason = String(body.adjustment_reason ?? "").trim();
     if (
@@ -471,6 +477,11 @@ Deno.serve(async (req: Request) => {
   }
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_fully_covered_or_invalid", 400);
+  }
+  if (zg27Quote.applicable) {
+    try {
+      await assertZg27Checkout({ db: supabaseAdmin, userId, productId: product.id, tariffId: tariff.id, offerId, amountMinor, currency });
+    } catch (error) { return errorResponse(error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable', error instanceof Zg27CheckoutError ? error.status : 503); }
   }
   const checkoutFingerprint = await sha256Hex(JSON.stringify({
     request_mode: adminMode ? "admin" : "public",
@@ -673,6 +684,7 @@ Deno.serve(async (req: Request) => {
       source: "rr_installment",
       idempotencyKey: `rr:${externalId}:${checkoutFingerprint}`,
     });
+    if (zg27Quote.applicable) await freezeZg27BankSnapshot(supabaseAdmin, { orderId: externalId, userId: userId!, productId: product.id, tariffId: tariff.id, totalMinor: zg27Quote.totalMinor });
   } catch (error) {
     await auditEvent(supabaseAdmin, externalId, "composable_materialization_failed", {
       error: (error as Error).message,

@@ -10,6 +10,7 @@ import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 
 export interface StartBankInstallmentInput {
   offerId: string;
+  expectedUserId?: string;
   addonOfferIds?: string[];
   runtime?: BankInstallmentRuntime;
   legacyBankLinkUrl?: string;
@@ -45,9 +46,16 @@ export async function startBankInstallment(
   input: StartBankInstallmentInput,
 ): Promise<StartBankInstallmentResult> {
   if (input.runtime?.enabled && input.runtime.provider === "rr") {
+    let headers: Record<string,string> | undefined;
+    if (input.expectedUserId) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user.id !== input.expectedUserId) throw new Error('zg27_login_required');
+      headers = { Authorization: `Bearer ${session.access_token}` };
+    }
     const { data, error } = await supabase.functions.invoke(
       "public-rr-installment-initiate",
       {
+        ...(headers ? { headers } : {}),
         body: {
           tariff_offer_id: input.offerId,
           addon_offer_ids: input.addonOfferIds ?? [],
