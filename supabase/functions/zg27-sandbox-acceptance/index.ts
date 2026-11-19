@@ -4,7 +4,9 @@ import { getBepaidCredsStrict, isBepaidCredsError, createBepaidAuthHeader } from
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { callbackUrl, makeRunner, validateInput, type Input } from './runner.ts';
 import { inspectCase, validateInspect, type InspectInput } from './inspect.ts';
+import { makeHostedRunner, validateHosted, type HostedInput } from './hosted.ts';
 const run=makeRunner();
+let hosted:ReturnType<typeof makeHostedRunner>|undefined;
 Deno.serve(async(req)=>{
   if(req.method==='OPTIONS')return handleCorsPreflightRequest();
   // Dedicated no-op callback: no auth, parsing, logging, DB, or business handler.
@@ -15,13 +17,14 @@ Deno.serve(async(req)=>{
   if(!auth.ok)return errorResponse(auth.error,auth.status);
   let roles;try{roles=await Promise.all(['admin','super_admin'].map(role=>db.rpc('has_role_v2',{_user_id:auth.actor.id,_role_code:role})))}catch{return errorResponse('authorization_unavailable',503)}
   if(roles.some(r=>r.error)||!roles.some(r=>r.data===true))return errorResponse('forbidden',403);
-  let dispatch:{operation:'inspect';input:InspectInput}|{operation:'run';input:Input};
-  try{const raw=await req.json();dispatch=raw?.operation==='inspect'?{operation:'inspect',input:validateInspect(raw)}:{operation:'run',input:validateInput(raw)}}catch{return errorResponse('invalid_or_expired_case',400)}
+  let dispatch:{operation:'inspect';input:InspectInput}|{operation:'run';input:Input}|{operation:'hosted';input:HostedInput};
+  try{const raw=await req.json();dispatch=['hosted_create','hosted_inspect','hosted_finish_test'].includes(raw?.operation)?{operation:'hosted',input:validateHosted(raw)}:raw?.operation==='inspect'?{operation:'inspect',input:validateInspect(raw)}:{operation:'run',input:validateInput(raw)}}catch{return errorResponse('invalid_or_expired_case',400)}
   try{
     const notificationUrl=callbackUrl(Deno.env.get('SUPABASE_URL')!);
     const creds=await getBepaidCredsStrict(db);if(isBepaidCredsError(creds))return errorResponse('sandbox_credentials_unavailable',503);
     // Never switches integration.test_mode; test:true is immutable on EACH request.
     const options={actorId:auth.actor.id,authorization:createBepaidAuthHeader(creds),notificationUrl};
+    if(dispatch.operation==='hosted'){const result=await(hosted??=makeHostedRunner())(dispatch.input,options);return jsonResponse(result);}
     if(dispatch.operation==='inspect'){
       const result=await inspectCase(dispatch.input,options);
       console.warn('zg27_sandbox_inspection',{status:result.status,code:'code' in result?result.code:undefined,
