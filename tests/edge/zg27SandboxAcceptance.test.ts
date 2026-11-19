@@ -53,6 +53,20 @@ describe('isolated bePaid sandbox acceptance',()=>{
     await runner(args,{actorId:'actor-B',authorization:'secret',notificationUrl,fetcher:send});
     expect(send).toHaveBeenCalledTimes(2);expect(send.mock.calls[0][1].headers.RequestID).not.toBe(send.mock.calls[1][1].headers.RequestID);
   });
+  it.each(['throw','non-test','malformed'])('second-step %s never inherits first successful provider code',async failure=>{
+    const first=provider({code:'S.0000'});
+    const send=vi.fn(async(url:any,init:any)=>{
+      if(first.mock.calls.length===0)return first(url,init);
+      if(failure==='throw')throw Error('private transport failure');
+      if(failure==='malformed')return new Response('{not-json');
+      return new Response(JSON.stringify({transaction:{test:false,status:'failed'}}));
+    });
+    const result=await runCase(input(),{actorId:'actor-A',authorization:'secret',notificationUrl,fetcher:send});
+    expect(result.status).toBe('stopped');expect(result.requests).toBe(2);expect(result.steps).toHaveLength(1);
+    expect(result.sum_minor).toBe(29667);expect(result).not.toHaveProperty('provider_code');
+    expect(result.code).toBe(failure==='non-test'?'provider_test_unconfirmed':'provider_result_unknown');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
   it('unknown result is cached and never automatically re-dispatched',async()=>{
     const runner=makeRunner(),send=vi.fn(async()=>{throw Error('private provider failure')});
     const args=input();const a=await runner(args,{actorId:'actor-A',authorization:'private-auth',notificationUrl,fetcher:send});

@@ -38,6 +38,7 @@ export async function runCase(input:Input,options:{actorId:string;authorization:
   const result=(code?:string):Result=>({case_id:input.case_id,status:code?'stopped':'passed',test_confirmed:steps.length===amounts.length,
     requests,sum_minor:steps.reduce((n,s)=>n+s.amount_minor,0),steps,interval_days:30,accelerated:true,coverage:'test_h2h_no_widget_3ds',...(code?{code}:{}),...(providerCode?{provider_code:providerCode}:{})});
   for(let index=0;index<amounts.length;index++){
+    providerCode=undefined; // A previous successful step is not evidence for this attempt.
     const id=await requestId(options.actorId,input.run_id,input.case_id,index);
     // Public bePaid no-3DS test fixture only. Never accepts client card/token/body.
     const card=index===0?{number:'4200000000000000',verification_value:'123',holder:'John Doe',exp_month:'05',exp_year:'2028'}:{token};
