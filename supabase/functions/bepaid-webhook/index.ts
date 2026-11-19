@@ -1,3 +1,6 @@
+import { requireZg27ActivatedSubscription } from '../_shared/zg27-subscription.ts';
+import { settleZg27InstallmentReceipt } from '../_shared/zg27-installment-receipt.ts';
+import { validateZg27HostedMeta, handoffZg27HostedReceipt } from '../_shared/zg27-hosted-installments.ts';
 // CANONICAL-WRITER-ONLY (PATCH H2):
 // В LINK-ORDER ветке этого webhook ЗАПРЕЩЕНО прямое обновление полей доступа:
 //   - subscriptions_v2.access_end_at / access_start_at / status
@@ -5339,6 +5342,16 @@ Deno.serve(async (req) => {
         });
       }
 
+      if (linkOrderV2.meta?.zg27_installment) {
+        const plan = validateZg27HostedMeta(linkOrderV2.meta, linkOrderV2.product_id, linkOrderV2.tariff_id, linkOrderV2.user_id);
+        if (transaction?.amount !== plan.amounts_minor[0] || transaction?.currency !== 'BYN'
+          || Math.round(Number(linkOrderV2.final_price) * 100) !== plan.total_minor) {
+          return new Response(JSON.stringify({ ok: false, status: 'zg27_receipt_review_required' }), {
+            status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
       const linkPaymentPayload = {
         order_id: linkOrderV2.id,
         user_id: linkOrderV2.user_id,
@@ -5452,6 +5465,19 @@ Deno.serve(async (req) => {
         }
       }
 
+        if (linkOrderV2.meta?.zg27_installment) {
+          const handoff = await handoffZg27HostedReceipt(supabase, linkOrderV2.id, linkPayResult.id, transaction);
+          // Durable recoverable status contains no token. No mandate means no automatic schedule.
+          const { data: freshOrder, error: freshError } = await supabase.from('orders_v2').select('meta').eq('id', linkOrderV2.id).maybeSingle();
+          if (freshError || !freshOrder) throw new Error('zg27_handoff_status_unavailable');
+          const { error: statusError } = await supabase.from('orders_v2').update({
+            meta: { ...freshOrder.meta, zg27_mandate_state: handoff.state === 'ready' ? 'mandate_verified' : handoff.state,
+              zg27_mandate_reason: 'reason' in handoff ? handoff.reason : null },
+          }).eq('id', linkOrderV2.id);
+          if (statusError) throw new Error('zg27_handoff_status_write_failed');
+          if (handoff.state !== 'ready') return new Response(JSON.stringify({ok:false,status:'zg27_subscription_setup_failed'}), {status:202,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        }
+
       // 7. Finalize the complete checkout. A composable checkout can contain
       // the primary tariff plus several modules, so this boundary must receive
       // the recorded payment id and settle/grant the whole order group.
@@ -5470,6 +5496,7 @@ Deno.serve(async (req) => {
         );
         const grantResult = await grantResp.json();
         console.log('[WEBHOOK-LINK] checkout finalization result:', grantResp.status, grantResult);
+
         if (!grantResp.ok) {
           await supabase.from('audit_logs').insert({
             actor_type: 'system', actor_label: 'bepaid-webhook',
@@ -5477,6 +5504,13 @@ Deno.serve(async (req) => {
             meta: { order_id: linkOrderV2.id, http_status: grantResp.status, error: grantResult?.error || grantResult, severity: 'CRITICAL' },
           });
           throw new Error('link_checkout_finalization_failed');
+        }
+        if (linkOrderV2.meta?.zg27_installment) {
+          await requireZg27ActivatedSubscription(supabase,linkOrderV2);
+          const {data:readyOrder,error:re}=await supabase.from('orders_v2').select('meta').eq('id',linkOrderV2.id).maybeSingle();
+          if(re||!readyOrder)throw new Error('zg27_ready_state_unavailable');
+          const {error:we}=await supabase.from('orders_v2').update({meta:{...readyOrder.meta,zg27_mandate_state:'ready',zg27_mandate_reason:null}}).eq('id',linkOrderV2.id);
+          if(we)throw new Error('zg27_ready_state_write_failed');
         }
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK] checkout finalization failed; receipt stays retryable');
@@ -5548,6 +5582,15 @@ Deno.serve(async (req) => {
 
         if (!p2ByOrderErr && p2ByOrder) paymentV2 = p2ByOrder;
       }
+    }
+
+    // Finite ZG27 callbacks can arrive before the cron HTTP response stamps UID.
+    // Intercept before generic UID short-circuit/grant/provider-sync branches.
+    if (paymentV2?.meta?.type === 'installment_auto_charge') {
+      const scoped = await settleZg27InstallmentReceipt(supabase, paymentV2.id, transaction);
+      if (scoped.applicable) return new Response(JSON.stringify({ ok: true, status: scoped.status === 'succeeded' ? 'zg27_installment_settled' : scoped.status === 'failed' ? 'zg27_installment_declined' : 'zg27_installment_pending', payment_id: paymentV2.id }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // B3: IDEMPOTENCY GUARD (main branch) — early exit if this transactionUid already processed

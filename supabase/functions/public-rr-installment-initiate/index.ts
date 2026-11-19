@@ -1,3 +1,4 @@
+import { assertZg27Checkout, requireZg27Recipient, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 /**
  * public-rr-installment-initiate (Sprint B / Gate A.1 v3.1 hardened)
  *
@@ -375,6 +376,15 @@ Deno.serve(async (req: Request) => {
   const product = tariff?.products_v2;
   if (!tariff?.is_active) return errorResponse("tariff_inactive", 403);
   if (!product?.is_active) return errorResponse("product_inactive", 403);
+
+  try {
+    const quote = await assertZg27Checkout({ db: supabaseAdmin, userId, productId: product.id,
+      tariffId: tariff.id, offerId, amountMinor: Math.round(Number(offer.amount) * 100), currency: product.currency ?? 'BYN' });
+    if (quote.applicable) {
+      if (!adminMode) await requireZg27Recipient(req, supabaseAdmin, userId);
+      return errorResponse('zg27_bank_installment_unavailable', 409);
+    }
+  } catch (error) { return errorResponse(error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable', error instanceof Zg27CheckoutError ? error.status : 503); }
 
   let composableQuote;
   try {

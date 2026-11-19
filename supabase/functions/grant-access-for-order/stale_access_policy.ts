@@ -4,10 +4,13 @@ export interface StaleAccessPolicyInput {
   context?: string | null;
   shouldAutoRenew: boolean;
   fixedCourseWindow?: boolean;
+  exclusiveEnd?: boolean;
 }
 
 export function resolveStaleAccessPolicy(input: StaleAccessPolicyInput) {
-  const isStale = input.canonicalAccessEndAt.getTime() < input.now.getTime();
+  const isStale = input.exclusiveEnd
+    ? input.canonicalAccessEndAt.getTime() <= input.now.getTime()
+    : input.canonicalAccessEndAt.getTime() < input.now.getTime();
 
   if (isStale && (input.context === "historical_payment_recovery" || input.fixedCourseWindow)) {
     return {

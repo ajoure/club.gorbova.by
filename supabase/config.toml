@@ -290,3 +290,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.training-custdev]
 verify_jwt = false
+[functions.zg27-public-quote]
+verify_jwt = false
+
+[functions.zg27-create-full-link]
+verify_jwt = false

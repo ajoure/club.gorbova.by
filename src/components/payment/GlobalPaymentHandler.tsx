@@ -1,4 +1,4 @@
-import { courseAccessEnd } from '../../../supabase/functions/_shared/course-access-window';
+import { courseAccessEndForPurchase, hasFixedExclusiveCourseEnd } from '../../../supabase/functions/_shared/course-access-window';
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { addDays, differenceInCalendarDays, format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { formatInTimeZone } from 'date-fns-tz';
 
 interface OrderInfo {
   order_id: string;
@@ -35,9 +36,12 @@ interface OrderInfo {
   access_end_at: string;
   created_at: string;
   is_trial: boolean;
+  zg27_installment?: boolean;
+  zg27_mandate_state?: string;
+  access_end_exclusive?: boolean;
 }
 
-type FlowState = "processing" | "success";
+type FlowState = "processing" | "success" | "setup_failed";
 
 type OrderRow = {
   id: string;
@@ -48,14 +52,26 @@ type OrderRow = {
   created_at: string;
   is_trial: boolean;
   trial_end_at: string | null;
-  meta: { trial_days?: number; offer_id?: string } | null;
+  meta: { trial_days?: number; offer_id?: string; zg27_installment?: unknown; zg27_mandate_state?: string } | null;
   products_v2: { name: string } | null;
+  purchase_snapshot?: unknown;
   tariffs: { name: string; access_days: number | null; trial_days: number | null; meta?: unknown } | null;
   payments_v2: Array<{ status: string | null }>;
 };
 
 const POLL_INTERVAL_MS = 2500;
 const POLL_TIMEOUT_MS = 60000;
+
+// The canonical hosted checkout returns status=success/decline/fail, while
+// saved-card and older callers return payment=*. Both enter receipt polling;
+// a URL status itself never confirms payment or activates a subscription.
+function paymentReturnState(params: URLSearchParams): string | null {
+  const explicit = params.get('payment');
+  if (explicit) return explicit;
+  if (!params.get('order')) return null;
+  const states: Record<string, string> = { success: 'processing', decline: 'failed', fail: 'failed' };
+  return states[params.get('status') ?? ''] ?? null;
+}
 
 export function GlobalPaymentHandler() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,6 +103,7 @@ export function GlobalPaymentHandler() {
   const clearPaymentParams = () => {
     const next = new URLSearchParams(searchParams);
     next.delete("payment");
+    next.delete("status");
     next.delete("order");
     setSearchParams(next);
   };
@@ -124,7 +141,7 @@ export function GlobalPaymentHandler() {
       }
     } else {
       accessDays = tariffAccessDays;
-      accessEndAt = courseAccessEnd(data.tariffs?.meta) || addDays(now, accessDays);
+      accessEndAt = courseAccessEndForPurchase(data.tariffs?.meta, data.purchase_snapshot) || addDays(now, accessDays);
     }
 
     return {
@@ -139,6 +156,9 @@ export function GlobalPaymentHandler() {
       access_end_at: accessEndAt.toISOString(),
       created_at: data.created_at,
       is_trial: isTrial,
+      zg27_installment: !!data.meta?.zg27_installment,
+      zg27_mandate_state: data.meta?.zg27_mandate_state,
+      access_end_exclusive: hasFixedExclusiveCourseEnd(data.tariffs?.meta, data.purchase_snapshot),
     };
   };
 
@@ -157,6 +177,7 @@ export function GlobalPaymentHandler() {
         final_price,
         currency,
         created_at,
+        purchase_snapshot,
         is_trial,
         trial_end_at,
         meta,
@@ -196,6 +217,15 @@ export function GlobalPaymentHandler() {
         const isFailed = order.status === "failed" || paymentStatus === "failed";
 
         if (isPaid) {
+          if (order.meta?.zg27_installment && order.meta.zg27_mandate_state !== 'ready') {
+            if (order.meta.zg27_mandate_state === 'setup_failed') {
+              setOrderInfo(buildOrderInfo(order));
+              setFlowState('setup_failed');
+              setChecking(false);
+              stopPolling();
+            }
+            return;
+          }
           setOrderInfo(buildOrderInfo(order));
           setFlowState("success");
           setChecking(false);
@@ -229,7 +259,7 @@ export function GlobalPaymentHandler() {
   };
 
   useEffect(() => {
-    const paymentParam = searchParams.get("payment");
+    const paymentParam = paymentReturnState(searchParams);
 
     // Skip if no payment param
     if (!paymentParam) {
@@ -263,7 +293,7 @@ export function GlobalPaymentHandler() {
 
   // Separate effect to handle dialog closing when payment param is removed
   useEffect(() => {
-    const paymentParam = searchParams.get("payment");
+    const paymentParam = paymentReturnState(searchParams);
     if (!paymentParam && (successOpen || failedOpen)) {
       stopPolling();
       setSuccessOpen(false);
@@ -277,6 +307,8 @@ export function GlobalPaymentHandler() {
   useEffect(() => () => stopPolling(), []);
 
   const goToPurchases = () => {
+    queryClient.invalidateQueries({ queryKey: ["user-orders-v2"] });
+    queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
     clearPaymentParams();
     if (location.pathname !== "/purchases") {
       window.location.href = "/purchases";
@@ -296,11 +328,6 @@ export function GlobalPaymentHandler() {
     clearPaymentParams();
   };
 
-  const handleRetry = () => {
-    handleFailedClose();
-    window.location.href = "/pay";
-  };
-
   const formatDateRu = (dateIso: string) => format(new Date(dateIso), "d MMMM yyyy", { locale: ru });
 
   return (
@@ -314,12 +341,12 @@ export function GlobalPaymentHandler() {
         >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
-              {flowState === "success" ? (
+              {flowState === 'setup_failed' ? <XCircle className="h-6 w-6 text-destructive" /> : flowState === "success" ? (
                 <CheckCircle className="h-6 w-6 text-green-500" />
               ) : (
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               )}
-              {flowState === "success" ? "Оплата подтверждена!" : "Проверяем оплату..."}
+              {flowState === 'setup_failed' ? 'Подписка не подтверждена' : flowState === "success" ? "Оплата подтверждена!" : "Проверяем оплату..."}
             </DialogTitle>
           </DialogHeader>
 
@@ -331,6 +358,12 @@ export function GlobalPaymentHandler() {
               <Button className="w-full" onClick={() => window.location.href = "/auth?redirectTo=%2Fpurchases"}>
                 Войти и открыть «Мои покупки»
               </Button>
+            </div>
+          ) : flowState === 'setup_failed' ? (
+            <div className="space-y-4">
+              <p className="text-sm">Платёж получен, но обязательную подписку с автосписаниями подтвердить не удалось. Доступ по рассрочке ещё не открыт. Не оплачивайте первый взнос повторно — обратитесь в поддержку с номером заказа {orderInfo?.order_number}.</p>
+              <Button className="w-full" onClick={goToPurchases}>Открыть заказ в моих покупках</Button>
+              <Button variant="outline" className="w-full" onClick={handleSuccessClose}>Закрыть</Button>
             </div>
           ) : flowState === "processing" ? (
             <div className="space-y-4">
@@ -386,18 +419,24 @@ export function GlobalPaymentHandler() {
                       <span className="font-medium">Тип доступа:</span> {orderInfo.is_trial ? "Пробный период" : "Полный доступ"}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      С {formatDateRu(orderInfo.access_start_at)} по {formatDateRu(orderInfo.access_end_at)}
+                      С {formatDateRu(orderInfo.access_start_at)} по {orderInfo.access_end_exclusive
+                        ? formatInTimeZone(new Date(Date.parse(orderInfo.access_end_at) - 1), 'Europe/Minsk', 'd MMMM yyyy', { locale: ru })
+                        : formatDateRu(orderInfo.access_end_at)}
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-3">
-                <span className="text-muted-foreground">Сумма платежа:</span>
+                <span className="text-muted-foreground">{orderInfo.zg27_installment ? 'Всего по заказу:' : 'Сумма платежа:'}</span>
                 <span className="font-semibold text-foreground text-lg">
                   {formatCurrency(orderInfo.final_price, orderInfo.currency)}
                 </span>
               </div>
+
+              {orderInfo.zg27_installment && <p className="rounded-lg border p-3 text-sm">
+                Подписка подтверждена. Первый платёж получен, оставшиеся взносы будут списываться автоматически по согласованному графику. После последнего платежа списания прекращаются.
+              </p>}
 
               <div className="flex flex-col gap-2">
                 <Button className="w-full" onClick={goToPurchases}>
@@ -437,27 +476,21 @@ export function GlobalPaymentHandler() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <XCircle className="h-6 w-6 text-destructive" />
-              Оплата не прошла
+              Платёжная форма вернула отказ
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
               <p className="text-sm text-foreground">
-                Платёж не был подтверждён банком. Доступ не выдан.
+                Проверьте актуальный статус заказа в «Моих покупках». Если деньги уже списались, не оплачивайте повторно — дождитесь подтверждения или обратитесь в поддержку.
               </p>
-              <ul className="mt-2 text-sm text-muted-foreground space-y-1">
-                <li>• Недостаточно средств на карте</li>
-                <li>• Карта заблокирована банком</li>
-                <li>• Превышен лимит операций</li>
-                <li>• Платёж был отменён</li>
-              </ul>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Button onClick={handleRetry} className="w-full">
+              <Button onClick={() => { handleFailedClose(); goToPurchases(); }} className="w-full">
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Попробовать снова
+                Проверить статус в моих покупках
               </Button>
 
               <Button variant="outline" onClick={handleFailedClose} className="w-full">

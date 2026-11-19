@@ -1,3 +1,4 @@
+import { generateZg27InstallmentSchedule } from './zg27-installments.ts';
 // Stage 2 + Stage L3: Installment Schedule Generator
 // Single source of truth for creating installment_payments rows.
 //
@@ -71,6 +72,7 @@ export async function generateInstallmentSchedule(
   const {
     supabase, offer, order, subscription, user, totalAmount, currency, firstPayment,
   } = params;
+  if (order?.meta?.zg27_installment) return generateZg27InstallmentSchedule(params);
   const scheduleSource: 'offer' | 'order_meta' = params.scheduleSource ?? 'offer';
 
   // ---- Resolve schedule parameters per source mode ----

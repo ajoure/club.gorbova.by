@@ -1,3 +1,6 @@
+import { ZG27_PRODUCT_ID } from '../_shared/zg27-policy.ts';
+import { validateZg27HostedMeta } from '../_shared/zg27-hosted-installments.ts';
+import { assertZg27Checkout, requireZg27Recipient, Zg27CheckoutError } from '../_shared/zg27-checkout-guard.ts';
 /**
  * public-checkout — Public payment checkout by url_token.
  * JWT is required for new unassigned admin links (meta.auth_policy='required').
@@ -66,12 +69,18 @@ Deno.serve(async (req) => {
         return errorResponse('Payment link usage limit reached', 410);
       }
 
+      let zg27InstallmentSummary = null;
+      if (link.meta?.zg27_installment && req.headers.get('Authorization')) {
+        await requireZg27Recipient(req, supabase, link.user_id);
+        const plan = validateZg27HostedMeta(link.meta, link.product_id, link.tariff_id, link.user_id);
+        zg27InstallmentSummary = { amounts_minor: plan.amounts_minor, total_minor: plan.total_minor, interval_days: plan.interval_days };
+      }
       const product = (link as any).products_v2;
       const tariff = (link as any).tariffs;
       const linkMetaGet = (link as any).meta || {};
       const installment = linkMetaGet.installment ?? null;
       const repayment = linkMetaGet.repayment ?? null;
-      const requiresAuth = !link.user_id && linkMetaGet.auth_policy === 'required';
+      const requiresAuth = link.product_id === ZG27_PRODUCT_ID || !!linkMetaGet.zg27_installment || (!link.user_id && linkMetaGet.auth_policy === 'required');
 
       // Phase 5-C: surface allowed providers + provider_mode для UI выбора.
       // Источник истины: payment_links.meta.allowed_payment_providers (зеркалит offer.meta.acquiring
@@ -114,6 +123,7 @@ Deno.serve(async (req) => {
         link_user_id: link.user_id,
         // Stage L: installment summary (read-only для UI, срок зафиксирован админом).
         installment,
+        zg27_installment: zg27InstallmentSummary,
         repayment: repayment ? {
           existing_installment: true,
           payment_type: repayment.payment_type,
@@ -186,6 +196,19 @@ Deno.serve(async (req) => {
       });
       return jsonResponse(repaymentResult);
     }
+
+    // Recipient-bound ZG27 new sales require the actual authenticated recipient.
+    // Verified repayment returns above and retains its existing debt resolver.
+    let zg27ActorId: string | null = null;
+    const bearer = /^Bearer\s+([^\s]+)$/i.exec(req.headers.get('Authorization') ?? '');
+    if (bearer) {
+      const { data, error } = await supabase.auth.getUser(bearer[1]);
+      if (!error) zg27ActorId = data?.user?.id ?? null;
+    }
+    const zg27Quote = await assertZg27Checkout({ db: supabase,
+      userId: zg27ActorId, productId: link.product_id, tariffId: link.tariff_id,
+      offerId: link.offer_id, amountMinor: link.amount, currency: link.currency });
+    if (zg27Quote.applicable) await requireZg27Recipient(req, supabase, link.user_id || zg27ActorId);
 
     // ── Phase 5-C — Provider choice resolution ──
     // Source of truth:
@@ -366,7 +389,7 @@ Deno.serve(async (req) => {
     const hasInstallment = !!linkInstallment && Number(linkInstallment.selected_installment_months) >= 2;
     // PATCH INSTALLMENT-RETRY-POLICY: legacy-ссылки могли быть созданы с payment_type='one_time',
     // но фактически содержат installment meta → защитно повышаем до 'subscription'.
-    const effectivePaymentType = hasInstallment ? 'subscription' : (link.payment_type as 'one_time' | 'subscription');
+    const effectivePaymentType = hasInstallment && !linkMeta.zg27_installment ? 'subscription' : (link.payment_type as 'one_time' | 'subscription');
     const installmentMetaExtra = buildFiniteInstallmentOrderMeta(linkInstallment);
 
     // B2 corrective. Non-installment subscription: явный transfer recurring.charge_notifications.
@@ -398,6 +421,8 @@ Deno.serve(async (req) => {
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
       meta_extra: {
         payment_link_id: link.id,
+        ...(linkMeta.zg27_installment ? { zg27_installment: validateZg27HostedMeta(linkMeta, link.product_id, link.tariff_id, userId),
+          zg27_schedule_consent: linkMeta.zg27_schedule_consent, installment_count: linkMeta.zg27_installment.amounts_minor.length } : {}),
         ...installmentMetaExtra,
         ...recurringMetaExtra,
         ...(composableCheckout ? { composable_checkout: composableCheckout } : {}),
@@ -493,6 +518,8 @@ Deno.serve(async (req) => {
       } catch (groupError) {
         console.error('[public-checkout] composable group materialization failed', {
           payment_link_id: link.id,
+        ...(linkMeta.zg27_installment ? { zg27_installment: validateZg27HostedMeta(linkMeta, link.product_id, link.tariff_id, userId),
+          zg27_schedule_consent: linkMeta.zg27_schedule_consent, installment_count: linkMeta.zg27_installment.amounts_minor.length } : {}),
           order_id: result.order_id,
           error: (groupError as Error).message,
         });
@@ -509,6 +536,8 @@ Deno.serve(async (req) => {
       target_user_id: userId,
       meta: {
         payment_link_id: link.id,
+        ...(linkMeta.zg27_installment ? { zg27_installment: validateZg27HostedMeta(linkMeta, link.product_id, link.tariff_id, userId),
+          zg27_schedule_consent: linkMeta.zg27_schedule_consent, installment_count: linkMeta.zg27_installment.amounts_minor.length } : {}),
         order_id: result.order_id,
         order_group_id: orderGroupId,
         amount: link.amount,
@@ -524,6 +553,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    if (error instanceof Zg27CheckoutError) return jsonResponse({ success: false, error: error.code, page_slug: error.pageSlug }, error.status);
     if (error instanceof RepaymentPlanError) {
       const retryable = ['repayment_checkout_in_progress', 'repayment_provider_transport_error'].includes(error.code);
       return jsonResponse({ success: false, error_code: error.code,

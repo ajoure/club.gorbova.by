@@ -1,3 +1,5 @@
+import { assertZg27Checkout, Zg27CheckoutError, requireZg27Recipient } from '../_shared/zg27-checkout-guard.ts';
+import { requireZg27InstallmentExecution } from '../_shared/zg27-installments.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
@@ -186,6 +188,21 @@ Deno.serve(async (req) => {
         error: 'authenticated_email_mismatch',
         message: 'Email покупки должен совпадать с подтверждённым email аккаунта.',
       }, 403);
+    }
+
+    try {
+      const offerIdentity = offerId ? await supabase.from('tariff_offers').select('tariff_id').eq('id', offerId).maybeSingle() : { data: null };
+      const quote = await assertZg27Checkout({ db: supabase, userId: authUserId, productId,
+        tariffId: offerIdentity.data?.tariff_id, offerId, currency: 'BYN' });
+      if (quote.applicable) {
+        await requireZg27Recipient(req, supabase, existingUserId || authUserId);
+        if (isTrial || addonOfferIds.length || Number(customerCreditRequestedMinor ?? 0) || Number(partnerBonusRequestedMinor ?? 0))
+          return jsonResponse({ success: false, error: 'zg27_fixed_price_required' }, 403);
+        requireZg27InstallmentExecution({ productId, count: quote.amounts.length, mode: 'provider_managed' });
+      }
+    } catch (error) {
+      return jsonResponse({ success: false, error: error instanceof Zg27CheckoutError ? error.code : 'zg27_requires_application_managed_installments' },
+        error instanceof Zg27CheckoutError ? error.status : 409);
     }
 
     // Try to get product from products_v2 first (new system), then fallback to products (legacy)

@@ -45,6 +45,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { CustomerProviderChoice } from '@/components/payments/CustomerProviderChoice';
 import { resolveProviderChoice, type CustomerProvider } from '@/utils/resolveCustomerProviderChoice';
+import { ZG27_PRODUCT_ID } from '../../supabase/functions/_shared/zg27-policy';
 
 interface InstallmentInfo {
   payment_method?: string;
@@ -74,6 +75,7 @@ interface PaymentLinkInfo {
   requires_auth: boolean;
   link_user_id: string | null;
   installment?: InstallmentInfo | null;
+  zg27_installment?: { amounts_minor: number[]; total_minor: number; interval_days: number } | null;
   // Phase 5-C — provider routing surface
   provider?: 'bepaid' | 'stripe' | null;
   provider_mode?: 'fixed' | 'customer_choice' | null;
@@ -127,10 +129,14 @@ export default function PublicPayPage() {
   const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   const { data: linkInfo, isLoading, error: loadError } = useQuery({
-    queryKey: ['public-pay', token],
-    queryFn: async (): Promise<PaymentLinkInfo> => {
+    queryKey: ['public-pay', token, user?.id],
+    queryFn: async ({ queryKey, signal }): Promise<PaymentLinkInfo> => {
+      const expectedUserId = queryKey[2];
+      const { data: { session } } = await supabase.auth.getSession();
+      if (expectedUserId && session?.user.id !== expectedUserId) throw new Error('Аккаунт изменился. Обновите страницу.');
       const res = await fetch(`${functionUrl}?token=${token}`, {
-        headers: { 'Content-Type': 'application/json' },
+        signal,
+        headers: { 'Content-Type': 'application/json', ...(expectedUserId && session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -200,6 +206,7 @@ export default function PublicPayPage() {
     _ownsOrPublicEarly &&
     !_isSubscriptionEarly &&
     !_isInstallmentEarly &&
+    linkInfo?.product_id !== ZG27_PRODUCT_ID &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
 
@@ -230,11 +237,11 @@ export default function PublicPayPage() {
       if (payerEmail) body.email = payerEmail;
       if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
       if (providerChoice) body.provider_choice = providerChoice;
-      if (useCustomerCredit && customerCredit?.available_minor) {
+      if (linkInfo?.product_id !== ZG27_PRODUCT_ID && useCustomerCredit && customerCredit?.available_minor) {
         body.customer_credit_requested_minor = customerCredit.available_minor;
         body.customer_credit_checkout_key = savedCardIdempotencyKeyRef.current;
       }
-      if (usePartnerBonus && partnerBonus?.eligible && partnerBonus.available_minor) {
+      if (linkInfo?.product_id !== ZG27_PRODUCT_ID && usePartnerBonus && partnerBonus?.eligible && partnerBonus.available_minor) {
         body.partner_bonus_requested_minor = partnerBonus.available_minor;
         body.partner_bonus_checkout_key = savedCardIdempotencyKeyRef.current;
       }
@@ -454,12 +461,14 @@ export default function PublicPayPage() {
   }
 
   const isInstallment = !!linkInfo.installment && (linkInfo.installment.selected_installment_months ?? 0) >= 2;
+  const isZg27 = linkInfo.product_id === ZG27_PRODUCT_ID;
+  const zg27Plan = linkInfo.zg27_installment;
   // Для installment платёжная сумма в bePaid checkout = per_payment (link.amount уже = per_payment_kopecks).
-  const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
-  const needsIdentity = linkInfo.requires_identity_input && !user;
+  const priceFormatted = formatPrice(zg27Plan?.amounts_minor[0] ?? linkInfo.amount, linkInfo.currency);
+  const needsIdentity = (linkInfo.requires_identity_input || linkInfo.requires_auth || isZg27) && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
   const customerCreditAvailable = Number(customerCredit?.available_minor ?? 0);
-  const canUseCustomerCredit = !!user && (!isSubscription || isInstallment) && customerCreditAvailable > 0;
+  const canUseCustomerCredit = !isZg27 && !!user && (!isSubscription || isInstallment) && customerCreditAvailable > 0;
   const customerCreditToApply = canUseCustomerCredit && useCustomerCredit
     ? Math.min(customerCreditAvailable, Math.max(0, linkInfo.amount - 100))
     : 0;
@@ -472,7 +481,7 @@ export default function PublicPayPage() {
       }).format(new Date(activeSubscriptionData.access_end_at))
     : null;
   const partnerBonusAvailable = Number(partnerBonus?.eligible ? partnerBonus.available_minor : 0);
-  const canUsePartnerBonus = !!user && (!isSubscription || isInstallment) && partnerBonusAvailable > 0;
+  const canUsePartnerBonus = !isZg27 && !!user && (!isSubscription || isInstallment) && partnerBonusAvailable > 0;
   const partnerBonusToApply = canUsePartnerBonus && usePartnerBonus
     ? Math.min(partnerBonusAvailable, Math.max(0, linkInfo.amount - 100))
     : 0;
@@ -487,6 +496,7 @@ export default function PublicPayPage() {
     ownsOrPublic &&
     !isSubscription &&
     !isInstallment &&
+    !isZg27 &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
   // PATCH: для Stripe subscription не показываем disabled bePaid saved-cards и не пишем
@@ -535,7 +545,7 @@ export default function PublicPayPage() {
                 <CreditCard className="h-8 w-8 text-primary" />
               </div>
               <h1 className="text-2xl font-bold mb-2">{linkInfo.product_name}</h1>
-              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category, linkInfo.installment?.selected_installment_months)}</p>
+              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category, zg27Plan?.amounts_minor.length ?? linkInfo.installment?.selected_installment_months)}</p>
             </div>
 
             {linkInfo.description && (
@@ -575,11 +585,11 @@ export default function PublicPayPage() {
                 <CheckCircle className="h-5 w-5 text-primary shrink-0" />
                 <span>Мгновенный доступ после оплаты</span>
               </div>
-              {linkInfo.access_days && (
+              {(isZg27 || linkInfo.access_days) && (
                 <div className="flex items-center gap-3 text-sm">
                   <Clock className="h-5 w-5 text-primary shrink-0" />
                   <span>
-                    {isSubscription
+                    {isZg27 ? 'Материалы и сопровождение — по 30 апреля 2027 года включительно' : isSubscription
                       ? `Срок действия: ${linkInfo.access_days} дней`
                       : `Доступ на ${linkInfo.access_days} дней`}
                   </span>
@@ -592,7 +602,15 @@ export default function PublicPayPage() {
             </div>
 
             <div className="text-center mb-6">
-              {isInstallment && linkInfo.installment ? (
+              {zg27Plan ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">Первый платёж</p>
+                  <div className="text-4xl font-bold text-primary">{priceFormatted}</div>
+                  <p>{zg27Plan.amounts_minor.map((amount) => formatPrice(amount, linkInfo.currency)).join(' + ')}</p>
+                  <p className="font-medium">Итого без надбавки: {formatPrice(zg27Plan.total_minor, linkInfo.currency)}</p>
+                  <p className="text-sm text-muted-foreground">Оформляется подписка на {zg27Plan.amounts_minor.length} автоматических платежа: первый сейчас, следующие — каждые {zg27Plan.interval_days} дней. После последнего платежа списания прекращаются.</p>
+                </div>
+              ) : isInstallment && linkInfo.installment ? (
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">Рассрочка</p>
                   <div className="text-4xl font-bold text-primary">
@@ -644,7 +662,7 @@ export default function PublicPayPage() {
               </label>
             )}
 
-            {isSubscription && !isInstallment && customerCreditAvailable > 0 && (
+            {!isZg27 && isSubscription && !isInstallment && customerCreditAvailable > 0 && (
               <p className="mb-6 rounded-lg border border-amber-500/30 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
                 Накопленная скидка не применяется к подписке с автоплатежом. Её можно использовать при следующей разовой покупке или рассрочке.
               </p>

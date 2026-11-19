@@ -1,5 +1,7 @@
+import { requireZg27ReadySubscription } from '../_shared/zg27-subscription.ts';
+import { zg27FixedEnd, cappedZg27Merge } from '../_shared/zg27-access-policy.ts';
 import { hasHistoricalReceiptMarker } from './historical-receipt-guard.ts';
-import { courseAccessEnd } from '../_shared/course-access-window.ts';
+import { courseAccessEndForPurchase, hasFixedExclusiveCourseEnd } from '../_shared/course-access-window.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';
 import {
@@ -672,7 +674,12 @@ Deno.serve(async (req) => {
     const now = new Date();
     const isClubProduct = await isCalendarMonthProduct(supabase, productId);
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
-    const fixedCourseEnd = !customAccessDays && !customAccessEndAt ? courseAccessEnd(tariff?.meta) : null;
+    const zg27End = zg27FixedEnd(order, tariff?.meta);
+    if (zg27End && now.getTime() >= zg27End.getTime()) return new Response(JSON.stringify({
+      skipped: true, reason: 'zg27_fixed_access_expired', order_id: orderId,
+    }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const fixedCourseEnd = zg27End || (!customAccessDays && !customAccessEndAt ? courseAccessEndForPurchase(tariff?.meta, order.purchase_snapshot) : null);
+    const zg27ReadySub = zg27End && order.meta?.zg27_installment ? await requireZg27ReadySubscription(supabase,order) : null;
     let paidAddonWindow: Awaited<ReturnType<typeof resolvePaidCourseAddonWindow>> = null;
     if (shouldAlignPaidAddonWindow({ customDays: customAccessDays, customEnd: customAccessEndAt,
       customStart: customAccessStartAt, source: _body.source, callerType: caller.type })) {
@@ -770,7 +777,9 @@ Deno.serve(async (req) => {
     const entitlementDateOk = accessDateReachesWindow(existingEntByOrder?.expires_at, expectedMinEndForSkipGuard, !!customAccessEndAt);
     const subscriptionDateOk = accessDateReachesWindow(resolvedSubscription?.access_end_at, expectedMinEndForSkipGuard, !!customAccessEndAt);
 
-    const datesAreStale = (entitlementMatchesProduct && !entitlementDateOk)
+    const zg27DatesDiffer = !!zg27End && (Date.parse(existingEntByOrder?.expires_at || '') !== zg27End.getTime()
+      || Date.parse(resolvedSubscription?.access_end_at || '') !== zg27End.getTime());
+    const datesAreStale = zg27DatesDiffer || (entitlementMatchesProduct && !entitlementDateOk)
       || ((subscriptionMatchesOrder || subscriptionExtendedByOrder) && !subscriptionDateOk)
       || (!!exactAccessTarget && (existingEntByOrder?.status !== 'active' || resolvedSubscription?.status !== 'active'));
 
@@ -922,14 +931,14 @@ Deno.serve(async (req) => {
     
     // Check for existing active subscription for this product to extend from
     let accessStartAt = baseStartDate;
-    let existingProductSub = null;
+    let existingProductSub = zg27ReadySub ? { ...zg27ReadySub } : null;
 
     // ── PATCH SB1 (2026-05): PROVIDER-LINKED PRE-CREATED SUBSCRIPTION RESOLVER ──
     // Pre-created subv2 (status=past_due/pending) referenced by an active/pending
     // provider_subscriptions row for THIS order MUST be extended — not bypassed.
     // Otherwise grant-access creates a parallel active subv2 while the bePaid sbs
     // keeps charging the past_due row (split-brain, Belko 2026-05-20).
-    if (extendFromCurrent && !isNoCardTrial) {
+    if (extendFromCurrent && !isNoCardTrial && !existingProductSub) {
       const providerLinked = await resolveProviderLinkedSubscription(supabase, {
         orderId,
         userId,
@@ -1277,7 +1286,8 @@ Deno.serve(async (req) => {
       accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
     }
 
-    accessEndAt = laterAccessEnd(accessEndAt, paidAddonWindow?.expiresAt)!;
+    accessEndAt = zg27End || laterAccessEnd(accessEndAt, paidAddonWindow?.expiresAt)!;
+    if (zg27End && accessStartAt >= zg27End) accessStartAt = now;
 
     const results: any = {
       orderId,
@@ -1391,10 +1401,7 @@ Deno.serve(async (req) => {
 
     if (existingEntitlement) {
       // Merge existing entitlement — GREATEST(existing.expires_at, accessEndAt) — never decrease
-      const newExpiresAt = existingEntitlement.expires_at &&
-        new Date(existingEntitlement.expires_at) > accessEndAt
-          ? existingEntitlement.expires_at
-          : accessEndAt.toISOString();
+      const newExpiresAt = cappedZg27Merge(existingEntitlement.expires_at, accessEndAt, zg27End);
 
       const prevMeta = (existingEntitlement.meta && typeof existingEntitlement.meta === 'object')
         ? existingEntitlement.meta as Record<string, unknown>
@@ -1545,10 +1552,7 @@ Deno.serve(async (req) => {
             );
           }
 
-          const mergedExpires = dupRow.expires_at &&
-            new Date(dupRow.expires_at) > accessEndAt
-              ? dupRow.expires_at
-              : accessEndAt.toISOString();
+          const mergedExpires = cappedZg27Merge(dupRow.expires_at, accessEndAt, zg27End);
 
           const wasLegacy = dupRow.product_id === null;
           const dupPrevMeta = (dupRow.meta && typeof dupRow.meta === 'object')
@@ -1681,8 +1685,11 @@ Deno.serve(async (req) => {
     results.primary_entitlement_verified = true;
 
     // 2. Find user's active payment method to enable auto-renewal
-    const { data: userPaymentMethod } = await supabase
-      .from("payment_methods")
+    // Hosted finite consent binds ONLY the card returned by this receipt's widget.
+    // Canonical access delivery must not pre-bind an unrelated default card.
+    const { data: userPaymentMethod } = zg27End && order.meta?.zg27_installment
+      ? { data: null }
+      : await supabase.from("payment_methods")
       .select("id")
       .eq("user_id", userId)
       .eq("status", "active")
@@ -1864,7 +1871,7 @@ Deno.serve(async (req) => {
       const updateData: Record<string, any> = {
         status: "active",
         access_end_at: accessEndAt.toISOString(),
-        next_charge_at: accessEndAt.toISOString(),
+        next_charge_at: zg27ReadySub ? zg27ReadySub.zg27_next_charge_at : accessEndAt.toISOString(),
         updated_at: now.toISOString(),
         meta: {
           ...existingMeta,
@@ -1972,6 +1979,7 @@ Deno.serve(async (req) => {
       const staleAccessPolicy = resolveStaleAccessPolicy({
         canonicalAccessEndAt: accessEndAt,
         fixedCourseWindow: !!fixedCourseEnd,
+        exclusiveEnd: !!fixedCourseEnd && hasFixedExclusiveCourseEnd(tariff?.meta, order.purchase_snapshot),
         now,
         context: _body.context,
         shouldAutoRenew,
@@ -2596,7 +2604,7 @@ Deno.serve(async (req) => {
         access_start: accessStartAt.toISOString(),
         access_end: accessEndAt.toISOString(),
         window_days: durationDays,
-        source_window_rule: paidAddonWindow ? 'paid_addon_primary_course' : fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
+        source_window_rule: paidAddonWindow ? 'paid_addon_primary_course' : fixedCourseEnd ? (((order.purchase_snapshot as any)?.course_access?.kind || (tariff?.meta as any)?.course_access?.kind) === 'fixed_exclusive_end' ? 'fixed_exclusive_end' : 'course_end_calendar_months') : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
         previous_end: existingProductSub?.access_end_at || null,
         post_check: postCheck,
       },

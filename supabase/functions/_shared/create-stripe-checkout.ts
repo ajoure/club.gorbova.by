@@ -1,3 +1,5 @@
+import { assertZg27Checkout, Zg27CheckoutError } from './zg27-checkout-guard.ts';
+import { requireZg27InstallmentExecution } from './zg27-installments.ts';
 import { reusePendingSubscriptionCheckout } from './pending-subscription-checkout.ts';
 import { claimPendingPurchase, finishCheckoutAttempt, lookupPendingCheckout } from './pending-purchase.ts';
 import { courseAccessEnd } from './course-access-window.ts';
@@ -91,6 +93,14 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   }
   if (!currency) {
     return { success: false, provider: 'stripe', error: 'missing_currency' };
+  }
+
+  try {
+    await assertZg27Checkout({ db: supabase, userId: user_id, productId: product_id,
+      tariffId: tariff_id, offerId: offer_id, amountMinor: Math.round(amountMajor * 100), currency });
+    requireZg27InstallmentExecution({ productId: product_id, count: payment_type === 'subscription' ? 2 : 1, mode: 'provider_managed' });
+  } catch (error) {
+    return { success: false, provider: 'stripe', error: error instanceof Zg27CheckoutError ? error.code : 'zg27_requires_application_managed_installments' };
   }
 
   // === Resolve Stripe account ===

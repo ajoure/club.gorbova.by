@@ -1,8 +1,12 @@
+import { ensureZg27PendingSubscription } from './zg27-subscription.ts';
+import { validateZg27HostedMeta, zg27HostedWidgetFields } from './zg27-hosted-installments.ts';
+import { assertZg27Checkout, Zg27CheckoutError } from './zg27-checkout-guard.ts';
+import { requireZg27InstallmentExecution } from './zg27-installments.ts';
 import { reserveCheckoutDiscounts } from './checkout-discounts.ts';
 import { reusePendingSubscriptionCheckout } from './pending-subscription-checkout.ts';
 import { requestCheckoutProvider, claimPendingPurchase, finishCheckoutAttempt, lookupPendingCheckout } from './pending-purchase.ts';
 import { paymentCheckoutExpiresAt } from './payment-checkout-lifetime.ts';
-import { courseAccessEnd } from './course-access-window.ts';
+import { courseAccessEnd, courseAccessSnapshot } from './course-access-window.ts';
 /**
  * Shared helper: create bePaid payment checkout (one_time or subscription)
  * 
@@ -43,10 +47,7 @@ export interface CreateCheckoutParams {
   user_id: string;
   product_id: string;
   tariff_id: string;
-  amount: number; // ВНИМАНИЕ:
-                  //   bepaid  → amount в копейках (kopecks), как было исторически.
-                  //   stripe  → amount в MAJOR units (BYN/EUR/PLN/USD), конвертация
-                  //             в minor units выполняется внутри Stripe-ветки.
+  amount: number; // Minor units for both providers; Stripe dispatch converts to major.
   payment_type: 'one_time' | 'subscription';
   description?: string;
   offer_id?: string;
@@ -139,13 +140,52 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     });
     return { success: false, error: 'Missing required fields: user_id, product_id, tariff_id, amount' };
   }
+  // Validate the canonical server offer BEFORE discounts, provider selection or materialization.
+  let zg27Quote;
+  try {
+    zg27Quote = await assertZg27Checkout({ db: supabase, userId: user_id, productId: product_id,
+      tariffId: tariff_id, offerId: offer_id,
+      amountMinor: requestedAmount,
+      currency: params.currency ?? 'BYN' });
+    if (zg27Quote.applicable) {
+      if (Number(params.customer_credit_requested_minor ?? 0) !== 0 || Number(params.partner_bonus_requested_minor ?? 0) !== 0)
+        return { success: false, error: 'zg27_fixed_price_required' };
+      extraMeta = { ...extraMeta, ...(zg27Quote.amounts.length > 1 ? {zg27_mandate_state:'pending_mandate'} : {}), zg27_checkout_quote: zg27Quote,
+        course_access: { kind: 'fixed_exclusive_end', timezone: 'Europe/Minsk', end_exclusive: zg27Quote.accessEndExclusive } };
+    }
+  } catch (error) {
+    return { success: false, error: error instanceof Zg27CheckoutError ? error.code : 'zg27_eligibility_unavailable' };
+  }
+  let hostedPlan;
+  if (zg27Quote.applicable && payment_type === 'subscription' && zg27Quote.amounts.length > 1) {
+    try {
+      hostedPlan = validateZg27HostedMeta(extraMeta, product_id, tariff_id, user_id);
+      if (hostedPlan.offer_id !== offer_id || hostedPlan.total_minor !== zg27Quote.totalMinor
+        || JSON.stringify(hostedPlan.amounts_minor) !== JSON.stringify(zg27Quote.amounts.map((n: number) => Math.round(n * 100)))
+        || params.provider === 'stripe' || payment_type !== 'subscription') throw Error('invalid_hosted_route');
+    } catch { return { success: false, error: 'zg27_schedule_consent_required' }; }
+  }
+  if (zg27Quote.applicable && zg27Quote.amounts.length > 1 && payment_type !== 'subscription')
+    return {success:false,error:'zg27_subscription_required'};
+  if (zg27Quote.applicable && zg27Quote.amounts.length === 1 && extraMeta.zg27_installment)
+    return { success: false, error: 'zg27_offer_plan_mismatch' };
+  // New sales only. Existing debts have their own verified repayment checkout.
+  // Never send ZG27 to a uniform SBS plan: 890/3 must remain 296.67/296.67/296.66.
+  try {
+    requireZg27InstallmentExecution({ productId: product_id,
+      count: hostedPlan ? hostedPlan.amounts_minor.length : payment_type === 'subscription' ? 2 : 1,
+      mode: hostedPlan ? hostedPlan.model : 'provider_managed' });
+  } catch {
+    return { success: false, error: 'zg27_requires_application_managed_installments',
+      message: 'Автоматическая рассрочка пока недоступна. Можно выбрать полную оплату на странице программы.' };
+  }
   let referralQuote;
   const isFiniteInstallment = Number((extraMeta as any)?.installment?.billing_cycles ?? 0) >= 2;
   const allowsImmediateDiscount = payment_type === 'one_time' || isFiniteInstallment;
   try {
     referralQuote = await resolveReferralCheckoutDiscount({
       supabase, userId: user_id, productId: product_id, amountMinor: requestedAmount,
-      allowImmediateDiscount: allowsImmediateDiscount,
+      allowImmediateDiscount: allowsImmediateDiscount && !zg27Quote.applicable,
     });
   } catch (error) {
     console.error('[create-payment-checkout] referral discount lookup failed; checkout stopped', error);
@@ -260,6 +300,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const customerEmail = profile?.email || 'unknown@example.com';
 
   const amountByn = amount / 100;
+  const chargeAmount = hostedPlan ? hostedPlan.amounts_minor[0] : amount;
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
   const effectiveOrigin = resolvePublicReturnOrigin(origin);
@@ -273,7 +314,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     ? (effectiveActorType === 'admin' ? 'admin_one_time' : 'renewal_one_time')
     : (effectiveActorType === 'admin' ? 'admin_subscription' : 'renewal_subscription');
 
-  if (payment_type === 'one_time') {
+  if (payment_type === 'one_time' || hostedPlan) {
     // === ONE-TIME PAYMENT ===
 
     const { data: orderNumberData } = await supabase.rpc('generate_order_number');
@@ -347,11 +388,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           planned_access_start_at: nowOneTime.toISOString(),
           planned_access_end_at: plannedEndOneTime.toISOString(),
           is_trial: false,
-          extra: { payment_flow: paymentFlow },
+          extra: { payment_flow: paymentFlow, ...courseAccessSnapshot(tariff.meta) },
         }),
-      }, 'one_time', 'bepaid');
+      }, hostedPlan ? 'subscription' : 'one_time', 'bepaid');
     if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as CreateCheckoutSuccess;
     const order = checkoutClaim.order;
+    if (hostedPlan) await ensureZg27PendingSubscription(supabase, { ...order, user_id, product_id, tariff_id, meta: order.meta || oneTimeMetaWithRouting }, profileId);
     oneTimeMetaWithRouting = { ...oneTimeMetaWithRouting, ...order.meta };
 
     // B.0: audit negative snapshot post-INSERT (non-blocking)
@@ -375,7 +417,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       checkout: {
         test: bepaidCreds.test_mode,
         transaction_type: 'payment',
-        attempts: 3,
+        attempts: hostedPlan ? 1 : 3,
         settings: {
           success_url: returnUrl,
           decline_url: `${effectiveOrigin}/purchases?order=${order.id}&status=decline`,
@@ -383,16 +425,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           notification_url: notificationUrl,
           language: 'ru',
           customer_fields: { read_only: ['email'] },
-          // No save_card_toggle for one-time: avoid creating recurring contracts
+          // Recurring token is required by merchant agreement; no optional widget opt-out gate.
         },
         order: {
           expired_at: paymentCheckoutExpiresAt(),
-          amount,
+          amount: chargeAmount,
           currency: 'BYN',
           description: description || `${product.name} — ${tariff.name}`,
           tracking_id: trackingId,
           additional_data: {
             receipt: [`${product.name} — ${tariff.name}`],
+            ...(hostedPlan ? zg27HostedWidgetFields().additional_data : {}),
           },
         },
         customer: {
@@ -514,7 +557,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     const readyResult: CreateCheckoutSuccess = {
       success: true, redirect_url: redirectUrl, order_id: order.id,
-      order_number: order.order_number, payment_type: 'one_time',
+      order_number: order.order_number, payment_type: hostedPlan ? 'subscription' : 'one_time',
     };
     if (metaMergeErr) throw new Error('checkout_metadata_persist_failed');
     await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
@@ -527,7 +570,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       deal_date: new Date().toISOString(),
       final_price: amount / 100, currency: params.currency ?? 'BYN',
       meta: {payment_flow:paymentFlow,...extraMeta,replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
-      purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
+      purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false,...courseAccessSnapshot(tariff.meta)},
     };
     const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
     if(recoveredCheckout) return recoveredCheckout as CreateCheckoutSuccess;
@@ -791,7 +834,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           planned_access_start_at: nowSub.toISOString(),
           planned_access_end_at: plannedEndSub.toISOString(),
           is_trial: false,
-          extra: { payment_flow: paymentFlow },
+          extra: { payment_flow: paymentFlow, ...courseAccessSnapshot(tariff.meta) },
         }),
       }, 'subscription', 'bepaid');
     if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as CreateCheckoutSuccess;

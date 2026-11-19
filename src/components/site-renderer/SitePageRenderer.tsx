@@ -17,6 +17,7 @@ import { HtmlSection } from "./blocks/HtmlSection";
 import { GallerySection } from "./blocks/GallerySection";
 import { TestimonialsSection } from "./blocks/TestimonialsSection";
 import { PricingSection } from "./blocks/PricingSection";
+import { Zg27PurchaseSection } from "./blocks/Zg27PurchaseSection";
 import { SocialSection } from "./blocks/SocialSection";
 import { LogosSection } from "./blocks/LogosSection";
 import { SpacerSection } from "./blocks/SpacerSection";
@@ -199,6 +200,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
   const renderBlock = (block: SiteBlock) => {
     const settings = block.settings as any;
     switch (block.type) {
+      case "zg27_checkout": return <Zg27PurchaseSection content={block.content} />;
       case "hero": return <HeroSection content={block.content} />;
       case "text": return <TextSection content={block.content} />;
       case "heading": return <HeadingSection content={block.content} />;
