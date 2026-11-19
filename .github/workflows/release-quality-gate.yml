@@ -12,7 +12,9 @@ permissions:
 jobs:
   code-and-contracts:
     name: Code, contracts and production build
-    runs-on: ubuntu-latest
+    # Keep codec-dependent release checks on an explicit LTS image: the latest
+    # label migrated to 26.04, whose APT/FFmpeg download timed out in this gate.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       referral-postgres:
