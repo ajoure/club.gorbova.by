@@ -29254,6 +29254,10 @@ export type Database = {
         Args: { _candidate: string }
         Returns: boolean
       }
+      zg27_purchase_eligibility_v1: {
+        Args: { p_product_id: string; p_user_id: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
