@@ -6,13 +6,13 @@ export const CASES = Object.freeze({
 export type CaseId=keyof typeof CASES;
 export type Input={run_id:string;case_id:CaseId;started_at:string};
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export function validateInput(raw:unknown,now=Date.now()):Input {
+export function validateInput(raw:unknown,now=Date.now(),maxAgeMs=3600000):Input {
   if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('invalid_case');
   const v=raw as Record<string,unknown>;
   if(Object.keys(v).sort().join(',')!=='case_id,run_id,started_at'||typeof v.run_id!=='string'||!UUID.test(v.run_id)
     ||typeof v.case_id!=='string'||!Object.hasOwn(CASES,v.case_id)||typeof v.started_at!=='string')throw Error('invalid_case');
   const age=now-Date.parse(v.started_at);
-  if(!Number.isFinite(age)||age< -120000||age>3600000)throw Error('run_expired');
+  if(!Number.isFinite(age)||age< -120000||age>maxAgeMs)throw Error('run_expired');
   return v as Input;
 }
 export async function requestId(actorId:string,run:string,plan:string,index:number):Promise<string>{
@@ -25,15 +25,18 @@ export function callbackUrl(base:string):string {
   const url=new URL(base);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw Error('callback_unavailable');
   return `${url.origin}/functions/v1/zg27-sandbox-acceptance/callback`;
 }
+export function safeProviderCode(value:unknown):string|undefined{
+  return typeof value==='string'&&/^[A-Z]\.\d{4}$/.test(value)?value:undefined;
+}
 type Step={index:number;amount_minor:number;status:'successful';test:true;uid_suffix:string};
 export type Result={case_id:CaseId;status:'passed'|'stopped';test_confirmed:boolean;requests:number;sum_minor:number;steps:Step[];
-  interval_days:30;accelerated:true;code?:string;coverage:'test_h2h_no_widget_3ds'};
+  interval_days:30;accelerated:true;code?:string;provider_code?:string;coverage:'test_h2h_no_widget_3ds'};
 export async function runCase(input:Input,options:{actorId:string;authorization:string;notificationUrl:string;fetcher?:typeof fetch}):Promise<Result>{
   validateInput(input);if(!options.actorId)throw Error('actor_required');
   if(!/^https:\/\/[^/]+\/functions\/v1\/zg27-sandbox-acceptance\/callback$/.test(options.notificationUrl))throw Error('callback_unavailable');
-  const amounts=CASES[input.case_id];const steps:Step[]=[];const uids=new Set<string>();let token:string|undefined,requests=0;
+  const amounts=CASES[input.case_id];const steps:Step[]=[];const uids=new Set<string>();let token:string|undefined,requests=0,providerCode:string|undefined;
   const result=(code?:string):Result=>({case_id:input.case_id,status:code?'stopped':'passed',test_confirmed:steps.length===amounts.length,
-    requests,sum_minor:steps.reduce((n,s)=>n+s.amount_minor,0),steps,interval_days:30,accelerated:true,coverage:'test_h2h_no_widget_3ds',...(code?{code}:{})});
+    requests,sum_minor:steps.reduce((n,s)=>n+s.amount_minor,0),steps,interval_days:30,accelerated:true,coverage:'test_h2h_no_widget_3ds',...(code?{code}:{}),...(providerCode?{provider_code:providerCode}:{})});
   for(let index=0;index<amounts.length;index++){
     const id=await requestId(options.actorId,input.run_id,input.case_id,index);
     // Public bePaid no-3DS test fixture only. Never accepts client card/token/body.
@@ -50,6 +53,7 @@ export async function runCase(input:Input,options:{actorId:string;authorization:
       const text=await response.text();if(text.length>65536)return result('provider_response_unknown');
       const data=JSON.parse(text),tx=data?.transaction;
       // Strict boolean gate checked BEFORE status/token or any next request.
+      providerCode=safeProviderCode(tx?.code);
       if(tx?.test!==true)return result('provider_test_unconfirmed');
       if(!response.ok)return result('provider_rejected');
       if(tx.status!=='successful')return result(tx.status==='incomplete'?'requires_3ds_or_async':'provider_not_successful');
