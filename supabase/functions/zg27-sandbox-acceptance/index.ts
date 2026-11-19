@@ -22,8 +22,17 @@ Deno.serve(async(req)=>{
     const creds=await getBepaidCredsStrict(db);if(isBepaidCredsError(creds))return errorResponse('sandbox_credentials_unavailable',503);
     // Never switches integration.test_mode; test:true is immutable on EACH request.
     const options={actorId:auth.actor.id,authorization:createBepaidAuthHeader(creds),notificationUrl};
-    const result=dispatch.operation==='inspect'?await inspectCase(dispatch.input,options):await run(dispatch.input,options);
-    if(dispatch.operation==='run'&&result.status==='stopped')console.warn('zg27_sandbox_stopped',{code:'code' in result?result.code:undefined,provider_code:'provider_code' in result?result.provider_code:undefined,requests:result.requests});
+    if(dispatch.operation==='inspect'){
+      const result=await inspectCase(dispatch.input,options);
+      console.warn('zg27_sandbox_inspection',{status:result.status,code:'code' in result?result.code:undefined,
+        provider_status:'provider_status' in result?result.provider_status:undefined,provider_code:'provider_code' in result?result.provider_code:undefined,
+        response_shape:result.response_shape,envelope_type:result.envelope_type,envelope_keys:result.envelope_keys,
+        candidate_count:result.candidate_count,provider_http_status:result.provider_http_status});
+      return jsonResponse(result);
+    }
+    const result=await run(dispatch.input,options);
+    if(result.status==='stopped')console.warn('zg27_sandbox_stopped',{code:result.code,provider_code:result.provider_code,
+      provider_http_status:result.provider_http_status,validation_fields:result.validation_fields,requests:result.requests});
     return jsonResponse(result);
   }catch{return errorResponse('sandbox_unavailable_no_retry',503)}
 });

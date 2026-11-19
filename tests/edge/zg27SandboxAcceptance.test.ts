@@ -1,6 +1,6 @@
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
-import { CASES,validateInput,requestId,callbackUrl,runCase,makeRunner } from '../../supabase/functions/zg27-sandbox-acceptance/runner';
+import { CASES,validateInput,requestId,callbackUrl,runCase,makeRunner,validationFields } from '../../supabase/functions/zg27-sandbox-acceptance/runner';
 import { load } from './zg27-ingress-harness';
 import { authenticateAdminActor } from '../../supabase/functions/_shared/admin-section-auth';
 vi.stubGlobal('crypto',webcrypto);
@@ -14,7 +14,7 @@ function provider(patch:Record<string,unknown>={}){
   return vi.fn(async(url:any,init:any)=>{
     expect(url).toBe('https://gateway.bepaid.by/transactions/payments');expect(init.redirect).toBe('error');
     const r=JSON.parse(init.body).request;
-    expect(r.test).toBe(true);expect(r.notification_url).toBe(notificationUrl);expect(r.notification_url).not.toContain('bepaid-webhook');
+    expect(r.test).toBe(true);expect(r.return_url).toBe('https://gorbova.by/admin/zg27-sandbox');expect(r.notification_url).toBe(notificationUrl);expect(r.notification_url).not.toContain('bepaid-webhook');
     return new Response(JSON.stringify({transaction:{test:true,status:'successful',amount:r.amount,currency:'BYN',tracking_id:r.tracking_id,
       uid:init.headers.RequestID,credit_card:{token:'private-test-token'},...patch}}));
   });
@@ -66,6 +66,14 @@ describe('isolated bePaid sandbox acceptance',()=>{
     expect(result.sum_minor).toBe(29667);expect(result).not.toHaveProperty('provider_code');
     expect(result.code).toBe(failure==='non-test'?'provider_test_unconfirmed':'provider_result_unknown');
     expect(send).toHaveBeenCalledTimes(2);
+  });
+  it('unconfirmed POST validation returns only own field names and HTTP status, never MIT/provider code/errors',async()=>{
+    const send=vi.fn(async()=>new Response(JSON.stringify({errors:{return_url:['private-error-value'],credit_card:{number:['private-number']},evil_secret:['secret']},
+      transaction:{test:false,code:'S.0000',credit_card:{token:'private-token'}}}),{status:422}));
+    const r=await runCase(input(),{actorId:'A',authorization:'secret',notificationUrl,fetcher:send});
+    expect(r).toMatchObject({status:'stopped',code:'provider_test_unconfirmed',provider_http_status:422,validation_fields:['return_url','credit_card','credit_card.number']});
+    expect(r).not.toHaveProperty('provider_code');expect(JSON.stringify(r)).not.toMatch(/private|evil_secret|S\.0000/);expect(send).toHaveBeenCalledOnce();
+    expect(validationFields({response:{errors:[{field:'return_url',message:'secret'},{field:'arbitrary-secret',message:'secret'}]}})).toEqual(['return_url']);
   });
   it('unknown result is cached and never automatically re-dispatched',async()=>{
     const runner=makeRunner(),send=vi.fn(async()=>{throw Error('private provider failure')});

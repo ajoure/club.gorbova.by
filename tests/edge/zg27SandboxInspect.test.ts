@@ -1,6 +1,6 @@
 import { describe,it,expect,vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
-import { inspectCase,validateInspect } from '../../supabase/functions/zg27-sandbox-acceptance/inspect';
+import { inspectCase,validateInspect,normalizeStatusResponse } from '../../supabase/functions/zg27-sandbox-acceptance/inspect';
 import { makeRunner,validateInput,callbackUrl } from '../../supabase/functions/zg27-sandbox-acceptance/runner';
 import { load } from './zg27-ingress-harness';
 vi.stubGlobal('crypto',webcrypto);
@@ -11,11 +11,12 @@ function provider(patch:any={},shape='single'){
     expect(url).toMatch(/^https:\/\/gateway\.bepaid\.by\/v2\/transactions\/tracking_id\/zg27-sandbox%3A[0-9a-f-]+$/);
     const tx={test:true,status:'successful',uid:'12345678-1234-4234-8234-123456789abc',amount:129000,currency:'BYN',tracking_id:decodeURIComponent(url.split('/').at(-1)!),
       code:'S.0000',message:'private-secret',credit_card:{token:'private-token'},receipt_url:'https://private.invalid',...patch};
-    return new Response(JSON.stringify(shape==='multiple'?{transaction:[tx,tx]}:shape==='array'?{transaction:[tx]}:{transaction:tx}));
+    const body=shape==='multiple'?{transaction:[tx,tx]}:shape==='array'?{transaction:[tx]}:shape==='transactions'?{transactions:[tx]}:shape==='raw'?[tx]:shape==='wrapped'?{transactions:[{transaction:tx}]}:shape==='raw-wrapped'?[{transaction:tx}]:shape==='direct'?tx:{transaction:tx};
+    return new Response(JSON.stringify(body));
   });
 }
 describe('read-only same sandbox request reconciliation',()=>{
-  it.each(['single','array'])('strict sanitized confirmed %s response; never payment POST',async shape=>{
+  it.each(['single','array','transactions','raw','wrapped','raw-wrapped','direct'])('strict sanitized confirmed %s response; never payment POST',async shape=>{
     const send=provider({},shape);const result=await inspectCase(input,{actorId:'actor',authorization:'secret-auth',fetcher:send});
     expect(result).toMatchObject({status:'inspected',provider_status:'successful',provider_code:'S.0000',test_confirmed:true,amount_minor:129000,tracking_verified:true,uid_suffix:'56789abc'});
     expect(send).toHaveBeenCalledOnce();expect(JSON.stringify(result)).not.toMatch(/private|secret|credit_card|https:|tracking_id/);
@@ -26,6 +27,21 @@ describe('read-only same sandbox request reconciliation',()=>{
   it('multiple matching transactions are unknown; malformed code is never exported',async()=>{
     expect((await inspectCase(input,{actorId:'actor',authorization:'secret',fetcher:provider({},'multiple')})).status).toBe('unknown');
     const r=await inspectCase(input,{actorId:'actor',authorization:'secret',fetcher:provider({code:'private-token'})});expect(JSON.stringify(r)).not.toContain('private-token');
+  });
+  it.each([{transactions:[]},{transaction:[]},[]])('empty supported envelopes are not_found: %j',async body=>{
+    const r=await inspectCase(input,{actorId:'A',authorization:'secret',fetcher:vi.fn(async()=>new Response(JSON.stringify(body)))});
+    expect(r).toMatchObject({status:'unknown',code:'inspection_not_found',candidate_count:0,provider_http_status:200});
+  });
+  it.each([null,42,'private-token',{error:'private-provider-error',secret:'private-token'}, {response:{transaction:{uid:'private'}}}])('unrecognized shapes expose only closed diagnostic names: %j',async body=>{
+    const r=await inspectCase(input,{actorId:'A',authorization:'secret',fetcher:vi.fn(async()=>new Response(JSON.stringify(body)))});
+    expect(r).toMatchObject({status:'unknown',code:'inspection_unknown_shape',response_shape:'unrecognized',candidate_count:0,provider_http_status:200});
+    expect(JSON.stringify(r)).not.toMatch(/private|secret|uid/);
+    expect(r.envelope_keys.every((k:string)=>['transaction','transactions','response','errors','error','message','status','checkout','code'].includes(k))).toBe(true);
+  });
+  it('bounded candidates and only one-level wrappers; no nested coercion',async()=>{
+    const n=normalizeStatusResponse(Array(30).fill({transaction:{test:true}}));expect(n.candidate_count).toBe(11);expect(n.candidates).toHaveLength(10);
+    const r=await inspectCase(input,{actorId:'A',authorization:'secret',fetcher:vi.fn(async()=>new Response(JSON.stringify([{transaction:{transaction:{test:true}}}])))});
+    expect(r).toMatchObject({status:'unknown',code:'inspection_unknown_shape',candidate_count:1});
   });
   it('same run actor namespace and exact index are server-derived',async()=>{
     const send=provider();await inspectCase(input,{actorId:'A',authorization:'secret',fetcher:send});await inspectCase(input,{actorId:'B',authorization:'secret',fetcher:send});
@@ -38,16 +54,17 @@ describe('read-only same sandbox request reconciliation',()=>{
     }
   });
   it.each([false,true])('actual handler inspect auth=%s before creds; no business reads/writes',async allowed=>{
-    const send=provider();const creds=vi.fn(async()=>({})),business=vi.fn(()=>{throw Error('no DB')});
+    const logs=vi.fn();const send=provider();const creds=vi.fn(async()=>({})),business=vi.fn(()=>{throw Error('no DB')});
     const db={rpc:async()=>({data:allowed,error:null}),from:business};
     const h=load('supabase/functions/zg27-sandbox-acceptance/index.ts',{
       'npm:@supabase/supabase-js@2':{createClient:()=>db},'../_shared/admin-section-auth.ts':{authenticateAdminActor:async()=>({ok:true,actor:{id:'actor'}})},
       '../_shared/bepaid-credentials.ts':{getBepaidCredsStrict:creds,isBepaidCredsError:()=>false,createBepaidAuthHeader:()=> 'secret'},
       './runner.ts':{makeRunner,validateInput,callbackUrl},'./inspect.ts':{inspectCase:(i:any,o:any)=>inspectCase(i,{...o,fetcher:send}),validateInspect},
       '../_shared/cors.ts':{jsonResponse:(d:any)=>new Response(JSON.stringify(d)),errorResponse:(e:string,status:number)=>new Response(JSON.stringify({error:e}),{status})},
-    },{Deno:{serve:(fn:any)=>{(db as any).handler=fn},env:{get:()=> 'https://synthetic.supabase.co'}}});
+    },{console:{warn:logs},Deno:{serve:(fn:any)=>{(db as any).handler=fn},env:{get:()=> 'https://synthetic.supabase.co'}}});
     const response=await(db as any).handler(new Request('https://synthetic.invalid',{method:'POST',body:JSON.stringify(input)}));
     expect(response.status).toBe(allowed?200:403);expect(creds).toHaveBeenCalledTimes(allowed?1:0);expect(send).toHaveBeenCalledTimes(allowed?1:0);expect(business).not.toHaveBeenCalled();expect(h.effects).not.toHaveBeenCalled();
+    expect(logs).toHaveBeenCalledTimes(allowed?1:0);if(allowed){expect(logs.mock.calls[0][1]).toMatchObject({status:'inspected',response_shape:'transaction_object',candidate_count:1,provider_http_status:200});expect(JSON.stringify(logs.mock.calls)).not.toMatch(/secret|private|credit_card|tracking_id|run_id|actor/);}
   });
 });
 
