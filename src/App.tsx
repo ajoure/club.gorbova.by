@@ -133,6 +133,7 @@ const AdminPaymentsPage = lazy(() => import("./pages/admin/AdminPayments"));
 const AdminPaymentsHub = lazy(() => import("./pages/admin/AdminPaymentsHub"));
 const AdminSubscriptionsV2 = lazy(() => import("./pages/admin/AdminSubscriptionsV2"));
 const AdminSystemAudit = lazy(() => import("./pages/admin/AdminSystemAudit"));
+const AdminZg27Sandbox = lazy(() => import("./pages/admin/AdminZg27Sandbox"));
 const AdminSystemHealth = lazy(() => import("./pages/admin/AdminSystemHealth"));
 const AdminConsents = lazy(() => import("./pages/admin/AdminConsents"));
 const AdminPreregistrations = lazy(() => import("./pages/admin/AdminPreregistrations"));
@@ -339,6 +340,7 @@ const App = () => {
               <Route path="/admin/telegram/audit-shape-runs" element={<ProtectedRoute><LazyRoute><AdminTelegramAuditShapeRuns /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><LazyRoute><AdminFieldRegistry /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><LazyRoute><AdminSystemAudit /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/zg27-sandbox" element={<ProtectedRoute><LazyRoute><AdminZg27Sandbox /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system-health" element={<ProtectedRoute><LazyRoute><AdminSystemHealth /></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
