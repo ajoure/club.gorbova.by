@@ -295,3 +295,6 @@ verify_jwt = false
 
 [functions.zg27-create-full-link]
 verify_jwt = false
+
+[functions.zg27-sandbox-acceptance]
+verify_jwt = false

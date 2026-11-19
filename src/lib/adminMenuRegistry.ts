@@ -98,6 +98,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
       "/admin/bepaid-subscriptions",
       "/admin/bepaid-archive-import",
       "/admin/installments",
+      "/admin/zg27-sandbox",
     ],
     resources: [
       { code: "overview",             label: "Обзор",              route: "/admin/payments" },
@@ -107,7 +108,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
       { code: "invoices",             label: "Счета",              route: "/admin/payments/invoices" },
       { code: "bepaid-subscriptions", label: "bePaid подписки",    route: "/admin/payments/bepaid-subscriptions" },
       { code: "payment-issues",       label: "Проблемы платежей",  route: "/admin/payments/payment-issues" },
-      { code: "diagnostics",          label: "Диагностика",        route: "/admin/payments/diagnostics" },
+      { code: "diagnostics",          label: "Диагностика",        route: "/admin/payments/diagnostics", altPrefixes: ["/admin/zg27-sandbox"] },
       { code: "manual-payment",       label: "Ручной платёж",      route: "/admin/payments?action=manual-payment" },
     ],
   },

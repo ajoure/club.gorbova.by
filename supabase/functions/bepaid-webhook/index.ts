@@ -1,3 +1,4 @@
+import { isIsolatedZg27SandboxNotification } from './zg27-sandbox-notification.ts';
 import { requireZg27ActivatedSubscription } from '../_shared/zg27-subscription.ts';
 import { settleZg27InstallmentReceipt } from '../_shared/zg27-installment-receipt.ts';
 import { validateZg27HostedMeta, handoffZg27HostedReceipt } from '../_shared/zg27-hosted-installments.ts';
@@ -1155,6 +1156,13 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: 'Invalid signature', reason: signatureSkipReason }),
         { status: 401, headers: corsHeaders }
       );
+    }
+
+    // A merchant-level notification setting must not turn our isolated TEST
+    // acceptance into orders, reconciliation jobs or paid access. Auth above stays mandatory.
+    if (isIsolatedZg27SandboxNotification(body)) {
+      return new Response(JSON.stringify({ success: true, ignored: 'isolated_zg27_sandbox_test' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // Authenticated historical receipt replay stops BEFORE queue, provider sync,
