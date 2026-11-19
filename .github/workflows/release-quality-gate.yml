@@ -171,6 +171,8 @@ jobs:
           node scripts/webinars/check-isolated-functions.mjs
       - name: Paid CB20 addon fulfillment Edge types
         run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/grant-access-for-order/index.ts
+      - name: ZG27 sandbox Edge types
+        run: deno check --no-lock --no-config --node-modules-dir=none supabase/functions/zg27-sandbox-acceptance/index.ts
       - name: Sales recipient types and isolated checkout tests
         run: |
           deno check --no-lock --no-config --node-modules-dir=none supabase/functions/sales-runtime-worker/index.ts supabase/functions/sales-runtime-control/index.ts

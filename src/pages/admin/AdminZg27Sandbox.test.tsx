@@ -19,7 +19,7 @@ describe('sandbox operator sequence',()=>{
   });
   it('late response after unmount never starts the next case',async()=>{
     let complete!:(value:any)=>void;mock.invoke.mockImplementation(()=>new Promise(resolve=>{complete=resolve}));
-    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button'));await waitFor(()=>expect(mock.invoke).toHaveBeenCalledOnce());
+    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Запустить 6 TEST-планов'}));await waitFor(()=>expect(mock.invoke).toHaveBeenCalledOnce());
     view.unmount();await act(async()=>complete({data:{case_id:'first_1',status:'passed',test_confirmed:true,requests:1,sum_minor:129000},error:null}));
     expect(mock.invoke).toHaveBeenCalledOnce();
   });
@@ -27,23 +27,47 @@ describe('sandbox operator sequence',()=>{
     let complete!:(value:any)=>void;
     mock.invoke.mockResolvedValueOnce({data:{case_id:'first_1',status:'passed',test_confirmed:true,requests:1,sum_minor:129000},error:null})
       .mockImplementationOnce(()=>new Promise(resolve=>{complete=resolve}));
-    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button'));await waitFor(()=>expect(mock.invoke).toHaveBeenCalledTimes(2));
+    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Запустить 6 TEST-планов'}));await waitFor(()=>expect(mock.invoke).toHaveBeenCalledTimes(2));
     expect(screen.getByText(/TEST: пройдено/)).toBeInTheDocument();
-    mock.actor='actor-B';view.rerender(<AdminZg27Sandbox/>);expect(screen.getByRole('button')).not.toBeDisabled();
+    mock.actor='actor-B';view.rerender(<AdminZg27Sandbox/>);expect(screen.getByRole('button',{name:'Запустить 6 TEST-планов'})).not.toBeDisabled();
     expect(screen.queryByText(/TEST: пройдено/)).not.toBeInTheDocument();
     await act(async()=>complete({data:{case_id:'first_2',status:'passed',test_confirmed:true,requests:2,sum_minor:129000},error:null}));
     expect(mock.invoke).toHaveBeenCalledTimes(2);expect(screen.queryByText(/TEST: пройдено/)).not.toBeInTheDocument();
-    mock.actor='actor-A';view.rerender(<AdminZg27Sandbox/>);expect(screen.getByRole('button')).toBeDisabled();
+    mock.actor='actor-A';view.rerender(<AdminZg27Sandbox/>);expect(screen.getByRole('button',{name:'Запустить 6 TEST-планов'})).toBeDisabled();
   });
   it('fresh session mismatch prevents first dispatch even before auth context updates',async()=>{
     mock.getSession.mockResolvedValue({data:{session:{user:{id:'other'},access_token:'other-jwt'}},error:null});
-    render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button'));await screen.findByText(/Аккаунт изменился или сессия завершилась/);
+    render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Запустить 6 TEST-планов'}));await screen.findByText(/Аккаунт изменился или сессия завершилась/);
     expect(mock.invoke).not.toHaveBeenCalled();
   });
   it('stops immediately on unknown/non-test result and cannot resend on remount',async()=>{
     mock.invoke.mockResolvedValue({data:{case_id:'first_1',status:'stopped',test_confirmed:false,requests:1,sum_minor:0},error:null});
-    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button'));
+    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Запустить 6 TEST-планов'}));
     await waitFor(()=>expect(mock.invoke).toHaveBeenCalledOnce());await screen.findByText(/Проверка остановлена/);
-    view.unmount();render(<AdminZg27Sandbox/>);expect(screen.getByRole('button')).toBeDisabled();expect(mock.invoke).toHaveBeenCalledOnce();
+    view.unmount();render(<AdminZg27Sandbox/>);expect(screen.getByRole('button',{name:'Запустить 6 TEST-планов'})).toBeDisabled();expect(mock.invoke).toHaveBeenCalledOnce();
   });
+  it('restored started run inspection is GET operation only with same identity; no new case dispatch',async()=>{
+    const prior={run_id:'12345678-1234-4234-8234-123456789abc',started_at:new Date().toISOString(),started:true};
+    sessionStorage.setItem('zg27-sandbox-test-run-v1:actor-A',JSON.stringify(prior));
+    mock.invoke.mockResolvedValue({data:{operation:'inspect',case_id:'first_1',index:0,status:'inspected',test_confirmed:true,provider_status:'failed',provider_code:'F.0010',token:'never-display'},error:null});
+    render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Проверить результат без повторной оплаты'}));
+    await screen.findByText(/Результат исходного TEST-запроса: failed; код F.0010/);
+    expect(mock.invoke).toHaveBeenCalledOnce();expect(mock.invoke.mock.calls[0][1].body).toEqual({run_id:prior.run_id,started_at:prior.started_at,operation:'inspect',case_id:'first_1',index:0});
+    expect(screen.queryByText(/never-display/)).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'Запустить 6 TEST-планов'})).toBeDisabled();
+  });
+  it('inspection late response after account switch never resumes or exposes previous result',async()=>{
+    sessionStorage.setItem('zg27-sandbox-test-run-v1:actor-A',JSON.stringify({run_id:'12345678-1234-4234-8234-123456789abc',started_at:new Date().toISOString(),started:true}));
+    let complete!:(value:any)=>void;mock.invoke.mockImplementation(()=>new Promise(resolve=>{complete=resolve}));
+    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Проверить результат без повторной оплаты'}));await waitFor(()=>expect(mock.invoke).toHaveBeenCalledOnce());
+    mock.actor='actor-B';view.rerender(<AdminZg27Sandbox/>);
+    await act(async()=>complete({data:{operation:'inspect',case_id:'first_1',index:0,status:'inspected',test_confirmed:true,provider_status:'successful'},error:null}));
+    expect(mock.invoke).toHaveBeenCalledOnce();expect(screen.queryByText(/Результат исходного/)).not.toBeInTheDocument();
+  });
+  it('stopped code persists across remount; inspecting never clears existing run',async()=>{
+    mock.invoke.mockResolvedValue({data:{case_id:'first_1',status:'stopped',requests:1,sum_minor:0,code:'provider_test_unconfirmed'},error:null});
+    const view=render(<AdminZg27Sandbox/>);fireEvent.click(screen.getByRole('button',{name:'Запустить 6 TEST-планов'}));await screen.findByText(/Код: provider_test_unconfirmed/);
+    const saved=sessionStorage.getItem('zg27-sandbox-test-run-v1:actor-A');view.unmount();render(<AdminZg27Sandbox/>);
+    expect(screen.getByText(/Код: provider_test_unconfirmed/)).toBeInTheDocument();expect(sessionStorage.getItem('zg27-sandbox-test-run-v1:actor-A')).toBe(saved);
+  });
+
 });
