@@ -13,7 +13,7 @@ async function fixture(key:keyof typeof CASES='repeat_3',patch:any={}){
   const first=await requestId(options.actorId,RUN,`hosted_${key}`,0),tracking=`zg27-sandbox:hosted:${first}`;
   const send=vi.fn(async(url:string,init:any)=>{
     expect(init.headers['X-API-Version']).toBe('2');
-    expect(init.headers['Content-Type']).toBe(init.body==null?undefined:'application/json');
+    expect(init.headers['Content-Type']).toBe(init.method==='GET'&&url.startsWith('https://gateway.bepaid.by/')?undefined:'application/json');
     expect(init.redirect).toBe('error');expect(url).toMatch(/^https:\/\/(checkout|gateway)\.bepaid\.by\//);
     if(url.endsWith('/ctp/api/checkouts')){
       expect(init.method).toBe('POST');const c=JSON.parse(init.body).checkout;expect(c.test).toBe(true);expect(c.attempts).toBe(1);expect(c.order.tracking_id).toBe(tracking);

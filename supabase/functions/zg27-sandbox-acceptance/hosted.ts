@@ -32,8 +32,9 @@ class HostedFailure extends Error{
 async function provider(url:string,init:RequestInit,options:Options){
   const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),10000);
   try{
-    // Gateway rejects a JSON Content-Type on bodyless status GETs; JSON POSTs retain it.
-    const response=await(options.fetcher??fetch)(url,{...init,redirect:'error',signal:abort.signal,headers:{Authorization:options.authorization,Accept:'application/json',...(init.body==null?{}:{'Content-Type':'application/json'}),'X-API-Version':'2',...init.headers}});
+    // Gateway status GETs reject a JSON Content-Type without a body. Preserve checkout/POST headers.
+    const gatewayRead=init.method==='GET'&&init.body==null&&url.startsWith('https://gateway.bepaid.by/');
+    const response=await(options.fetcher??fetch)(url,{...init,redirect:'error',signal:abort.signal,headers:{Authorization:options.authorization,Accept:'application/json',...(gatewayRead?{}:{'Content-Type':'application/json'}),'X-API-Version':'2',...init.headers}});
     const reader=response.body?.getReader();if(!reader)throw new HostedFailure('provider_unknown',{provider_http_status:response.status});let size=0;const chunks:Uint8Array[]=[];
     try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536){await reader.cancel();throw new HostedFailure('provider_unknown',{provider_http_status:response.status})}chunks.push(value)}}finally{reader.releaseLock()}
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength}
