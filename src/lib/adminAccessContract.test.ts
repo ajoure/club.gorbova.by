@@ -63,6 +63,13 @@ describe("complete admin access contract", () => {
       .toBe("club-members");
   });
 
+  it("keeps ZG27 sandbox restricted to existing payments diagnostics permissions", () => {
+    expect(resolveAdminSectionForPath("/admin/zg27-sandbox")).toEqual({
+      kind: "section", sectionCode: "payments", resourceCode: "diagnostics",
+    });
+    expect(resolveAdminSectionForPath("/admin/zg27-sandboxed")).toEqual({ kind: "unknown" });
+  });
+
   it("resolves view/edit/manage for every legacy UI category", () => {
     for (const [category, section] of Object.entries(CATEGORY_TO_ADMIN_SECTION)) {
       const levels = new Map<string, AccessLevel>([[section, "manage"]]);
