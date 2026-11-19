@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { authMutations } from "@/lib/appAuthMutations";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -52,6 +53,8 @@ interface SubscriptionMessage {
 }
 
 interface PaymentDialogProps {
+  /** Canonical ZG27 only: keep existing chrome, replace legacy payment side effects. */
+  zg27CheckoutContent?: ReactNode;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string;
@@ -151,7 +154,7 @@ interface EmailCheckResult {
   maskedName?: string;
 }
 
-export function PaymentDialog({
+function LegacyPaymentDialog({
   open,
   onOpenChange,
   productId,
@@ -1871,21 +1874,8 @@ export function PaymentDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0 bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
-          <div className="p-6 pb-3 border-b border-white/10 shrink-0">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" />
-                {getStepTitle()}
-              </DialogTitle>
-              <DialogDescription>
-                {productName}{tariffName ? ` · ${tariffName}` : ""} — {price} {displayCurrency}
-              </DialogDescription>
-            </DialogHeader>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
+      <PaymentDialogFrame open={open} onOpenChange={onOpenChange} title={getStepTitle()}
+        description={<>{productName}{tariffName ? ` · ${tariffName}` : ""} — {price} {displayCurrency}</>}>
             {quoteSummary.items.length > 0 && quoteSummary.total != null && (
               <OrderSummary
                 items={quoteSummary.items}
@@ -1897,9 +1887,7 @@ export function PaymentDialog({
               />
             )}
             {renderStep()}
-          </div>
-        </DialogContent>
-      </Dialog>
+      </PaymentDialogFrame>
 
       {/* Trial Already Used Modal */}
       <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
@@ -1979,4 +1967,35 @@ export function PaymentDialog({
       </Dialog>
     </>
   );
+}
+
+/** Shared existing payment modal chrome; custom content never mounts legacy writers. */
+function PaymentDialogFrame({open,onOpenChange,title,description,children}:{open:boolean;onOpenChange:(open:boolean)=>void;title:ReactNode;description:ReactNode;children:ReactNode}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0 bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
+          <div className="p-6 pb-3 border-b border-white/10 shrink-0">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5" />
+                {title}
+              </DialogTitle>
+              <DialogDescription>
+                {description}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
+            {children}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+  );
+}
+export function PaymentDialog(props:PaymentDialogProps) {
+  if(props.productId==='e71c0dbb-baf2-4b6c-a950-bf0f728708af' && props.zg27CheckoutContent!==undefined)
+    return <PaymentDialogFrame open={props.open} onOpenChange={props.onOpenChange} title="Подтверждение оплаты" description={props.productName}>{props.zg27CheckoutContent}</PaymentDialogFrame>;
+  return <LegacyPaymentDialog {...props}/>;
 }

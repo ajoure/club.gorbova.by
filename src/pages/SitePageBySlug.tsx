@@ -297,11 +297,8 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
       if (!detail || !ALLOWED_ACTIONS.has(detail.action)) return;
 
       if (detail.action === "open-zg27-payment") {
-        const target = document.getElementById('zg27-payment');
-        if (target && blocks.some((block) => block.type === 'zg27_checkout'
-          && block.content.product_id === 'e71c0dbb-baf2-4b6c-a950-bf0f728708af')) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        // The canonical headless zg27_checkout controller opens PaymentDialog.
+        // Keep the authored landing and scroll position unchanged.
         return;
       }
 

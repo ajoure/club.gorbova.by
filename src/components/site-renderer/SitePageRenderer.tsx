@@ -200,7 +200,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
   const renderBlock = (block: SiteBlock) => {
     const settings = block.settings as any;
     switch (block.type) {
-      case "zg27_checkout": return <Zg27PurchaseSection content={block.content} />;
+      case "zg27_checkout": return <Zg27PurchaseSection content={block.content} pageId={pageId} />;
       case "hero": return <HeroSection content={block.content} />;
       case "text": return <TextSection content={block.content} />;
       case "heading": return <HeadingSection content={block.content} />;
@@ -259,7 +259,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
   return (
     <SiteVisibilityProvider blocks={blocks}>
       <div {...theme}>
-        {blocks.map((block) => (
+        {blocks.map((block) => block.type === "zg27_checkout" ? <Zg27PurchaseSection key={block.id} content={block.content} pageId={pageId} /> : (
           <BlockWrapper key={block.id} blockId={block.id} settings={block.settings}>
             {renderBlock(block)}
           </BlockWrapper>
