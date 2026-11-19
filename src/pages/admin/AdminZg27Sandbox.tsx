@@ -1,3 +1,4 @@
+import AdminZg27HostedSandbox from './AdminZg27HostedSandbox';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { AdminLayout } from '@/components/layout/AdminLayout';
@@ -14,6 +15,7 @@ function initialRun(actorId:string){
 }
 export default function AdminZg27Sandbox(){
   const {user}=useAuth();
+  if(new URLSearchParams(window.location.search).get('mode')==='hosted')return user?<AdminZg27HostedSandbox key={user.id} actorId={user.id}/>:<AdminLayout><p>Войдите в аккаунт администратора.</p></AdminLayout>;
   return user?<SandboxRun key={user.id} actorId={user.id}/>:<AdminLayout><p>Войдите в аккаунт администратора.</p></AdminLayout>;
 }
 function SandboxRun({actorId}:{actorId:string}){

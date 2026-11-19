@@ -38,6 +38,33 @@ describe('isolated ZG27 TEST notifications in the actual production webhook boun
     expect(result.writes).toEqual(['provider_webhook_orphans', 'audit_logs']);
     expect(result.downstream).not.toHaveBeenCalled();
   });
+  const checkout = { test: true, token: 'synthetic-checkout-token', transaction_type: 'payment',
+    order: { tracking_id: 'zg27-sandbox:hosted:synthetic-run' }, finished: false, expired: true, status: 'error' };
+  it.each([checkout, { ...checkout, finished: true, expired: false, status: 'successful' }])
+    ('isolates documented hosted Checkout events before every business writer', async body => {
+      const result = await invoke(body, true);
+      expect(result.response.status).toBe(200);
+      expect(result.writes).toEqual([]); expect(result.downstream).not.toHaveBeenCalled();
+    });
+  it('retains signature rejection for hosted TEST Checkout events', async () => {
+    const result = await invoke(checkout, false);
+    expect(result.response.status).toBe(401);
+    expect(result.writes).toEqual(['provider_webhook_orphans', 'audit_logs']);
+    expect(result.downstream).not.toHaveBeenCalled();
+  });
+  it.each([
+    { ...checkout, test: false }, { ...checkout, test: 'true' },
+    { ...checkout, transaction_type: 'authorization' }, { ...checkout, token: '' },
+    { ...checkout, token: 'x'.repeat(513) }, { ...checkout, order: [] },
+    { ...checkout, order: { tracking_id: 'zg27-sandbox:other-run' } },
+    { ...checkout, order: { tracking_id: 'zg27-sandbox:hosted:' } },
+    { ...checkout, order: { tracking_id: `zg27-sandbox:hosted:${'x'.repeat(128)}` } },
+    { ...checkout, transaction: { test: false, tracking_id: 'live-order' } },
+  ])('keeps every other signed Checkout event in ordinary processing %#', async body => {
+    const result = await invoke(body, true);
+    expect(result.response.status).toBe(202); expect(result.downstream).toHaveBeenCalledOnce();
+    expect(result.writes).toEqual([]);
+  });
   it.each([
     { transaction: { test: false, tracking_id: 'zg27-sandbox:synthetic-run' } },
     { transaction: { test: 'true', tracking_id: 'zg27-sandbox:synthetic-run' } },
