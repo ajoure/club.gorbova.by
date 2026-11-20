@@ -1,10 +1,10 @@
 import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createCapturedBearerTransport, type CapturedBearerDataTransport } from '@/integrations/supabase/client';
 import { funnelDb } from './contracts';
 
 export interface FunnelActorLease {
   actorId: string;
-  client: SupabaseClient;
+  client: CapturedBearerDataTransport;
   bearer: string;
   run<T>(work: () => PromiseLike<T>): Promise<T>;
 }
@@ -12,7 +12,7 @@ interface ActorScope {
   actorId: string;
   generation: number;
   lease(): Promise<FunnelActorLease>;
-  read<T>(work: (client: SupabaseClient) => PromiseLike<{ data: unknown; error: unknown }>): Promise<T>;
+  read<T>(work: (client: CapturedBearerDataTransport) => PromiseLike<{ data: unknown; error: unknown }>): Promise<T>;
   rpc<T>(name: string, args: Record<string, unknown>): Promise<T>;
 }
 const ActorContext = createContext<ActorScope | null>(null);
@@ -54,16 +54,13 @@ export function FunnelActorBoundary({ children }: { children: ReactNode }) {
       }
       return data.session;
     };
-    const transports = new Map<string, SupabaseClient>();
+    const transports = new Map<string, CapturedBearerDataTransport>();
     const lease = async (): Promise<FunnelActorLease> => {
       const captured = await session();
       assertCurrent();
       // This transport never consults the mutable global SDK session for Authorization.
       let client = transports.get(captured.access_token);
-      if (!client) client = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-        global: { headers: { Authorization: `Bearer ${captured.access_token}` } },
-      });
+      if (!client) client = createCapturedBearerTransport(captured.access_token);
       transports.set(captured.access_token, client);
       if (transports.size > 4) transports.delete(transports.keys().next().value!);
       return { actorId: scope.actorId, bearer: captured.access_token, client,
@@ -74,7 +71,7 @@ export function FunnelActorBoundary({ children }: { children: ReactNode }) {
         },
       };
     };
-    const read = async <T,>(work: (client: SupabaseClient) => PromiseLike<{ data: unknown; error: unknown }>) => {
+    const read = async <T,>(work: (client: CapturedBearerDataTransport) => PromiseLike<{ data: unknown; error: unknown }>) => {
       const owned = await lease();
       const { data, error } = await owned.run(() => work(owned.client));
       if (error) throw error; return data as T;

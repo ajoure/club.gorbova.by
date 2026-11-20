@@ -105,7 +105,7 @@ function resolveUploadContentType(rawType: string | undefined | null): string {
 export async function uploadToTelegramMedia(
   file: File,
   userId: string,
-  client: SupabaseClient = supabase,
+  client: { storage: Pick<SupabaseClient['storage'], 'from'>; auth?: Pick<SupabaseClient['auth'], 'getSession'> } = supabase,
   accessToken?: string,
 ): Promise<{ bucket: string; path: string }> {
   const bucket = "telegram-media";
@@ -128,7 +128,7 @@ export async function uploadToTelegramMedia(
     : file;
 
   if (uploadFile.size > TUS_THRESHOLD_BYTES) {
-    const token = accessToken || (await client.auth.getSession()).data.session?.access_token;
+    const token = accessToken || (await client.auth?.getSession())?.data.session?.access_token;
     if (!token) throw new Error("Not authenticated");
     await uploadViaTus({ file: uploadFile, bucket, filePath: path, contentType, token });
   } else {

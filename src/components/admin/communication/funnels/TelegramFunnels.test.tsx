@@ -14,7 +14,7 @@ const fixture = vi.hoisted(() => {
     blocks: [{ id: first, text: 'Приветствие', buttons: [{ id: '77777777-7777-4777-8777-777777777777', text: 'Далее', kind: 'next', target_block_id: next }] }, { id: next, text: 'Финал', buttons: [] }] };
   return { product, bot, first, next, record, actor: '88888888-8888-4888-8888-888888888888', otherActor: '99999999-9999-4999-8999-999999999999', currentActor: '', authHandlers: new Set<(event: string, session: { user: { id: string }; access_token: string } | null) => void>(), transports: [] as { authorization: string; name: string }[], rpc: vi.fn(), invoke: vi.fn(), from: vi.fn(), upload: vi.fn(), sign: vi.fn(), session: vi.fn() };
 });
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: fixture.from, rpc: fixture.rpc, auth: {
+vi.mock('@/integrations/supabase/client', async importOriginal => ({ ...await importOriginal<typeof import('@/integrations/supabase/client')>(), supabase: { from: fixture.from, rpc: fixture.rpc, auth: {
   getSession: () => fixture.session(),
   onAuthStateChange: (callback: typeof fixture.authHandlers extends Set<infer C> ? C : never) => { fixture.authHandlers.add(callback); return { data: { subscription: { unsubscribe: () => fixture.authHandlers.delete(callback) } } }; },
 } } }));
