@@ -93,3 +93,14 @@ describe('actual reusable sender + compiled durable SQL (fake Telegram only)',()
  });
 
 });
+
+it('scoped drain passes its launch to reconciliation and never broadens stale-send processing',async()=>{
+ const f=await fixture();try{
+  await f.pg.query("UPDATE telegram_funnel_launches SET scheduled_for='2100-01-01' WHERE id=$1",[launch]);
+  const transport=vi.fn();await f.h.drainFunnelQueue(f.db,{supabaseUrl:'https://synthetic.invalid',fetch:transport},launch);expect(transport).not.toHaveBeenCalled();
+  await f.pg.query("UPDATE telegram_funnel_launches SET scheduled_for=now()-interval '1 second' WHERE id=$1",[launch]);
+  transport.mockResolvedValue(Response.json({ok:true,result:{message_id:444,chat:{id:100}}}));
+  await f.h.drainFunnelQueue(f.db,{supabaseUrl:'https://synthetic.invalid',fetch:transport},launch);expect(transport).toHaveBeenCalledOnce();
+  await f.h.drainFunnelQueue(f.db,{supabaseUrl:'https://synthetic.invalid',fetch:transport},launch);expect(transport).toHaveBeenCalledOnce();
+ }finally{await f.close()}
+});

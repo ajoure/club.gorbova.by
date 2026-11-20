@@ -137,6 +137,8 @@ BEGIN
  END IF;
  INSERT INTO public.telegram_funnel_launches(id,funnel_id,bot_id,graph_snapshot,audience_filters,restart_existing,created_by,scheduled_for)
  VALUES(p_id,p_funnel,p_bot,jsonb_build_object('revision',f.revision,'start_block_id',f.start_block_id,'blocks',f.blocks),p_filters,p_restart,auth.uid(),coalesce(p_scheduled_at,now())) RETURNING * INTO l;
+ -- Every launch freezes recipients atomically, before any transport or cron tick.
+ PERFORM public.telegram_funnel_prepare_audience(l.id); SELECT * INTO l FROM public.telegram_funnel_launches WHERE id=l.id;
  RETURN l;
 END $$;
 
@@ -154,7 +156,7 @@ BEGIN
  FOR p IN SELECT pr.* FROM public.profiles pr WHERE pr.id=ANY(p_profiles) AND pr.is_archived IS NOT TRUE AND pr.status IS DISTINCT FROM 'archived' AND pr.merged_to_profile_id IS NULL ORDER BY pr.id LOOP
   PERFORM pg_advisory_xact_lock(hashtextextended(l.funnel_id::text||':'||p.id::text,0));
   SELECT id INTO e FROM public.telegram_funnel_enrollments WHERE launch_id=l.id AND profile_id=p.id;
-  IF FOUND THEN result:=result||jsonb_build_array(jsonb_build_object('enrollment_id',e,'duplicate',true)); CONTINUE; END IF;
+  IF FOUND THEN result:=result||jsonb_build_array(jsonb_build_object('enrollment_id',e,'delivery_id',(SELECT id FROM public.telegram_funnel_deliveries WHERE enrollment_id=e AND transition_key='start'),'duplicate',true)); CONTINUE; END IF;
   SELECT * INTO old FROM public.telegram_funnel_enrollments WHERE funnel_id=l.funnel_id AND profile_id=p.id AND status='active' FOR UPDATE;
   IF EXISTS(SELECT 1 FROM public.telegram_funnel_deliveries ds JOIN public.telegram_funnel_enrollments en ON en.id=ds.enrollment_id WHERE en.funnel_id=l.funnel_id AND en.profile_id=p.id AND ds.status IN('sending','unknown')) THEN RAISE EXCEPTION 'funnel_unresolved_delivery'; END IF;
   IF old.id IS NOT NULL THEN
@@ -305,12 +307,12 @@ BEGIN
   INSERT INTO public.telegram_funnel_link_tokens(token_hash,delivery_id,button_id,target_url) VALUES(item->>'token_hash',d.id,(btn->>'id')::uuid,btn->>'url');
  END LOOP;
 END $$;
-CREATE FUNCTION public.telegram_funnel_reconcile_callbacks(p_source_delivery uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE FUNCTION public.telegram_funnel_reconcile_callbacks(p_source_delivery uuid DEFAULT NULL,p_launch uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE r record;outcome jsonb;result jsonb:='[]';
 BEGIN
  FOR r IN SELECT cr.* FROM public.telegram_funnel_callback_receipts cr JOIN public.telegram_funnel_callback_tokens tok ON tok.token_hash=cr.token_hash
  JOIN public.telegram_funnel_deliveries d ON d.id=tok.source_delivery_id WHERE cr.state='pending' AND d.status='sent'
- AND (p_source_delivery IS NULL OR d.id=p_source_delivery) ORDER BY cr.created_at LIMIT 100 LOOP
+ AND (p_source_delivery IS NULL OR d.id=p_source_delivery) AND (p_launch IS NULL OR EXISTS(SELECT 1 FROM public.telegram_funnel_enrollments e WHERE e.id=d.enrollment_id AND e.launch_id=p_launch)) ORDER BY cr.created_at LIMIT 100 LOOP
   outcome:=public.telegram_funnel_claim_callback(r.token_hash,r.bot_id,r.chat_id,r.telegram_user_id,r.provider_message_id,r.callback_id,r.update_id);
   IF outcome->>'state'<>'deferred' THEN UPDATE public.telegram_funnel_callback_receipts SET state=CASE WHEN outcome->>'state' IN('claimed','duplicate') THEN 'resolved' ELSE 'invalid' END WHERE id=r.id; END IF;
   IF outcome->>'state'='claimed' THEN result:=result||jsonb_build_array(outcome->>'delivery_id'); END IF;
@@ -326,8 +328,8 @@ BEGIN
  VALUES(d.enrollment_id,d.id,'url:'||d.id::text||':'||t.button_id::text||':'||gen_random_uuid()::text,'url_clicked',jsonb_build_object('button_id',t.button_id)) ON CONFLICT DO NOTHING; END IF;
  RETURN jsonb_build_object('ok',true,'url',t.target_url);
 END $$;
-REVOKE ALL ON FUNCTION public.telegram_funnel_delivery_context(uuid),public.telegram_funnel_prepare_links(uuid,uuid,jsonb),public.telegram_funnel_reconcile_callbacks(uuid),public.telegram_funnel_track_link(text,boolean) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.telegram_funnel_delivery_context(uuid),public.telegram_funnel_prepare_links(uuid,uuid,jsonb),public.telegram_funnel_reconcile_callbacks(uuid),public.telegram_funnel_track_link(text,boolean) TO service_role;
+REVOKE ALL ON FUNCTION public.telegram_funnel_delivery_context(uuid),public.telegram_funnel_prepare_links(uuid,uuid,jsonb),public.telegram_funnel_reconcile_callbacks(uuid,uuid),public.telegram_funnel_track_link(text,boolean) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.telegram_funnel_delivery_context(uuid),public.telegram_funnel_prepare_links(uuid,uuid,jsonb),public.telegram_funnel_reconcile_callbacks(uuid,uuid),public.telegram_funnel_track_link(text,boolean) TO service_role;
 
 
 -- Manual contact tags are explicit admin input, never inferred from purchase labels.
@@ -404,7 +406,7 @@ WITH p AS(SELECT * FROM public.profiles WHERE id=p_profile),candidate AS(
  SELECT e.product_id,NULL::uuid AS tariff_id,o.flow_id FROM public.entitlements e JOIN p ON(e.profile_id=p.id OR(e.user_id=p.user_id AND p.user_id IS NOT NULL)) LEFT JOIN public.orders_v2 o ON o.id=e.order_id
  WHERE e.status IN('active','expired') AND coalesce(e.meta->>'source_type','') NOT IN('test','sandbox','trial') AND coalesce(e.meta->>'is_test','false')<>'true'
  AND coalesce(e.meta->>'historical_purchase_type','') NOT IN('module_only_standalone','module_child_purchase','module_purchase')
- AND(coalesce(e.meta->>'granted_by','')<>'rule_engine_product_access' OR e.meta->>'historical_purchase_type'='base_tariff_purchase')
+ AND(coalesce(e.meta->>'granted_by','')<>'rule_engine_product_access' OR(e.meta->>'historical_purchase_type'='base_tariff_purchase' AND EXISTS(SELECT 1 FROM purchases proof WHERE proof.id::text=e.meta->>'prior_purchase_order_id' AND proof.product_id=e.product_id)))
  AND(e.order_id IS NULL OR(o.id IS NOT NULL AND o.is_deleted IS NOT TRUE AND o.status::text IN('paid','partial') AND NOT coalesce(o.is_trial,false) AND coalesce(o.meta->>'is_test','false')<>'true' AND coalesce(o.meta->>'prior_purchase_verification','')<>'rejected' AND coalesce(o.purchase_snapshot->>'historical_purchase_type',o.meta->>'historical_purchase_type','') NOT IN('module_only_standalone','module_child_purchase','module_purchase') AND NOT EXISTS(SELECT 1 FROM public.payments_v2 pm WHERE pm.order_id=o.id AND pm.is_deleted IS NOT TRUE AND(pm.status::text='refunded' OR coalesce(pm.refunded_amount,0)>0 OR pm.transaction_type='refund'))))
  UNION ALL SELECT sub.product_id,sub.tariff_id,coalesce(sub.flow_id,o.flow_id) FROM public.subscriptions_v2 sub JOIN p ON(sub.profile_id=p.id OR(sub.user_id=p.user_id AND p.user_id IS NOT NULL)) LEFT JOIN public.orders_v2 o ON o.id=sub.order_id
  WHERE sub.status::text IN('active','expired','superseded') AND sub.access_start_at<=statement_timestamp() AND NOT coalesce(sub.is_trial,false)
@@ -476,7 +478,7 @@ END $$;
 CREATE FUNCTION public.telegram_funnel_due_deliveries(p_launch uuid DEFAULT NULL,p_limit integer DEFAULT 10) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  -- Reconcile interrupted sends conservatively. Nothing is put back into the send queue.
- UPDATE public.telegram_funnel_deliveries SET status='unknown',error_code='interrupted_send' WHERE status='sending' AND started_at<now()-interval '30 seconds';
+ UPDATE public.telegram_funnel_deliveries SET status='unknown',error_code='interrupted_send' WHERE status='sending' AND started_at<now()-interval '30 seconds' AND(p_launch IS NULL OR EXISTS(SELECT 1 FROM public.telegram_funnel_enrollments e WHERE e.id=enrollment_id AND e.launch_id=p_launch));
  RETURN (SELECT coalesce(jsonb_agg(id),'[]') FROM(SELECT d.id FROM public.telegram_funnel_deliveries d JOIN public.telegram_funnel_enrollments e ON e.id=d.enrollment_id JOIN public.telegram_funnel_launches l ON l.id=e.launch_id WHERE d.status='queued' AND e.status='active' AND l.status='active' AND l.scheduled_for<=now() AND(p_launch IS NULL OR l.id=p_launch) ORDER BY d.created_at,d.id LIMIT least(greatest(p_limit,1),10))q);
 END $$;
 REVOKE ALL ON FUNCTION public.telegram_funnel_set_tags(uuid,text[]) FROM PUBLIC,anon,authenticated;

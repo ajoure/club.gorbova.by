@@ -62,7 +62,7 @@ export async function handleFunnelCallback(db:any,botId:string,update:any,option
   return {handled:true,state:claim?.state||'unknown'};
 }
 export async function drainFunnelQueue(db:any,options:{supabaseUrl:string;fetch?:typeof fetch;depth?:number;botToken?:string},launchId?:string):Promise<any> {
-  await rpc(db,'telegram_funnel_reconcile_callbacks',{p_source_delivery:null});
+  await rpc(db,'telegram_funnel_reconcile_callbacks',{p_source_delivery:null,p_launch:launchId||null});
   const ids=await rpc(db,'telegram_funnel_due_deliveries',{p_launch:launchId||null,p_limit:10});
   const results=[];for(const id of ids||[])results.push({delivery_id:id,...await deliverFunnelStep(db,id,options)});
   return {results};

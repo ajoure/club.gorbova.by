@@ -1,0 +1,71 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { errorText, type FunnelReport, type FunnelReportRow } from './contracts';
+import { FunnelActorBoundary, runFunnelRpc, useFunnelActor } from './FunnelActor';
+
+type DetailedReport = FunnelReport & {
+  summary: FunnelReport['summary'] & { converted?: number };
+  block_stats?: { block_id: string; block_text?: string; received: number }[];
+  button_stats?: { block_id: string; button_id: string; text?: string; kind?: string; clicked: number; unique_clicked?: number }[];
+  transitions?: { source_block_id: string; target_block_id: string; received: number; source_received: number; conversion: number }[];
+};
+const statuses: Record<string, string> = { active: 'Проходит', completed: 'Завершена', stopped: 'Остановлена', error: 'Ошибка', skipped: 'Пропущен', queued: 'В очереди', sending: 'Отправляется', sent: 'Отправлено', failed: 'Ошибка', unknown: 'Результат неизвестен', clicked: 'Переход к сообщению', button_pressed: 'Нажата кнопка', callback_pending: 'Переход ожидает подтверждения отправки', url_clicked: 'Переход по ссылке', enrolled: 'Начало участия', restarted: 'Перезапуск' };
+const reasons: Record<string, string> = { no_available_telegram_dialog: 'Нет доступного Telegram-диалога', already_active: 'Уже проходит эту воронку', explicit_restart: 'Перезапущена с первого сообщения', delivery_failed: 'Не удалось отправить сообщение', telegram_rejected: 'Telegram отклонил отправку', telegram_unconfirmed: 'Telegram не подтвердил результат', transport_unknown: 'Результат передачи неизвестен', preflight_failed: 'Не пройдена проверка перед отправкой', bot_blocked: 'Пользователь заблокировал бота', chat_unavailable: 'Диалог с пользователем недоступен', invalid_message: 'Telegram не принял формат сообщения', media_unavailable: 'Изображение недоступно для отправки', rate_limited: 'Telegram временно ограничил частоту отправки', bot_unavailable: 'Выбранный бот недоступен' };
+const unnamedMessage = 'Сообщение без названия', unnamedButton = 'Кнопка без названия';
+const nameOr = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value.trim() : fallback;
+interface ReportLabels { blocks: Map<string, string>; buttons: Map<string, string> }
+function rows(items: FunnelReportRow[], type: 'enrollment' | 'delivery' | 'event', labels?: ReportLabels) {
+  return items.map((r, i) => <li key={r.id || `${type}-${i}`} className="rounded border p-2 text-sm break-words">
+    <p className="font-medium">{r.funnel_name || r.profile_name || r.text || r.current_block || labels?.blocks.get(r.block_id || '') || unnamedMessage} · {statuses[r.status || r.kind || ''] || r.status || r.kind}</p>
+    {r.profile_name && <p>{r.profile_name}</p>}{r.current_block && <p>Текущий шаг: {r.current_block}</p>}
+    {r.text && <p className="whitespace-pre-wrap">{r.text}</p>}
+    {r.buttons?.length ? <p>Кнопки: {r.buttons.map(b => nameOr(b.text, unnamedButton)).join(' · ')}</p> : null}
+    {(r.reason || r.error_code) && <p className="text-destructive">Причина: {reasons[r.reason || r.error_code || ''] || 'Не удалось подтвердить отправку. Проверьте историю этого сообщения.'}</p>}
+    {(r.button_id || r.detail?.button_id) && <p>Кнопка: {nameOr(r.detail?.button_text, labels?.buttons.get(String(r.button_id || r.detail?.button_id)) || unnamedButton)}</p>}
+    {r.created_at && <time>{new Date(r.created_at).toLocaleString('ru-RU')}</time>}
+  </li>);
+}
+function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {
+  const actor = useFunnelActor();
+  const [offset, setOffset] = useState(0), [open, setOpen] = useState(false);
+  const query = useQuery({ queryKey: ['telegram-funnel-history', actor.actorId, actor.generation, enrollmentId, offset], enabled: open, retry: false, queryFn: () => actor.rpc<{ total: number; deliveries: (FunnelReportRow & { block?: { text?: string; buttons?: FunnelReportRow['buttons'] }; events?: FunnelReportRow[] })[] }>('telegram_funnel_history', { p_enrollment: enrollmentId, p_offset: offset, p_limit: 50 }) });
+  return <div className="mt-2"><Button size="sm" variant="outline" onClick={() => setOpen(!open)}>{open ? 'Скрыть сообщения' : 'Все сообщения и нажатия участника'}</Button>{open && <div className="space-y-2 mt-2">{query.isLoading && <p role="status">Загружаем сообщения…</p>}{query.error && <p role="alert">{errorText(query.error)}</p>}{query.data && <><ul className="space-y-2">{query.data.deliveries.map(d => {
+    const labels = { blocks: new Map([[d.block_id || '', nameOr(d.block?.text, unnamedMessage)]]), buttons: new Map((d.block?.buttons || []).map(b => [b.id, nameOr(b.text, unnamedButton)])) };
+    return <li key={d.id}><ul>{rows([{ ...d, text: d.block?.text, buttons: d.block?.buttons }], 'delivery', labels)}{rows(d.events || [], 'event', labels)}</ul></li>;
+  })}</ul><div className="flex gap-2"><Button size="sm" variant="outline" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>Предыдущие сообщения</Button><Button size="sm" variant="outline" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(offset + 50)}>Следующие сообщения</Button></div></>}</div>}</div>;
+}
+export function FunnelReportPanel({ funnelId, profileId, launchId }: { funnelId?: string; profileId?: string; launchId?: string }) {
+  const actor = useFunnelActor();
+  const [offset, setOffset] = useState(0);
+  const query = useQuery({ queryKey: ['telegram-funnel-report', actor.actorId, actor.generation, funnelId, profileId, launchId, offset], queryFn: () => actor.rpc<DetailedReport>('telegram_funnel_report', { p_funnel: funnelId || null, p_profile: profileId || null, p_launch: launchId || null, p_offset: offset, p_limit: 50 }), retry: false });
+  const s = query.data?.summary;
+  const labels: ReportLabels = { blocks: new Map((query.data?.block_stats || []).map(b => [b.block_id, nameOr(b.block_text, unnamedMessage)])), buttons: new Map((query.data?.button_stats || []).map(b => [b.button_id, nameOr(b.text, unnamedButton)])) };
+  return <section className="space-y-3 rounded-lg border p-4" aria-label="История и статистика воронок">
+    <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">Воронки Telegram · история и статистика</h3><Button size="sm" variant="outline" onClick={() => query.refetch()}>Обновить историю</Button></div>
+    {query.isLoading && <p role="status">Загружаем историю…</p>}{query.error && <p role="alert">{errorText(query.error)}</p>}
+    {s && <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">{[['Вошли', s.entered], ['Пропущены', s.skipped], ['Сообщений отправлено', s.sent], ['Ошибок', s.failed], ['Результат неизвестен', s.unknown], ['Внутренних нажатий', s.clicked], ['Переходов по ссылкам', s.url_clicked], ['Конверсия в переход', s.converted === undefined ? 'Нет данных' : `${s.entered ? Math.round(s.converted / s.entered * 100) : 0}%`]].map(([label, value]) => <div key={String(label)}><dt className="text-muted-foreground">{label}</dt><dd className="font-medium">{value ?? 'Нет данных'}</dd></div>)}</dl>}
+    {!!query.data?.block_stats?.length && <div><h4 className="font-medium">Получили каждый блок</h4><ul className="text-sm">{query.data.block_stats.map(b => <li key={b.block_id}>{nameOr(b.block_text, unnamedMessage)}: {b.received}</li>)}</ul></div>}
+    {!!query.data?.button_stats?.length && <div><h4 className="font-medium">Нажатия каждой кнопки</h4><ul className="text-sm">{query.data.button_stats.map(b => <li key={`${b.block_id}-${b.button_id}`}>{nameOr(b.text, unnamedButton)} · {b.kind === 'url' ? 'Ссылка' : 'Следующее сообщение'}: {b.clicked} нажатий{b.unique_clicked === undefined ? '' : `, ${b.unique_clicked} человек`}</li>)}</ul></div>}
+    {!!query.data?.transitions?.length && <div><h4 className="font-medium">Конверсия между сообщениями</h4><ul className="text-sm">{query.data.transitions.map(t => <li key={`${t.source_block_id}-${t.target_block_id}`}>{labels.blocks.get(t.source_block_id) || unnamedMessage} → {labels.blocks.get(t.target_block_id) || unnamedMessage}: {t.received} / {t.source_received}, {Math.round(t.conversion * 100)}%</li>)}</ul></div>}
+    {s?.unknown ? <p className="text-sm text-amber-700">Для неизвестного результата сначала проверяется та же отправка. Повторная отправка автоматически не выполняется.</p> : null}
+    {query.data && <><h4 className="font-medium">Участники и текущие шаги</h4>{query.data.enrollments.length ? <div className="space-y-3">{query.data.enrollments.map((e, i) => <div key={e.id || i}><ul>{rows([e], 'enrollment')}</ul>{e.id && <EnrollmentHistory enrollmentId={e.id}/>}</div>)}</div> : <p className="text-sm text-muted-foreground">Запусков пока нет.</p>}
+      <details><summary>Отправленные сообщения и ошибки</summary><ul className="space-y-2 mt-2">{rows(query.data.deliveries, 'delivery', labels)}</ul></details>
+      <details><summary>История нажатий</summary><ul className="space-y-2 mt-2">{rows(query.data.events, 'event', labels)}</ul></details>
+      <div className="flex items-center gap-3"><Button size="sm" variant="outline" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>Назад</Button><span className="text-sm">{query.data.total ? offset + 1 : 0}–{Math.min(offset + 50, query.data.total)} из {query.data.total}</span><Button size="sm" variant="outline" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(offset + 50)}>Далее</Button></div></>}
+  </section>;
+}
+export function ContactFunnelHistory({ profileId }: { profileId: string }) {
+  return <FunnelActorBoundary><ContactFunnelHistoryContent profileId={profileId}/></FunnelActorBoundary>;
+}
+function ContactFunnelHistoryContent({ profileId }: { profileId: string }) {
+  const actor = useFunnelActor();
+  const [tags, setTags] = useState<string | null>(null), [error, setError] = useState(''), [saving, setSaving] = useState(false);
+  const tagQuery = useQuery({ queryKey: ['telegram-funnel-tags', actor.actorId, actor.generation, profileId], queryFn: async () => (await actor.read<{ tag: string }[]>(client => client.from('telegram_funnel_profile_tags').select('tag').eq('profile_id', profileId).order('tag'))).map(r => String(r.tag)), retry: false });
+  return <div className="space-y-3"><FunnelReportPanel key={profileId} profileId={profileId}/>
+    <section className="space-y-2 rounded-lg border p-4"><label className="text-sm font-medium">Ручные метки для сегментов<Input aria-label="Ручные метки контакта" disabled={tagQuery.isLoading || !!tagQuery.error} value={tags ?? tagQuery.data?.join(', ') ?? ''} onChange={e => setTags(e.target.value)}/></label><p className="text-xs text-muted-foreground">Метки через запятую. Они не подтверждают оплату или участие.</p>
+      <Button size="sm" variant="outline" disabled={saving || tags === null || !!tagQuery.error} onClick={async () => { setSaving(true); setError(''); try { const lease = await actor.lease(); await runFunnelRpc(lease, 'telegram_funnel_set_tags', { p_profile: profileId, p_tags: [...new Set((tags || '').split(',').map(s => s.trim()).filter(Boolean))] }); await lease.run(() => tagQuery.refetch()); setTags(null); } catch (e) { setError(errorText(e)); } finally { setSaving(false); } }}>Сохранить метки</Button>
+      {(error || tagQuery.error) && <p role="alert">{error || errorText(tagQuery.error)}</p>}</section>
+  </div>;
+}

@@ -92,6 +92,7 @@ import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSecti
 import { BroadcastAuditProofCard } from "./BroadcastAuditProofCard";
 import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
+const TelegramFunnels = lazy(() => import('./funnels/TelegramFunnels').then(module => ({ default: module.TelegramFunnels })));
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { BroadcastRecipientsSheet } from "./BroadcastRecipientsSheet";
@@ -230,7 +231,7 @@ export function BroadcastsTabContent() {
   const [pageAutomationRequest] = useState(() => readSitePageAutomationRequest(new URLSearchParams(window.location.search)));
   const [pageAutomationReady, setPageAutomationReady] = useState(!pageAutomationRequest?.blockId);
   const [pageAutomationWebinar, setPageAutomationWebinar] = useState(false);
-  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics">(pageAutomationRequest?.view || "templates");
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics" | "funnels">(pageAutomationRequest?.view || "templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const openTemplateForSendRef = useRef(false);
@@ -1246,13 +1247,18 @@ export function BroadcastsTabContent() {
         onConfirm={() => void startManualSend(true)}
       />
       {/* Main Tabs: Templates vs Quick Send */}
-      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics")}>
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics" | "funnels")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger className="shrink-0" value="templates">📋 Шаблоны</TabsTrigger>
           <TabsTrigger className="shrink-0" value="quick">⚡ Быстрая рассылка</TabsTrigger>
           <TabsTrigger className="shrink-0" value="scheduled">📅 Запланированные</TabsTrigger>
           <TabsTrigger className="shrink-0" value="analytics">📊 Аналитика</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="funnels">Воронки</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="funnels" className="mt-6">
+          <Suspense fallback={<p role="status">Загружаем воронки…</p>}><TelegramFunnels /></Suspense>
+        </TabsContent>
 
         <TabsContent value="templates" className="mt-6">
           <BroadcastTemplatesSection

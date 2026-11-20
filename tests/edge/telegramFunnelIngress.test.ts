@@ -33,3 +33,26 @@ describe('actual existing webhook funnel branch',()=>{
  it('requires the exact active selected bot before forwarding callback',async()=>{const f=fixture(false);const r=await f.entry(new Request('https://synthetic.invalid?bot_id=bot',{method:'POST',headers:{'x-telegram-bot-api-secret-token':'provider-secret'},body:'{}'}));expect(r.status).toBe(404);expect(f.callback).not.toHaveBeenCalled()});
  it('only after secret+bot checks forwards to the recipient-bound reusable helper',async()=>{const f=fixture();const update={update_id:1,callback_query:{id:'synthetic'}};const r=await f.entry(new Request('https://synthetic.invalid?bot_id=bot',{method:'POST',headers:{'x-telegram-bot-api-secret-token':'provider-secret'},body:JSON.stringify(update)}));expect(r.status).toBe(200);expect(f.callback).toHaveBeenCalledOnce();expect(f.callback.mock.calls[0][1]).toBe('bot');expect(f.h.effects).not.toHaveBeenCalled()});
 });
+
+describe('existing scheduler and URL tracking funnel integration',()=>{
+ function scheduler(config={enabled:true,production_approved:true}){
+  const drain=vi.fn(async()=>({results:[]}));
+  const db={rpc:async()=>({data:[],error:null}),from:(table:string)=>{const q:any={select:()=>q,eq:()=>q,in:()=>q,not:()=>q,lte:()=>q,single:async()=>({data:config,error:null}),limit:async()=>({data:[],error:null})};return q}};
+  const h=load('supabase/functions/process-scheduled-broadcasts/index.ts',{'npm:@supabase/supabase-js@2.45.0':{createClient:()=>db},'../_shared/telegram-funnel.ts':{drainFunnelQueue:drain}});
+  return{drain,h,run:(body:any={},auth=true)=>h.handler(new Request('https://synthetic.invalid',{method:'POST',headers:{'Content-Type':'application/json',...(auth?{Authorization:'Bearer synthetic-not-secret'}:{})},body:JSON.stringify(body)}))};
+ }
+ it('scheduler only drains after cron auth and production guards, never dry-run or forced unrelated template',async()=>{
+  const f=scheduler();expect((await f.run({},false)).status).toBe(401);expect(f.drain).not.toHaveBeenCalled();
+  await f.run({dry_run:true});await f.run({force_template_id:launchId});expect(f.drain).not.toHaveBeenCalled();
+  await f.run();expect(f.drain).toHaveBeenCalledOnce();
+  for(const config of [{enabled:false,production_approved:true},{enabled:true,production_approved:false}]){const g=scheduler(config);await g.run();expect(g.drain).not.toHaveBeenCalled()}
+ });
+ it('explicit funnel URL uses only scoped tracking; existing broadcast links remain on the original path and HEAD is machine',async()=>{
+  const rpc=vi.fn(async()=>({data:{ok:true,url:'https://example.invalid/'},error:null}));
+  const h=load('supabase/functions/broadcast-track/index.ts',{'npm:@supabase/supabase-js@2':{createClient:()=>({rpc})},'../_shared/telegram-funnel.ts':{funnelHash:async()=> 'safe-hash'}},{atob});
+  const url=`https://synthetic.invalid/functions/v1/broadcast-track/c/${launchId}`;
+  expect((await h.handler(new Request(url))).status).toBe(302);expect(rpc.mock.calls[0][0]).toBe('analytics_record_tracking_event');
+  expect((await h.handler(new Request(url+'?funnel=1',{method:'HEAD'}))).status).toBe(302);expect(rpc.mock.calls[1]).toEqual(['telegram_funnel_track_link',{p_hash:'safe-hash',p_machine:true}]);
+  expect(h.effects).not.toHaveBeenCalled();
+ });
+});
