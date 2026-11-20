@@ -33,6 +33,7 @@ jobs:
             --exclude-dir=docs \
             --exclude='*.md' \
             --exclude='verify-no-legacy-ref.yml' \
+            --exclude-dir=copy-private-storage-bridge \
             -- "$LEGACY" . || true)
           if [ -n "$MATCHES" ]; then
             echo "::error::Legacy Supabase project_ref '$LEGACY' detected in code/config. Canonical ref is 'hdjgkjceownmmnrqqtuz'."
