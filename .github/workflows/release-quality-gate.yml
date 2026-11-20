@@ -44,6 +44,17 @@ jobs:
         run: npx eslint e2e/release-safety-gate.spec.ts
       - name: Verify Edge Function references
         run: npm run verify:edge-functions
+      - name: Telegram funnel real PostgreSQL concurrency
+        env:
+          TELEGRAM_FUNNEL_NATIVE_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: referral-test-only
+          PGDATABASE: telegram_funnel_native_test
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE telegram_funnel_native_test'
+          node scripts/tests/telegram-funnel-concurrency.test.mjs
       - name: Unit and integration contracts
         run: npx vitest run
       - name: BKB custdev ownership, autosave and SQL contracts
