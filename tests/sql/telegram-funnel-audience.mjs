@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {spawnSync} from 'node:child_process';
+import {spawnSync,spawn} from 'node:child_process';
 const native=process.env.TELEGRAM_FUNNEL_AUDIENCE_NATIVE==='1';
 if(native){assert.ok(['127.0.0.1','localhost'].includes(process.env.PGHOST));assert.equal(process.env.PGDATABASE,'telegram_funnel_audience_native_test');assert.ok(Number(process.env.PGPORT)>0)}
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -144,4 +144,24 @@ if(native || process.env.TELEGRAM_FUNNEL_AUDIENCE_PGLITE_SCALE==='1'){
 
 const sql=fixture+'\n'+original+'\n'+seed+'\n'+equivalence+'\n'+scale;
 const output=await execute(sql);if(native)console.log(output);
+
+async function nativeStopActivationRace(){
+ const run=text=>{const p=spawnSync(process.env.PSQL_BIN||'psql',['-X','-qAt','-v','ON_ERROR_STOP=1'],{input:text,encoding:'utf8'});if(p.status!==0)throw Error(p.stderr);return p.stdout};
+ const staff=`SET ROLE authenticated;SELECT set_config('request.jwt.claim.sub','${id(1)}',false);SET statement_timeout='8s';`;
+ const graph=[{id:id(7001),text:'Synthetic race',buttons:[]}],filter=segment(tag('race-only'));
+ run(`INSERT INTO telegram_funnel_profile_tags(profile_id,tag,created_by)VALUES('${id(4)}','race-only','${id(1)}');${staff}SELECT public.telegram_funnel_save('${id(7000)}',0,'Race','${id(7001)}',${j(graph)},'active');SELECT public.telegram_funnel_begin_launch('${id(7002)}','${id(7000)}',1,'${id(3)}',${j(filter)},false,NULL);SELECT public.telegram_funnel_begin_launch('${id(7003)}','${id(7000)}',1,'${id(3)}',${j(filter)},true,'2100-01-01');RESET ROLE;UPDATE telegram_funnel_launches SET scheduled_for=now()-interval '1 second'WHERE id='${id(7003)}';`);
+ function session(name,initial,end=false){const child=spawn(process.env.PSQL_BIN||'psql',['-X','-qAt','-v','ON_ERROR_STOP=1'],{env:{...process.env,PGAPPNAME:name},stdio:['pipe','pipe','pipe']});let stdout='',stderr='',readyResolve;const ready=new Promise(r=>readyResolve=r);child.stdout.on('data',b=>{stdout+=b;if(stdout.includes('FENCE_READY'))readyResolve()});child.stderr.on('data',b=>stderr+=b);const done=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0?resolve(stdout):reject(Error(stderr)))});done.catch(()=>{});if(end)child.stdin.end(initial);else child.stdin.write(initial);return{child,ready,done}}
+ const a=session('audience-activation-fence',`BEGIN;SET ROLE service_role;SET statement_timeout='8s';SELECT id FROM telegram_funnel_launches WHERE id='${id(7003)}' FOR UPDATE;SELECT 'FENCE_READY';\n`);
+ await Promise.race([a.ready,a.done.then(()=>{throw Error('activation fence exited early')})]);
+ const b=session('audience-definition-stop',`BEGIN;${staff}SELECT public.telegram_funnel_save('${id(7000)}',1,'Race','${id(7001)}',${j(graph)},'stopped');COMMIT;`,true);
+ let observed=false;
+ try{for(let i=0;i<50;i++){if(run("SELECT count(*)FROM pg_stat_activity WHERE application_name='audience-definition-stop' AND wait_event_type='Lock'").trim()==='1'){observed=true;break}await new Promise(r=>setTimeout(r,50))}assert.ok(observed,'real second session must block on held launch before activation');
+ a.child.stdin.end(`SELECT jsonb_build_object('activated',public.telegram_funnel_activate_due('${id(7003)}'));COMMIT;\n`);
+ const [out]=await Promise.all([a.done,b.done]);assert.ok(out.includes('"activated": 1'),'exactly one due activation');
+ assert.equal(run(`SELECT count(*)FROM telegram_funnel_enrollments WHERE funnel_id='${id(7000)}' AND status IN('active','scheduled')`).trim(),'0');
+ console.log(JSON.stringify({native_stop_activation_race:'PASS',actual_two_sessions:true,lock_wait_observed:true}));
+ }catch(e){if(!a.child.stdin.destroyed)a.child.stdin.end('ROLLBACK;\n');await Promise.allSettled([a.done,b.done]);throw e}
+}
+if(native)await nativeStopActivationRace();
+
 console.log(JSON.stringify({engine:native?'PostgreSQL':'PGlite',equivalence_cases:segments.length,scale_profiles:scale?12102:0,scale_recipients:scale?12100:0,financial_rows_unchanged:true,helpers_private:true}));

@@ -160,3 +160,43 @@ BEGIN
   activated:=activated+1;
  END LOOP;END LOOP;RETURN activated;
 END $$;
+
+-- Stop writers join the same lifecycle fence without reversing launch order.
+CREATE OR REPLACE FUNCTION public.telegram_funnel_stop_launch(p_launch uuid) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE e record;l public.telegram_funnel_launches;
+BEGIN
+ IF NOT public.telegram_funnel_can_manage() THEN RAISE EXCEPTION 'communication_manage_required' USING ERRCODE='42501'; END IF;
+ SELECT * INTO l FROM public.telegram_funnel_launches WHERE id=p_launch FOR UPDATE;
+ IF NOT FOUND THEN RETURN;END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('telegram_funnel_lifecycle:'||l.funnel_id::text,0));
+ UPDATE public.telegram_funnel_launches SET status='stopped' WHERE id=p_launch;
+ FOR e IN SELECT id FROM public.telegram_funnel_enrollments WHERE launch_id=p_launch ORDER BY profile_id,id FOR UPDATE LOOP
+  UPDATE public.telegram_funnel_enrollments SET status='stopped',stopped_at=now() WHERE id=e.id AND status IN('active','scheduled');
+  UPDATE public.telegram_funnel_callback_tokens SET revoked_at=now() WHERE enrollment_id=e.id;
+  UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='stopped' WHERE enrollment_id=e.id AND status='queued';
+  INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind) VALUES(e.id,'stop:'||e.id::text,'stopped') ON CONFLICT(event_key) DO NOTHING;
+ END LOOP;
+END $$;
+
+
+CREATE OR REPLACE FUNCTION public.telegram_funnel_save(p_id uuid,p_expected_revision integer,p_name text,p_start uuid,p_blocks jsonb,p_status text)
+RETURNS public.telegram_funnels LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE f public.telegram_funnels; l record;
+BEGIN
+ IF NOT public.telegram_funnel_can_manage() THEN RAISE EXCEPTION 'communication_manage_required' USING ERRCODE='42501'; END IF;
+ IF p_expected_revision IS NULL OR p_expected_revision<0 THEN RAISE EXCEPTION 'funnel_revision_required'; END IF;
+ PERFORM public.telegram_funnel_validate_graph(p_start,p_blocks);
+ SELECT * INTO f FROM public.telegram_funnels WHERE id=p_id FOR UPDATE;
+ IF FOUND THEN
+  IF f.revision<>p_expected_revision THEN RAISE EXCEPTION 'funnel_revision_changed'; END IF;
+  UPDATE public.telegram_funnels SET name=p_name,start_block_id=p_start,blocks=p_blocks,status=p_status,revision=revision+1,updated_at=now() WHERE id=p_id RETURNING * INTO f;
+ ELSE
+  IF p_expected_revision<>0 THEN RAISE EXCEPTION 'funnel_revision_changed'; END IF;
+  INSERT INTO public.telegram_funnels(id,name,start_block_id,blocks,status,created_by) VALUES(p_id,p_name,p_start,p_blocks,p_status,auth.uid()) RETURNING * INTO f;
+ END IF;
+ IF p_status='stopped' THEN
+  -- Definition-wide stop acquires every launch before the first lifecycle fence.
+  PERFORM 1 FROM public.telegram_funnel_launches WHERE funnel_id=f.id AND status='active' ORDER BY id FOR UPDATE;
+  FOR l IN SELECT id FROM public.telegram_funnel_launches WHERE funnel_id=f.id AND status='active' ORDER BY id LOOP PERFORM public.telegram_funnel_stop_launch(l.id);END LOOP;END IF;
+ RETURN f;
+END $$;
