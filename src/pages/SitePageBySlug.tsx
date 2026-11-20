@@ -38,6 +38,7 @@ import { applySitePageSeo } from "@/lib/sitePageSeo";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set([
   "open-zg27-payment",
+  "open-zg27-bank",
   "open-offer",
   "open-slot",
   "open-product-lead",
@@ -296,7 +297,7 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
       const detail = ce.detail;
       if (!detail || !ALLOWED_ACTIONS.has(detail.action)) return;
 
-      if (detail.action === "open-zg27-payment") {
+      if (detail.action === "open-zg27-payment" || detail.action === "open-zg27-bank") {
         // The canonical headless zg27_checkout controller opens PaymentDialog.
         // Keep the authored landing and scroll position unchanged.
         return;

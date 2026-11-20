@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { LeadRequestDialog } from '@/components/lead/LeadRequestDialog';
 import { PaymentDialog } from '@/components/payment/PaymentDialog';
 import { InlineAuthForm } from '@/components/auth/InlineAuthForm';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -10,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 
 type Offer = { offer_id: string; tariff_id: string; total_minor: number; amounts_minor: number[]; interval_days: 30 };
-type Quote = { status: 'ready'; product_id: string; category: 'first' | 'repeat'; policy_version: 'zg27-v1'; offers: Offer[] }
+type Quote = { status: 'ready'; product_id: string; category: 'first' | 'repeat'; policy_version: 'zg27-v1'; offers: Offer[]; bank_offer?: { offer_id: string; tariff_id: string; total_minor: number; provider: 'rr' } | null }
   | { status: 'wrong_page'; page_slug: 'zg27pervoe' | 'zg27povtor' };
 const money = (minor: number) => new Intl.NumberFormat('ru-BY', { style: 'currency', currency: 'BYN' }).format(minor / 100);
 const messageFor = (code: string) => ({
@@ -24,6 +25,8 @@ const messageFor = (code: string) => ({
 export function Zg27PurchaseSection({ content, pageId }: { content: Record<string, unknown>; pageId?:string|null }) {
   const { user, loading } = useAuth();
   const [open,setOpen] = useState(false);
+  const [bankMode,setBankMode] = useState(false);
+  const [bankOpen,setBankOpen] = useState(false);
   const navigate = useNavigate();
   const pageSlug = typeof content.page_slug === 'string' ? content.page_slug : '';
   const [quotePageSlug,setQuotePageSlug] = useState(pageSlug);
@@ -68,11 +71,12 @@ export function Zg27PurchaseSection({ content, pageId }: { content: Record<strin
     if(content.product_id!=='e71c0dbb-baf2-4b6c-a950-bf0f728708af'||!['zg27pervoe','zg27povtor'].includes(pageSlug))return;
     const onAction=(event:Event)=>{const detail=(event as CustomEvent).detail;
       if(pageId && detail?.sourcePageId!==pageId)return;
-      if(detail?.action==='open-zg27-payment'&&(!detail.payload?.product_id||detail.payload.product_id===content.product_id))setOpen(true);};
+      if(['open-zg27-payment','open-zg27-bank'].includes(detail?.action)&&(!detail.payload?.product_id||detail.payload.product_id===content.product_id)){setBankMode(detail.action==='open-zg27-bank');setBankOpen(false);setOpen(true);}};
     window.addEventListener('lovable:site-action',onAction);return()=>window.removeEventListener('lovable:site-action',onAction);
   },[content.product_id,pageSlug,pageId]);
   useEffect(() => { setSelectedId(''); setConsent(false); setCheckoutError(''); setPreparedToken(null); setBusy(false); }, [user?.id, pageSlug,open,quotePageSlug]);
   const quote = query.data?.status === 'ready' ? query.data : null;
+  useEffect(() => { setBankOpen(false); }, [user?.id, pageSlug, quotePageSlug]);
   const selected = quote?.offers.find((offer) => offer.offer_id === selectedId) ?? quote?.offers[0];
   async function prepareCheckout() {
     if (!selected || !quote || busy || (selected.amounts_minor.length > 1 && !validConsent)) return;
@@ -107,7 +111,7 @@ export function Zg27PurchaseSection({ content, pageId }: { content: Record<strin
         <p>Войдите в аккаунт, в котором вы проходили ЦБ. Мы проверим историю обучения и определим вашу стоимость участия.</p>
         <InlineAuthForm defaultTab="login" contextNote="Войдите в аккаунт участника ЦБ" onAuthenticated={async()=>{await query.refetch()}}/>
       </> : query.isError ? <div role="alert" className="space-y-3"><p>{messageFor(query.error.message)}</p><Button variant="outline" onClick={() => query.refetch()}>Повторить проверку</Button></div>
-      : query.data?.status === 'wrong_page' ? <p role="status">Проверяем доступные вам условия…</p> : quote && selected ? <>
+      : query.data?.status === 'wrong_page' ? <p role="status">Проверяем доступные вам условия…</p> : quote && bankMode ? <><p>Заявка на банковскую рассрочку. Стоимость участия: {money(quote.category==='first'?129000:89000)}.</p>{quote.bank_offer ? <Button onClick={()=>setBankOpen(true)}>Перейти к заявке в банк</Button> : <p role="alert">Банковская рассрочка временно недоступна. Обратитесь в поддержку.</p>}</> : quote && selected ? <>
         <p className="text-xl font-medium">{quote.category === 'repeat' ? 'Повторное участие' : 'Первое участие'}: {money(selected.total_minor)}</p>
         <RadioGroup aria-label="Выберите способ оплаты" value={selected.offer_id} disabled={busy||!!preparedToken}
           onValueChange={(value)=>{setSelectedId(value);setConsent(false);setCheckoutError('')}}>
@@ -129,6 +133,7 @@ export function Zg27PurchaseSection({ content, pageId }: { content: Record<strin
         <p className="text-sm text-muted-foreground">Доступ откроется после подтверждения оплаты, а при рассрочке — после оформления подписки с автоматическими платежами.</p>
       </> : null}
   </>;
-  return <PaymentDialog open={open} onOpenChange={setOpen} productId="e71c0dbb-baf2-4b6c-a950-bf0f728708af"
-    productName="Участие в «Закрой год 2027»" price="" zg27CheckoutContent={checkoutContent}/>;
+  return <><PaymentDialog open={open && !bankOpen} onOpenChange={setOpen} productId="e71c0dbb-baf2-4b6c-a950-bf0f728708af"
+    productName="Участие в «Закрой год 2027»" price="" zg27CheckoutContent={checkoutContent}/>
+    {open && bankMode && bankOpen && quote?.bank_offer && user && <LeadRequestDialog key={`${user.id}:${quote.bank_offer.offer_id}`} open={bankOpen} onOpenChange={v=>{setBankOpen(v);if(!v)setOpen(false)}} offerId={quote.bank_offer.offer_id} productName="Закрой год 2027" priceLabel={money(quote.bank_offer.total_minor)} offerLabel="Банковская рассрочка" bankInstallmentRuntime={{enabled:true,provider:'rr'}} strictBankCheckout/>}</>;
 }
