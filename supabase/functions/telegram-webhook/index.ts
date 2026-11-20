@@ -1,3 +1,4 @@
+import { handleFunnelCallback } from '../_shared/telegram-funnel.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
 import { persistMonitoredTelegramMessage } from '../_shared/telegram-monitoring.ts';
@@ -631,6 +632,10 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bot.bot_token_encrypted;
+    // The provider secret and exact active bot have already been verified above.
+    const funnelCallback = await handleFunnelCallback(supabase,botId!,rawBody,{supabaseUrl,botToken});
+    if(funnelCallback.handled) return new Response(JSON.stringify({ok:true,state:funnelCallback.state}),{headers:{...corsHeaders,'Content-Type':'application/json'}});
+
     const update: TelegramUpdate = rawBody as TelegramUpdate;
 
     // Also recognize retries of messages written before update_id instrumentation.

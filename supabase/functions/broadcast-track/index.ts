@@ -1,3 +1,4 @@
+import { funnelHash } from '../_shared/telegram-funnel.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const TRANSPARENT_GIF = Uint8Array.from(
@@ -77,7 +78,8 @@ Deno.serve(async (request) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await supabase.rpc("analytics_record_tracking_event", {
+  const funnelLink = new URL(request.url).searchParams.get("funnel") === "1" && parsed.kind === "click";
+  const { data, error } = funnelLink ? await supabase.rpc("telegram_funnel_track_link", {p_hash:await funnelHash(parsed.token),p_machine:machine}) : await supabase.rpc("analytics_record_tracking_event", {
     _token: parsed.token,
     _event_type: eventType,
     _event_key: eventKey,

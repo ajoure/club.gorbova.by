@@ -11,6 +11,7 @@ assert.ok(Number(process.env.PGPORT)>0);
 const quote=x=>`'${String(x).replaceAll("'","''")}'`;
 const json=x=>`${quote(JSON.stringify(x))}::jsonb`;
 const admin=randomUUID(),user=randomUUID(),bot=randomUUID(),profile=randomUUID();
+const everyone={version:1,root:{id:'active-profile',kind:'field',field:'status',operator:'eq',value:'active'}};
 const service=sql=>`SET ROLE service_role; ${sql}`;
 const asAdmin=sql=>`SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub',${quote(admin)},false); ${sql}`;
 const rpc=(name,args)=>`SELECT to_jsonb(public.${name}(${args.join(',')})) AS result`;
@@ -63,9 +64,17 @@ await run(`DO $$ BEGIN
  CREATE FUNCTION public.has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$ SELECT $1=${quote(admin)}::uuid $$;
  CREATE FUNCTION public.has_role_v2(uuid,text) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;
  CREATE TABLE telegram_bots(id uuid PRIMARY KEY,status text); INSERT INTO telegram_bots VALUES(${quote(bot)},'active');
- CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),telegram_user_id bigint,telegram_link_bot_id uuid,is_archived boolean DEFAULT false);
- INSERT INTO profiles VALUES(${quote(profile)},${quote(user)},100,${quote(bot)},false);
- CREATE TABLE telegram_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,bot_id uuid,telegram_user_id bigint,transport text);
+ CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),telegram_user_id bigint UNIQUE,telegram_link_bot_id uuid,is_archived boolean DEFAULT false,
+ full_name text,country text,city text,source text,status text DEFAULT 'active',marketing_consent boolean,was_club_member boolean,merged_to_profile_id uuid,telegram_link_status text DEFAULT 'active');
+ INSERT INTO profiles(id,user_id,telegram_user_id,telegram_link_bot_id) VALUES(${quote(profile)},${quote(user)},100,${quote(bot)});
+ CREATE TABLE telegram_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,bot_id uuid,telegram_user_id bigint,transport text,direction text DEFAULT 'incoming',status text DEFAULT 'received');
+ CREATE TABLE flows(id uuid PRIMARY KEY,start_date timestamptz);
+ CREATE TABLE orders_v2(id uuid PRIMARY KEY,profile_id uuid,user_id uuid,product_id uuid,tariff_id uuid,flow_id uuid,status text,is_deleted boolean,is_trial boolean,
+ meta jsonb,purchase_snapshot jsonb,final_price numeric,currency text,reconcile_source text,deal_date timestamptz);
+ CREATE TABLE payments_v2(id uuid PRIMARY KEY,order_id uuid,is_deleted boolean,status text,transaction_type text,currency text,amount numeric,refunded_amount numeric);
+ CREATE TABLE entitlements(id uuid PRIMARY KEY,profile_id uuid,user_id uuid,product_id uuid,order_id uuid,status text,expires_at timestamptz,meta jsonb);
+ CREATE TABLE subscriptions_v2(id uuid PRIMARY KEY,profile_id uuid,user_id uuid,product_id uuid,tariff_id uuid,flow_id uuid,order_id uuid,status text,
+ access_start_at timestamptz,access_end_at timestamptz,is_trial boolean,meta jsonb);
  GRANT USAGE ON SCHEMA auth TO authenticated,service_role; GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated,service_role`);
 const migration=await readFile(new URL('../../supabase/migrations/20261120100609_telegram_funnel_buttons.sql',import.meta.url),'utf8');
 await run(migration);
@@ -75,7 +84,7 @@ async function fixture(){
  const graph=[{id:a,text:'Synthetic start',buttons:[{id:ab,text:'B',kind:'next',target_block_id:b},{id:ac,text:'C',kind:'next',target_block_id:c}]},
   ...[b,c].map(id=>({id,text:'Synthetic end',buttons:[{id:randomUUID(),text:'URL',kind:'url',url:'https://example.invalid/'}]}))];
  await call('telegram_funnel_save',[quote(funnel),'0',quote('Concurrency fixture'),quote(a),json(graph),quote('active')],true);
- await call('telegram_funnel_begin_launch',[quote(launch),quote(funnel),'1',quote(bot),json({}),'false'],true);
+ await call('telegram_funnel_begin_launch',[quote(launch),quote(funnel),'1',quote(bot),json(everyone),'false'],true);
  const [enrolled]=await call('telegram_funnel_enroll',[quote(launch),`ARRAY[${quote(profile)}]::uuid[]`]);
  const hashes=[randomUUID(),randomUUID()].map(x=>createHash('sha256').update(x).digest('hex'));
  const tokens=[{button_id:ab,token_hash:hashes[0]},{button_id:ac,token_hash:hashes[1]}];
@@ -115,18 +124,23 @@ await call('telegram_funnel_finish_send',[quote(f.delivery_id),quote(claimed.lea
 [one,two]=await race(click(f.hashes[0],'unknown-callback',5),click(f.hashes[0],'unknown-callback',5),'unknown-receipt');
 assert.equal(one.state,'deferred');assert.equal(two.state,'deferred');
 assert.equal((await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)])).state,'unknown');
+assert.deepEqual(await call('telegram_funnel_reconcile_callbacks',[quote(f.delivery_id)]),[]);
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries WHERE source_delivery_id=${quote(f.delivery_id)}`)).trim(),'0');passes++;
 // Stop fences future claims; it does not fabricate cancellation of an in-flight send.
 f=await fixture();claimed=await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)]);
+assert.equal((await call('telegram_funnel_claim_callback',[quote(f.hashes[0]),quote(bot),'100','100','501',quote('stopped-early-callback'),'6'])).state,'deferred');
 await call('telegram_funnel_stop_launch',[quote(f.launch)],true);
 const late=await call('telegram_funnel_finish_send',[quote(f.delivery_id),quote(claimed.lease_id),quote('sent'),'501','NULL']);
 assert.equal(late.state,'sent');
+assert.deepEqual(await call('telegram_funnel_reconcile_callbacks',[quote(f.delivery_id)]),[]);
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries WHERE source_delivery_id=${quote(f.delivery_id)}`)).trim(),'0');
+assert.equal((await run(`SELECT status FROM telegram_funnel_enrollments WHERE id=${quote(f.enrollment_id)}`)).trim(),'stopped');
 assert.equal((await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)])).state,'stopped');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_callback_tokens WHERE enrollment_id=${quote(f.enrollment_id)} AND revoked_at IS NULL`)).trim(),'0');passes++;
 // Separate launches racing to enroll the same person share the advisory/active-run guard.
 f=await fixture();await call('telegram_funnel_stop_launch',[quote(f.launch)],true);
 const launchA=randomUUID(),launchB=randomUUID();
-for(const id of [launchA,launchB])await call('telegram_funnel_begin_launch',[quote(id),quote(f.funnel),'1',quote(bot),json({}),'false'],true);
+for(const id of [launchA,launchB])await call('telegram_funnel_begin_launch',[quote(id),quote(f.funnel),'1',quote(bot),json(everyone),'false'],true);
 [one,two]=await race(rpc('telegram_funnel_enroll',[quote(launchA),`ARRAY[${quote(profile)}]::uuid[]`]),rpc('telegram_funnel_enroll',[quote(launchB),`ARRAY[${quote(profile)}]::uuid[]`]),'active-run');
 assert.ok(one[0].delivery_id);assert.equal(two[0].skipped,'already_active');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_enrollments WHERE funnel_id=${quote(f.funnel)} AND status='active'`)).trim(),'1');passes++;

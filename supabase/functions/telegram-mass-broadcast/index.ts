@@ -1,3 +1,4 @@
+import { drainFunnelQueue } from '../_shared/telegram-funnel.ts';
 import { evaluateWebinarBroadcastGuards as evaluateBroadcastGuards } from "./webinarRegistration.ts";
 import { filterUsersByWebinarRegistration } from "./webinarRegistration.ts";
 import { prepareAnalyticsDeliveries, prepareAnalyticsTracking } from "./boundedAnalytics.ts";
@@ -201,6 +202,27 @@ Deno.serve(async (req) => {
         );
       }
       user = { id: authedUser.id };
+    }
+
+    // Funnel launches use the SAME authenticated communication boundary. No system/user supplied actor bypass.
+    if ((req.headers.get('content-type') || '').includes('application/json')) {
+      const funnelRequest = await req.clone().json().catch(() => null);
+      if (funnelRequest?.funnel_action !== undefined) {
+        if (isSystemActor || Object.keys(funnelRequest).some(key=>!['funnel_action','launch_id'].includes(key)) || !['dispatch','test'].includes(funnelRequest.funnel_action) || !/^[0-9a-f-]{36}$/i.test(funnelRequest.launch_id || '')) {
+          return new Response(JSON.stringify({error:'funnel_request_invalid'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        }
+        const {data:launch,error:launchError}=await supabase.from('telegram_funnel_launches').select('id,status,test_profile_id,created_by').eq('id',funnelRequest.launch_id).maybeSingle();
+        if(launchError || !launch || launch.status!=='active')return new Response(JSON.stringify({error:'funnel_launch_unavailable'}),{status:409,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        if((funnelRequest.funnel_action==='test')!==Boolean(launch.test_profile_id))return new Response(JSON.stringify({error:'funnel_launch_mode_mismatch'}),{status:409,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        if(funnelRequest.funnel_action==='test'){
+          const own=await supabase.from('profiles').select('id').eq('user_id',user!.id).maybeSingle();
+          if(launch.created_by!==user!.id || own.error || !own.data || launch.test_profile_id!==own.data.id)return new Response(JSON.stringify({error:'funnel_self_only'}),{status:403,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        }
+        const {error:prepareError}=await supabase.rpc('telegram_funnel_prepare_audience',{p_launch:launch.id});
+        if(prepareError)return new Response(JSON.stringify({error:'funnel_launch_not_prepared'}),{status:409,headers:{...corsHeaders,'Content-Type':'application/json'}});
+        const result=await drainFunnelQueue(supabase,{supabaseUrl:Deno.env.get('SUPABASE_URL')!},launch.id);
+        return new Response(JSON.stringify({success:true,...result}),{headers:{...corsHeaders,'Content-Type':'application/json'}});
+      }
     }
 
     // Parse request - support both JSON and FormData
