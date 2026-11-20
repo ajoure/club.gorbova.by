@@ -30,9 +30,11 @@ let passed=0;
  for(const p of (await db.query('SELECT blocks FROM site_pages')).rows){assert.equal(p.blocks[0].id,'before');assert.equal(p.blocks[2].id,'after');const html=p.blocks[1].content.code;assert.ok(html.includes('color:var(--accent)!important'));assert.ok(html.indexOf('Internal 2/3 payments.')<html.indexOf('open-zg27-bank'));assert.equal((html.match(/open-zg27-bank/g)||[]).length,2);assert.equal((html.match(/open-zg27-payment/g)||[]).length,2);assert.ok(html.includes('<p>Keep</p>'));}passed++;
  await db.close();
 }
-for(const kind of ['html_drift','slot_conflict']){
- const db=await fixture();if(kind==='html_drift')await db.exec("UPDATE site_pages SET blocks=jsonb_set(blocks,'{1,content,code}','\"changed\"')");else await db.query("INSERT INTO tariff_offers VALUES('00000000-0000-4000-8000-000000000099',$1,true,'lead','full_payment',1,'Conflict',0,'{\"slot_role\":\"installment_bank\",\"site_button_variant\":\"lead\"}')",[first]);
- await assert.rejects(db.exec(sql));await db.exec('ROLLBACK');assert.equal((await db.query("SELECT count(*)::int n FROM tariff_offers WHERE offer_type='bank_installment'")).rows[0].n,0);passed++;
+for(const kind of ['html_drift','slot_conflict','empty_six','missing_six']){
+ const db=await fixture();if(kind==='html_drift')await db.exec("UPDATE site_pages SET blocks=jsonb_set(blocks,'{1,content,code}','\"changed\"')");else if(kind==='slot_conflict') await db.query("INSERT INTO tariff_offers VALUES('00000000-0000-4000-8000-000000000099',$1,true,'lead','full_payment',1,'Conflict',0,'{\"slot_role\":\"installment_bank\",\"site_button_variant\":\"lead\"}')",[first]);
+ if(kind==='empty_six')await db.exec('DELETE FROM tariff_offers');
+ if(kind==='missing_six')await db.exec("DELETE FROM tariff_offers WHERE id='00000000-0000-4000-8000-000000000001'");
+ await assert.rejects(db.exec(sql),kind.endsWith('_six')?/zg27_bank_six_baseline_mismatch/:undefined);await db.exec('ROLLBACK');assert.equal((await db.query("SELECT count(*)::int n FROM tariff_offers WHERE offer_type='bank_installment'")).rows[0].n,0);if(kind.endsWith('_six'))for(const page of (await db.query('SELECT blocks FROM site_pages')).rows)assert.equal(page.blocks[1].content.code,code,'failed baseline must leave original CTA HTML unchanged');passed++;
  await db.close();
 }
 console.log(`ZG27 bank native SQL ${passed} PASS: actual slot guard/index, 2 offers, 4 CTA, replay, immutable six, drift/conflict rollback`);

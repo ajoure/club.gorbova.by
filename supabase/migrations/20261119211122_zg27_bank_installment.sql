@@ -10,7 +10,7 @@ BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended('zg27-bank-config-v1',0));
  IF (SELECT count(*) FROM public.tariffs WHERE product_id=product AND id IN('d0fce8c6-473a-49a1-978f-1069d0f012bc','08059eb1-748a-4ad6-8283-e6f1efa2f40f') AND is_active IS TRUE AND meta#>>'{course_access,end_exclusive}'='2027-04-30T21:00:00.000Z')<>2 THEN RAISE EXCEPTION 'zg27_bank_tariff_policy_mismatch'; END IF;
  SELECT jsonb_agg(to_jsonb(o) ORDER BY id) INTO existing_six FROM public.tariff_offers o WHERE tariff_id IN('d0fce8c6-473a-49a1-978f-1069d0f012bc','08059eb1-748a-4ad6-8283-e6f1efa2f40f') AND offer_type<>'bank_installment';
- IF jsonb_array_length(existing_six)<>6 THEN RAISE EXCEPTION 'zg27_bank_six_baseline_mismatch'; END IF;
+ IF coalesce(jsonb_array_length(existing_six),0)<>6 THEN RAISE EXCEPTION 'zg27_bank_six_baseline_mismatch'; END IF;
  FOR p IN SELECT * FROM (VALUES
  ('96af3364-c10d-4215-a305-9ec8fb683101'::uuid,'d0fce8c6-473a-49a1-978f-1069d0f012bc'::uuid,1290::numeric),
  ('96af3364-c10d-4215-a305-9ec8fb683102'::uuid,'08059eb1-748a-4ad6-8283-e6f1efa2f40f'::uuid,890::numeric)
