@@ -22763,6 +22763,504 @@ export type Database = {
           },
         ]
       }
+      telegram_funnel_callback_receipts: {
+        Row: {
+          bot_id: string
+          callback_id: string
+          chat_id: number
+          created_at: string
+          id: string
+          provider_message_id: number
+          state: string
+          telegram_user_id: number
+          token_hash: string
+          update_id: number
+        }
+        Insert: {
+          bot_id: string
+          callback_id: string
+          chat_id: number
+          created_at?: string
+          id?: string
+          provider_message_id: number
+          state?: string
+          telegram_user_id: number
+          token_hash: string
+          update_id: number
+        }
+        Update: {
+          bot_id?: string
+          callback_id?: string
+          chat_id?: number
+          created_at?: string
+          id?: string
+          provider_message_id?: number
+          state?: string
+          telegram_user_id?: number
+          token_hash?: string
+          update_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_callback_receipts_token_hash_fkey"
+            columns: ["token_hash"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_callback_tokens"
+            referencedColumns: ["token_hash"]
+          },
+        ]
+      }
+      telegram_funnel_callback_tokens: {
+        Row: {
+          bot_id: string
+          button_id: string
+          chat_id: number
+          created_at: string
+          dispatch_id: string | null
+          enrollment_id: string
+          provider_message_id: number | null
+          revoked_at: string | null
+          source_block_id: string
+          source_delivery_id: string
+          target_block_id: string
+          telegram_user_id: number
+          token_hash: string
+        }
+        Insert: {
+          bot_id: string
+          button_id: string
+          chat_id: number
+          created_at?: string
+          dispatch_id?: string | null
+          enrollment_id: string
+          provider_message_id?: number | null
+          revoked_at?: string | null
+          source_block_id: string
+          source_delivery_id: string
+          target_block_id: string
+          telegram_user_id: number
+          token_hash: string
+        }
+        Update: {
+          bot_id?: string
+          button_id?: string
+          chat_id?: number
+          created_at?: string
+          dispatch_id?: string | null
+          enrollment_id?: string
+          provider_message_id?: number | null
+          revoked_at?: string | null
+          source_block_id?: string
+          source_delivery_id?: string
+          target_block_id?: string
+          telegram_user_id?: number
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_callback_tokens_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_callback_tokens_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_callback_tokens_dispatch_id_fkey"
+            columns: ["dispatch_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_callback_tokens_enrollment_id_fkey"
+            columns: ["enrollment_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_enrollments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_callback_tokens_source_delivery_id_fkey"
+            columns: ["source_delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_deliveries: {
+        Row: {
+          block_id: string
+          created_at: string
+          enrollment_id: string
+          error_code: string | null
+          finished_at: string | null
+          id: string
+          lease_id: string | null
+          provider_message_id: number | null
+          source_button_id: string | null
+          source_delivery_id: string | null
+          started_at: string | null
+          status: string
+          transition_key: string
+        }
+        Insert: {
+          block_id: string
+          created_at?: string
+          enrollment_id: string
+          error_code?: string | null
+          finished_at?: string | null
+          id?: string
+          lease_id?: string | null
+          provider_message_id?: number | null
+          source_button_id?: string | null
+          source_delivery_id?: string | null
+          started_at?: string | null
+          status?: string
+          transition_key: string
+        }
+        Update: {
+          block_id?: string
+          created_at?: string
+          enrollment_id?: string
+          error_code?: string | null
+          finished_at?: string | null
+          id?: string
+          lease_id?: string | null
+          provider_message_id?: number | null
+          source_button_id?: string | null
+          source_delivery_id?: string | null
+          started_at?: string | null
+          status?: string
+          transition_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_deliveries_enrollment_id_fkey"
+            columns: ["enrollment_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_enrollments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_deliveries_source_delivery_id_fkey"
+            columns: ["source_delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_enrollments: {
+        Row: {
+          bot_id: string
+          chat_id: number | null
+          created_at: string
+          current_delivery_id: string | null
+          funnel_id: string
+          id: string
+          launch_id: string
+          profile_id: string
+          reason: string | null
+          status: string
+          stopped_at: string | null
+          telegram_user_id: number | null
+          user_id: string | null
+        }
+        Insert: {
+          bot_id: string
+          chat_id?: number | null
+          created_at?: string
+          current_delivery_id?: string | null
+          funnel_id: string
+          id?: string
+          launch_id: string
+          profile_id: string
+          reason?: string | null
+          status: string
+          stopped_at?: string | null
+          telegram_user_id?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          bot_id?: string
+          chat_id?: number | null
+          created_at?: string
+          current_delivery_id?: string | null
+          funnel_id?: string
+          id?: string
+          launch_id?: string
+          profile_id?: string
+          reason?: string | null
+          status?: string
+          stopped_at?: string | null
+          telegram_user_id?: number | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_current_delivery_fk"
+            columns: ["current_delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_enrollments_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_enrollments_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_enrollments_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_enrollments_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_launches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_enrollments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_events: {
+        Row: {
+          created_at: string
+          delivery_id: string | null
+          detail: Json
+          enrollment_id: string
+          event_key: string
+          id: string
+          kind: string
+          provider_update_key: string | null
+        }
+        Insert: {
+          created_at?: string
+          delivery_id?: string | null
+          detail?: Json
+          enrollment_id: string
+          event_key: string
+          id?: string
+          kind: string
+          provider_update_key?: string | null
+        }
+        Update: {
+          created_at?: string
+          delivery_id?: string | null
+          detail?: Json
+          enrollment_id?: string
+          event_key?: string
+          id?: string
+          kind?: string
+          provider_update_key?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_events_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_events_enrollment_id_fkey"
+            columns: ["enrollment_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_enrollments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_launches: {
+        Row: {
+          audience_filters: Json
+          bot_id: string
+          created_at: string
+          created_by: string
+          funnel_id: string
+          graph_snapshot: Json
+          id: string
+          prepared_at: string | null
+          restart_existing: boolean
+          scheduled_for: string
+          status: string
+          test_profile_id: string | null
+        }
+        Insert: {
+          audience_filters: Json
+          bot_id: string
+          created_at?: string
+          created_by: string
+          funnel_id: string
+          graph_snapshot: Json
+          id: string
+          prepared_at?: string | null
+          restart_existing?: boolean
+          scheduled_for?: string
+          status?: string
+          test_profile_id?: string | null
+        }
+        Update: {
+          audience_filters?: Json
+          bot_id?: string
+          created_at?: string
+          created_by?: string
+          funnel_id?: string
+          graph_snapshot?: Json
+          id?: string
+          prepared_at?: string | null
+          restart_existing?: boolean
+          scheduled_for?: string
+          status?: string
+          test_profile_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_launches_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_launches_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_launches_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_launches_test_profile_id_fkey"
+            columns: ["test_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_link_tokens: {
+        Row: {
+          button_id: string
+          delivery_id: string
+          target_url: string
+          token_hash: string
+        }
+        Insert: {
+          button_id: string
+          delivery_id: string
+          target_url: string
+          token_hash: string
+        }
+        Update: {
+          button_id?: string
+          delivery_id?: string
+          target_url?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_link_tokens_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnel_profile_tags: {
+        Row: {
+          created_by: string
+          profile_id: string
+          tag: string
+        }
+        Insert: {
+          created_by: string
+          profile_id: string
+          tag: string
+        }
+        Update: {
+          created_by?: string
+          profile_id?: string
+          tag?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_profile_tags_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_funnels: {
+        Row: {
+          blocks: Json
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          revision: number
+          start_block_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          blocks: Json
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          revision?: number
+          start_block_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          blocks?: Json
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          revision?: number
+          start_block_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       telegram_invite_links: {
         Row: {
           club_id: string
@@ -29147,6 +29645,219 @@ export type Database = {
         Returns: Json
       }
       tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
+      telegram_funnel_activate_due: {
+        Args: { p_launch?: string }
+        Returns: number
+      }
+      telegram_funnel_audience: {
+        Args: {
+          p_bot: string
+          p_limit?: number
+          p_offset?: number
+          p_segment: Json
+        }
+        Returns: Json
+      }
+      telegram_funnel_audience_service: {
+        Args: {
+          p_bot: string
+          p_limit?: number
+          p_offset?: number
+          p_segment: Json
+        }
+        Returns: Json
+      }
+      telegram_funnel_begin_launch: {
+        Args: {
+          p_bot: string
+          p_filters: Json
+          p_funnel: string
+          p_id: string
+          p_restart?: boolean
+          p_revision: number
+          p_scheduled_at?: string
+        }
+        Returns: {
+          audience_filters: Json
+          bot_id: string
+          created_at: string
+          created_by: string
+          funnel_id: string
+          graph_snapshot: Json
+          id: string
+          prepared_at: string | null
+          restart_existing: boolean
+          scheduled_for: string
+          status: string
+          test_profile_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "telegram_funnel_launches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      telegram_funnel_begin_self_test: {
+        Args: {
+          p_bot: string
+          p_funnel: string
+          p_id: string
+          p_revision: number
+        }
+        Returns: {
+          audience_filters: Json
+          bot_id: string
+          created_at: string
+          created_by: string
+          funnel_id: string
+          graph_snapshot: Json
+          id: string
+          prepared_at: string | null
+          restart_existing: boolean
+          scheduled_for: string
+          status: string
+          test_profile_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "telegram_funnel_launches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      telegram_funnel_can_manage: { Args: never; Returns: boolean }
+      telegram_funnel_claim_callback: {
+        Args: {
+          p_bot: string
+          p_callback: string
+          p_chat: number
+          p_hash: string
+          p_message: number
+          p_update: number
+          p_user: number
+        }
+        Returns: Json
+      }
+      telegram_funnel_claim_send: {
+        Args: { p_delivery: string; p_tokens: Json }
+        Returns: Json
+      }
+      telegram_funnel_delivery_context: {
+        Args: { p_delivery: string }
+        Returns: Json
+      }
+      telegram_funnel_due_deliveries: {
+        Args: { p_launch?: string; p_limit?: number }
+        Returns: Json
+      }
+      telegram_funnel_enroll: {
+        Args: { p_launch: string; p_profiles: string[] }
+        Returns: Json
+      }
+      telegram_funnel_finish_send: {
+        Args: {
+          p_delivery: string
+          p_error?: string
+          p_lease: string
+          p_message_id?: number
+          p_outcome: string
+        }
+        Returns: Json
+      }
+      telegram_funnel_history: {
+        Args: { p_enrollment: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      telegram_funnel_known_dialog: {
+        Args: { p_bot: string; p_profile: string }
+        Returns: boolean
+      }
+      telegram_funnel_prepare_audience: {
+        Args: { p_launch: string }
+        Returns: Json
+      }
+      telegram_funnel_prepare_links: {
+        Args: { p_delivery: string; p_lease: string; p_tokens: Json }
+        Returns: undefined
+      }
+      telegram_funnel_profile_facts: {
+        Args: { p_profile: string }
+        Returns: Json
+      }
+      telegram_funnel_reconcile_callbacks: {
+        Args: { p_launch?: string; p_source_delivery?: string }
+        Returns: Json
+      }
+      telegram_funnel_report: {
+        Args: {
+          p_funnel?: string
+          p_launch?: string
+          p_limit?: number
+          p_offset?: number
+          p_profile?: string
+        }
+        Returns: Json
+      }
+      telegram_funnel_save: {
+        Args: {
+          p_blocks: Json
+          p_expected_revision: number
+          p_id: string
+          p_name: string
+          p_start: string
+          p_status: string
+        }
+        Returns: {
+          blocks: Json
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          revision: number
+          start_block_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "telegram_funnels"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      telegram_funnel_segment_evaluate: {
+        Args: { p_facts: Json; p_node: Json }
+        Returns: boolean
+      }
+      telegram_funnel_segment_matches: {
+        Args: { p_node: Json; p_profile: string }
+        Returns: boolean
+      }
+      telegram_funnel_segment_node_ids: {
+        Args: { p_depth?: number; p_node: Json }
+        Returns: string[]
+      }
+      telegram_funnel_set_tags: {
+        Args: { p_profile: string; p_tags: string[] }
+        Returns: undefined
+      }
+      telegram_funnel_stop_launch: {
+        Args: { p_launch: string }
+        Returns: undefined
+      }
+      telegram_funnel_track_link: {
+        Args: { p_hash: string; p_machine: boolean }
+        Returns: Json
+      }
+      telegram_funnel_validate_graph: {
+        Args: { p_blocks: Json; p_start: string }
+        Returns: undefined
+      }
+      telegram_funnel_validate_segment: {
+        Args: { p_segment: Json }
+        Returns: undefined
+      }
       track_site_questionnaire_visit: {
         Args: {
           p_attribution: Json
