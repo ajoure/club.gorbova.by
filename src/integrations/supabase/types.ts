@@ -27912,6 +27912,22 @@ export type Database = {
         Returns: number
       }
       payments_reconcile_cron_secret: { Args: never; Returns: string }
+      preview_club_paid_lesson_receipt: {
+        Args: {
+          a: number
+          cp: string
+          h: string
+          hp: string
+          l: string
+          m: string
+          p: string
+          r: string
+          s: string
+          t: string
+          u: string
+        }
+        Returns: Json
+      }
       products_bulk_delete_dryrun: {
         Args: { product_ids: string[] }
         Returns: {
@@ -27993,6 +28009,27 @@ export type Database = {
           p_subscription: string
           p_tariff: string
           p_user: string
+        }
+        Returns: Json
+      }
+      record_club_paid_lesson_receipt: {
+        Args: {
+          a: number
+          cp: string
+          evidence: string
+          expected_end: string
+          expected_hash: string
+          h: string
+          hp: string
+          k: string
+          l: string
+          m: string
+          operator_ref: string
+          p: string
+          r: string
+          s: string
+          t: string
+          u: string
         }
         Returns: Json
       }
