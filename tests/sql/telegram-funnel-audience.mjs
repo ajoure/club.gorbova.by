@@ -93,9 +93,9 @@ if(native || process.env.TELEGRAM_FUNNEL_AUDIENCE_PGLITE_SCALE==='1'){
  'tags',CASE WHEN n%5=0 THEN '["reviewed"]'::jsonb ELSE '[]'::jsonb END,
  'fields',jsonb_build_object('country','BY','city',CASE n%3 WHEN 0 THEN NULL WHEN 1 THEN '' ELSE 'Minsk' END,'source',NULL,'status',CASE WHEN n%11<>0 THEN 'active' END,'marketing_consent',n%2=0,'was_club_member',n%3=0)),n%2=0 OR n%3=0 FROM scale_people;
  -- Mirror existing production ownership/join indexes, without changing PostgreSQL limits.
- CREATE INDEX fixture_orders_profile ON orders_v2(profile_id);CREATE INDEX fixture_orders_user ON orders_v2(user_id);CREATE INDEX fixture_orders_product ON orders_v2(product_id);CREATE INDEX fixture_payments_order ON payments_v2(order_id);
+ CREATE INDEX fixture_orders_profile ON orders_v2(profile_id);CREATE INDEX fixture_orders_user ON orders_v2(user_id);CREATE INDEX fixture_payments_order ON payments_v2(order_id);
  CREATE INDEX fixture_entitlements_profile ON entitlements(profile_id);CREATE INDEX fixture_entitlements_user ON entitlements(user_id);CREATE INDEX fixture_entitlements_product ON entitlements(product_id);
- CREATE INDEX fixture_subscriptions_profile ON subscriptions_v2(profile_id);CREATE INDEX fixture_subscriptions_user ON subscriptions_v2(user_id);CREATE INDEX fixture_subscriptions_product ON subscriptions_v2(product_id);
+ CREATE INDEX fixture_subscriptions_profile ON subscriptions_v2(profile_id);CREATE INDEX fixture_subscriptions_user ON subscriptions_v2(user_id);
  CREATE INDEX fixture_profiles_user ON profiles(user_id);CREATE INDEX fixture_messages_tg ON telegram_messages(telegram_user_id);
  ANALYZE;DO $size$BEGIN ASSERT(SELECT count(*)FROM profiles)=12102,'scale fixture must include12100profiles';ASSERT(SELECT count(*)FROM orders_v2)>100000,'dense order fixture required';ASSERT(SELECT count(*)FROM payments_v2)>200000,'dense receipt fixture required';END$size$;
  CREATE TEMP TABLE scale_fingerprint AS ${fingerprint};
