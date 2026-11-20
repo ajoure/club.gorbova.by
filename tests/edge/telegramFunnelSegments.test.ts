@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseTelegramFunnelSegment, evaluateTelegramFunnelSegment, resolveTelegramFunnelAudience, type TelegramFunnelSegmentFacts } from '../../supabase/functions/_shared/telegram-funnel-segments';
 
+vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
+import { errorText } from '../../src/components/admin/communication/funnels/contracts';
+
 const product = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
 const flow = '33333333-3333-4333-8333-333333333333';
@@ -109,4 +112,13 @@ describe('bounded native RPC boundary', () => {
       await expect(resolveTelegramFunnelAudience({ rpc: vi.fn().mockResolvedValue(reply) }, segment(leaf()), { botId: bot })).rejects.toThrow('telegram_funnel_segment_');
     }
   });
+});
+
+describe('audience availability is distinct from invalid AST', () => {
+ for (const [code,expected] of [['57014','selection_timeout'],['42501','selection_unavailable'],[undefined,'selection_unavailable']] as const) it(`sanitizes native failure ${code || 'network'} without mislabeling valid conditions`,async()=>{
+  let failure: unknown;try{await resolveTelegramFunnelAudience({rpc:vi.fn().mockResolvedValue({data:null,error:{code,message:'PRIVATE_DATABASE_DETAIL'}})},segment({id:'tag',kind:'tag',tag:'manual-review',negate:false}),{botId:bot})}catch(e){failure=e}
+  expect((failure as Error).message).toBe('telegram_funnel_segment_'+expected);
+  expect(errorText(failure)).toContain('Отправка не запускалась');expect(errorText(failure)).not.toContain('условия сегмента');expect(errorText(failure)).not.toContain('PRIVATE_DATABASE_DETAIL');
+ });
+ it('keeps invalid AST validation before RPC and its separate correction message',async()=>{const rpc=vi.fn();let failure:unknown;try{await resolveTelegramFunnelAudience({rpc},segment({id:'tag',kind:'tag',tag:'',negate:false}),{botId:bot})}catch(e){failure=e}expect(rpc).not.toHaveBeenCalled();expect(errorText(failure)).toContain('Проверьте условия сегмента')});
 });

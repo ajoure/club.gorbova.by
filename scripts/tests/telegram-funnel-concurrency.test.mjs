@@ -79,6 +79,8 @@ await run(`DO $$ BEGIN
  GRANT USAGE ON SCHEMA auth TO authenticated,service_role; GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated,service_role`);
 const migration=await readFile(new URL('../../supabase/migrations/20261120100609_telegram_funnel_buttons.sql',import.meta.url),'utf8');
 await run(migration);
+const audienceMigration=await readFile(new URL('../../supabase/migrations/20261120135114_telegram_funnel_bulk_audience.sql',import.meta.url),'utf8');
+await run(audienceMigration);
 let passes=0;
 async function fixture(scheduledAt=null){
  const funnel=randomUUID(),launch=randomUUID(),a=randomUUID(),b=randomUUID(),c=randomUUID(),ab=randomUUID(),ac=randomUUID();
@@ -187,4 +189,4 @@ await call('telegram_funnel_save',[quote(f.funnel),'1',quote('Stopped concurrenc
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_launches WHERE funnel_id=${quote(f.funnel)} AND status='active'`)).trim(),'0');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_enrollments WHERE funnel_id=${quote(f.funnel)} AND status='active'`)).trim(),'0');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries d JOIN telegram_funnel_enrollments e ON e.id=d.enrollment_id WHERE e.funnel_id=${quote(f.funnel)} AND d.status='queued'`)).trim(),'0');passes++;
-console.log(`Telegram funnel REAL PostgreSQL two-session concurrency: ${passes} PASS; migration SHA256 ${createHash('sha256').update(migration).digest('hex')}`);
+console.log(`Telegram funnel REAL PostgreSQL two-session concurrency: ${passes} PASS; migration SHA256 ${createHash('sha256').update(migration).digest('hex')}; audience migration SHA256 ${createHash('sha256').update(audienceMigration).digest('hex')}`);

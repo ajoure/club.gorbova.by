@@ -229,6 +229,35 @@ jobs:
           node-version: 22
       - run: node scripts/tests/telegram-funnel-concurrency.test.mjs
 
+  telegram-funnel-audience-native:
+    name: Telegram funnel native audience scale and equivalence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Keep synthetic roles and scale fixtures in a separate PostgreSQL cluster.
+    services:
+      audience-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: audience-test-only
+          POSTGRES_DB: telegram_funnel_audience_native_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TELEGRAM_FUNNEL_AUDIENCE_NATIVE: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: audience-test-only
+      PGDATABASE: telegram_funnel_audience_native_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/sql/telegram-funnel-audience.mjs
+
   safe-production-smoke:
     name: Opt-in test-only checkout smoke
     if: github.event_name == 'workflow_dispatch'
