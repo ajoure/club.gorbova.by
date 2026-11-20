@@ -62,7 +62,7 @@ beforeEach(() => { mock.user = 'actor-a'; mock.rows.clear(); mock.writes = []; m
 describe('standard form persistence', () => {
   it('hydrates legacy flat answers without treating metadata as answers', async () => {
     mock.rows.set('actor-a/lesson-a/block-a', { q: 'legacy answer', completed: false, type: 'sequential_form' });
-    render(<Tree />); await ready();
+    render(<Tree />); await waitFor(() => expect(input()).toHaveValue('legacy answer'));
     expect(input()).toHaveValue('legacy answer'); expect(mock.writes).toHaveLength(0);
     fireEvent.change(input(), { target: { value: 'updated answer' } }); fireEvent.blur(input());
     await waitFor(() => expect(mock.rows.get('actor-a/lesson-a/block-a')).toEqual({ answers: { q: 'updated answer' }, completed: false }));
