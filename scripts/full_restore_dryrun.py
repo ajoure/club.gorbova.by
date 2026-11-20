@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Plan or rehearse the complete app/Auth baseline. No COMMIT mode exists.
+"""Plan, rehearse or commit the complete app/Auth baseline into the copy.
 
 Source SQL/data remain in memory. Managed schemas, cron/Vault data and source
-event triggers are excluded, not declared migrated. Run only after review/CI.
+event triggers are excluded, not declared migrated. Functions that call the
+source backend are fenced (copy_fence.py) before any DDL runs. COMMIT exists
+only as the explicit --commit-copy mode for our own target, with an exact
+--confirm-target and an independent readback; an unclear result is never
+retried. Run only after review/CI.
 """
 import argparse
 import collections
@@ -19,6 +23,7 @@ from pglast import parse_sql
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
 from migration_disk_guard import DiskGuard
+from copy_fence import SOURCE, fence_phase, validate_fence
 
 from auth_restore_dryrun import (
     TARGET, IDENTIFIER, GateFailed, credentials, fingerprint,
@@ -289,6 +294,47 @@ def finish_rehearsal(conn, args, baseline, report):
     report['uncertain'] = not report['rollback_verified']
 
 
+def copy_readback(args):
+    conn = target_connection(args, 'gorbova-copy-commit-readback')
+    try:
+        with conn.cursor() as cur:
+            cur.execute('BEGIN READ ONLY')
+            cur.execute('SET LOCAL ROLE postgres')
+            cur.execute("SET LOCAL statement_timeout='120s'")
+            return dict(
+                app_tables=scalar(cur, "SELECT count(*) FROM pg_tables WHERE schemaname IN ('public','private','referral_private','drizzle')"),
+                auth_users=scalar(cur, 'SELECT count(*) FROM auth.users'),
+                source_reference_routines=scalar(cur, 'SELECT count(*) FROM pg_proc WHERE prosrc LIKE %s', ('%' + SOURCE + '%',)),
+                cron_jobs=scalar(cur, 'SELECT count(*) FROM cron.job'),
+                http_queue=scalar(cur, 'SELECT count(*) FROM net.http_request_queue'),
+                advisory_lock_released=scalar(cur, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=(hashtext('gorbova.copy.auth.dryrun.v1')::bigint & 4294967295)::oid") == 0)
+    finally:
+        try:
+            conn.rollback()
+        finally:
+            conn.close()
+
+
+def finish_copy(conn, args, report, app_tables, auth_users):
+    # COMMIT was sent. Never roll back or retry here: decide only by readback.
+    try:
+        conn.close()
+    except Exception as exc:
+        report['close_error_class'] = type(exc).__name__
+    try:
+        observed = copy_readback(args)
+    except Exception as exc:
+        report.update(readback_error_class=type(exc).__name__, committed_verified=False, uncertain=True, passed=False)
+        return
+    report['commit_readback'] = observed
+    verified = (observed['app_tables'] == app_tables and observed['auth_users'] == auth_users
+                and observed['source_reference_routines'] == 0 and observed['cron_jobs'] == 0
+                and observed['http_queue'] == 0 and observed['advisory_lock_released'])
+    report['committed_verified'] = verified
+    report['passed'] = verified and report.get('passed', False)
+    report['uncertain'] = not verified
+
+
 def plan(args, temp):
     manifest, auth, app, budget = map(load_json, [args.objects, args.auth_manifest, args.app_baseline, args.capacity])
     if auth['target'] != TARGET or app['archive_sha256'] != auth['sha256']:
@@ -342,6 +388,10 @@ def plan(args, temp):
     phases['native_default_acl_rows'] = sorted(native_defaults)
     phases['native_default_acl_statements'] = native_default_statements
     validate_acl_snapshot(adjustments, native_default_statements, native_defaults)
+    fenced = {}
+    for section in ('pre-data', 'post-data'):
+        phases[section] = fence_phase(phases[section], fenced)
+    phases['copy_fence'] = validate_fence(fenced)
     app_data = [o for o in objects if o['schema'] in APP and o['type'] == 'TABLE DATA']
     app_keys = {o['schema'] + '.' + o['identity'].split()[0] for o in app_data}
     if len(app_data) != 402 or app_keys != set(app['rows_by_table']):
@@ -415,6 +465,7 @@ def execute(args, temp, phases, auth, app, budget, report):
     disk = DiskGuard(budget)
     baseline = load_json(args.auth_baseline)
     auth_tables = [x['table'] for x in auth['data_order']]
+    auth_expected = {'auth.' + x['table']: x['snapshot_rows'] for x in auth['data_order']}
     before_path = Path(str(args.report) + '.baseline.json')
     if before_path.exists():
         raise GateFailed('baseline_already_exists_readback_required')
@@ -468,7 +519,6 @@ def execute(args, temp, phases, auth, app, budget, report):
             report['pre_data_completed'] = True
             required = required_copy_columns(cur)
             headers = {}
-            auth_expected = {'auth.' + x['table']: x['snapshot_rows'] for x in auth['data_order']}
             copy_load(args, cur, temp / 'auth.list', auth_expected, disk, headers, required)
             copy_load(args, cur, temp / 'app.list', app['rows_by_table'], disk, headers, required)
             report['data_loaded_rows'] = sum(auth_expected.values()) + sum(app['rows_by_table'].values())
@@ -507,7 +557,15 @@ def execute(args, temp, phases, auth, app, budget, report):
                 raise GateFailed('uuid_password_mismatch')
             if sequence_state(cur) != sequences or scalar(cur, 'SELECT count(*) FROM cron.job') or scalar(cur, 'SELECT count(*) FROM net.http_request_queue'):
                 raise GateFailed('unexpected_sequence_or_queued_effect')
+            report['source_reference_routines_after_fence'] = scalar(cur, 'SELECT count(*) FROM pg_proc WHERE prosrc LIKE %s', ('%' + SOURCE + '%',))
+            if report['source_reference_routines_after_fence']:
+                raise GateFailed('source_reference_routine_present')
             report.update(roundtrip_tables_verified=verified, uuid_password_match=True, passed=True)
+            if args.commit_copy:
+                # From here the outcome is only decided by independent readback.
+                report['commit_attempted'] = True
+                cur.execute('COMMIT')
+                report['commit_returned'] = True
     except Exception as exc:
         report.update(passed=False, error_class=type(exc).__name__, sqlstate=getattr(exc, 'sqlstate', None))
         if isinstance(exc, GateFailed):
@@ -515,7 +573,10 @@ def execute(args, temp, phases, auth, app, budget, report):
             report['injected_failure_triggered'] = str(exc) == 'injected_failure'
     finally:
         try:
-            finish_rehearsal(conn, args, readback_baseline, report)
+            if report.get('commit_attempted'):
+                finish_copy(conn, args, report, len(app['rows_by_table']), auth_expected['auth.users'])
+            else:
+                finish_rehearsal(conn, args, readback_baseline, report)
         finally:
             disk.close()
         report['disk_checks'] = disk.checks
@@ -538,7 +599,14 @@ def main():
                         help='Read-only verification from a saved pre-restore baseline; never restores data')
     parser.add_argument('--run-rollback-rehearsal', action='store_true')
     parser.add_argument('--inject-failure', choices=['first-app-table'])
+    parser.add_argument('--commit-copy', action='store_true',
+                        help='Keep the fenced restore in our own target (copy for new.gorbova.by)')
+    parser.add_argument('--confirm-target')
     args = parser.parse_args()
+    if args.commit_copy and (args.run_rollback_rehearsal or args.inject_failure or args.readback_from):
+        parser.error('commit-copy cannot be combined with rehearsal, fault injection or readback')
+    if args.commit_copy and args.confirm_target != TARGET:
+        parser.error('commit-copy requires --confirm-target ' + TARGET)
     if args.readback_from and (args.run_rollback_rehearsal or args.inject_failure):
         parser.error('readback cannot be combined with restore or fault injection')
     if not args.readback_from and any(getattr(args, name.replace('-', '_')) is None for name in archive_arguments):
@@ -546,7 +614,7 @@ def main():
     if args.report.exists():
         print(json.dumps({'passed': False, 'gate': 'report_already_exists', 'database_connected': False}))
         return 1
-    report = dict(target=TARGET, mode='plan_only', commit_supported=False,
+    report = dict(target=TARGET, mode='plan_only', commit_supported=True,
                   raw_sql_or_rows_persisted=False, credentials_printed=False, passed=False)
     try:
         if args.readback_from:
@@ -581,7 +649,11 @@ def prepare_or_execute(args, report):
         report['planned_app_sequence_values'] = len(phases['sequence_values'])
         report['planned_app_tables'] = len(app['rows_by_table'])
         report['planned_total_rows'] = sum(app['rows_by_table'].values()) + sum(x['snapshot_rows'] for x in auth['data_order'])
-        if args.run_rollback_rehearsal:
+        report['copy_fence'] = phases['copy_fence']
+        if args.commit_copy:
+            report['mode'] = 'commit_copy'
+            execute(args, temp, phases, auth, app, budget, report)
+        elif args.run_rollback_rehearsal:
             report['mode'] = 'rollback_only'
             execute(args, temp, phases, auth, app, budget, report)
         else:
