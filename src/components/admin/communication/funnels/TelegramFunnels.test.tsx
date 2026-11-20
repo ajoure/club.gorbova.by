@@ -101,6 +101,7 @@ describe('authoring and dispatch guardrails', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю запуск/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Запланировать запуск' }));
     await screen.findByText(/Запуск запланирован/);
+    expect(screen.getByText(/Аудитория уже зафиксирована.*Отправка и перезапуск участников начнутся не раньше назначенного времени/)).toBeInTheDocument();
     expect(fixture.rpc).toHaveBeenCalledWith('telegram_funnel_begin_launch', expect.objectContaining({ p_restart: true, p_scheduled_at: new Date('2099-01-20T10:30').toISOString() }));
     expect(fixture.invoke).not.toHaveBeenCalled();
   });
@@ -325,6 +326,20 @@ describe('authoring and dispatch guardrails', () => {
     await screen.findByText(/Все её текущие запуски остановлены/);
     expect(fixture.rpc).toHaveBeenCalledWith('telegram_funnel_save', expect.objectContaining({ p_id: fixture.record.id, p_expected_revision: 1, p_status: 'stopped' }));
     expect(fixture.rpc.mock.calls.some(c => c[0] === 'telegram_funnel_stop_launch')).toBe(false);
+    expect(fixture.invoke).not.toHaveBeenCalled();
+  });
+  it('labels scheduled activation and safe waiting reasons without raw lifecycle codes', async () => {
+    const base = fixture.rpc.getMockImplementation()!;
+    fixture.rpc.mockImplementation((name: string, args: Record<string, unknown>) => name === 'telegram_funnel_report' ? Promise.resolve({ error: null, data: { ...report, total: 3,
+      enrollments: [{ id: fixture.first, funnel_name: 'Будущий запуск', status: 'scheduled', reason: 'waiting_until_due' }, { id: fixture.next, funnel_name: 'Ожидание результата', status: 'scheduled', reason: 'prior_delivery_unresolved' }, { id: fixture.bot, funnel_name: 'Изменённый получатель', status: 'skipped', reason: 'recipient_binding_changed' }],
+      events: [{ id: fixture.product, kind: 'activated' }] } }) : base(name, args));
+    const { container } = reportView(<FunnelReportPanel profileId={fixture.first}/>);
+    await screen.findByText('Будущий запуск · Запланировано');
+    expect(screen.getByText('Причина: Ожидает назначенного времени запуска')).toBeInTheDocument();
+    expect(screen.getByText('Причина: Предыдущая отправка ещё не подтверждена. Запуск ожидает проверки.')).toBeInTheDocument();
+    expect(screen.getByText('Причина: Связь с Telegram-получателем изменилась. Отправка остановлена.')).toBeInTheDocument();
+    expect(screen.getByText('Сообщение без названия · Запуск активирован')).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/scheduled|activated|waiting_until_due|prior_delivery_unresolved|recipient_binding_changed/);
     expect(fixture.invoke).not.toHaveBeenCalled();
   });
 });

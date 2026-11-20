@@ -17,7 +17,7 @@ CREATE TABLE public.telegram_funnel_enrollments (
  funnel_id uuid NOT NULL REFERENCES public.telegram_funnels(id), profile_id uuid NOT NULL REFERENCES public.profiles(id),
  user_id uuid REFERENCES auth.users(id), bot_id uuid NOT NULL REFERENCES public.telegram_bots(id),
  telegram_user_id bigint, chat_id bigint,
- status text NOT NULL CHECK(status IN('active','completed','stopped','error','skipped')),
+ status text NOT NULL CHECK(status IN('active','scheduled','completed','stopped','error','skipped')),
  reason text, current_delivery_id uuid, created_at timestamptz NOT NULL DEFAULT now(), stopped_at timestamptz,
  UNIQUE(launch_id,profile_id)
 );
@@ -157,6 +157,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(l.funnel_id::text||':'||p.id::text,0));
   SELECT id INTO e FROM public.telegram_funnel_enrollments WHERE launch_id=l.id AND profile_id=p.id;
   IF FOUND THEN result:=result||jsonb_build_array(jsonb_build_object('enrollment_id',e,'delivery_id',(SELECT id FROM public.telegram_funnel_deliveries WHERE enrollment_id=e AND transition_key='start'),'duplicate',true)); CONTINUE; END IF;
+  IF l.scheduled_for<=now() THEN
   SELECT * INTO old FROM public.telegram_funnel_enrollments WHERE funnel_id=l.funnel_id AND profile_id=p.id AND status='active' FOR UPDATE;
   IF EXISTS(SELECT 1 FROM public.telegram_funnel_deliveries ds JOIN public.telegram_funnel_enrollments en ON en.id=ds.enrollment_id WHERE en.funnel_id=l.funnel_id AND en.profile_id=p.id AND ds.status IN('sending','unknown')) THEN RAISE EXCEPTION 'funnel_unresolved_delivery'; END IF;
   IF old.id IS NOT NULL THEN
@@ -171,9 +172,10 @@ BEGIN
    UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='explicit_restart' WHERE enrollment_id=old.id AND status='queued';
    INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind) VALUES(old.id,'restart:'||l.id::text||':'||old.id::text,'restarted');
   END IF;
+  END IF;
   has_dialog:=public.telegram_funnel_known_dialog(p.id,l.bot_id);
   INSERT INTO public.telegram_funnel_enrollments(launch_id,funnel_id,profile_id,user_id,bot_id,telegram_user_id,chat_id,status,reason)
-  VALUES(l.id,l.funnel_id,p.id,p.user_id,l.bot_id,p.telegram_user_id,p.telegram_user_id,CASE WHEN has_dialog THEN 'active' ELSE 'skipped' END,CASE WHEN has_dialog THEN NULL ELSE 'no_available_telegram_dialog' END) RETURNING id INTO e;
+  VALUES(l.id,l.funnel_id,p.id,p.user_id,l.bot_id,p.telegram_user_id,p.telegram_user_id,CASE WHEN NOT has_dialog THEN 'skipped' WHEN l.scheduled_for>now() THEN 'scheduled' ELSE 'active' END,CASE WHEN NOT has_dialog THEN 'no_available_telegram_dialog' WHEN l.scheduled_for>now() THEN 'waiting_until_due' ELSE NULL END) RETURNING id INTO e;
   INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind,detail) VALUES(e,'enroll:'||e::text,'enrolled',jsonb_build_object('no_dialog',NOT has_dialog));
   IF has_dialog THEN
    INSERT INTO public.telegram_funnel_deliveries(enrollment_id,transition_key,block_id) VALUES(e,'start',(l.graph_snapshot->>'start_block_id')::uuid) RETURNING id INTO d;
@@ -190,6 +192,8 @@ BEGIN
  SELECT * INTO d FROM public.telegram_funnel_deliveries WHERE id=p_delivery FOR UPDATE;
  IF NOT FOUND THEN RETURN jsonb_build_object('state','not_found'); END IF;
  SELECT * INTO l FROM public.telegram_funnel_launches WHERE id=e.launch_id;
+ IF l.status='active' AND e.status IN('active','scheduled') AND l.scheduled_for>now() THEN RETURN jsonb_build_object('state','scheduled'); END IF;
+ IF e.status='scheduled' AND l.status='active' THEN RETURN jsonb_build_object('state','scheduled');END IF;
  IF e.status<>'active' OR l.status<>'active' THEN RETURN jsonb_build_object('state','stopped'); END IF;
  IF l.scheduled_for>now() THEN RETURN jsonb_build_object('state','scheduled'); END IF;
  IF NOT EXISTS(SELECT 1 FROM public.profiles pr WHERE pr.id=e.profile_id AND pr.user_id IS NOT DISTINCT FROM e.user_id AND pr.telegram_user_id=e.telegram_user_id AND pr.is_archived IS NOT TRUE AND pr.status IS DISTINCT FROM 'archived' AND pr.merged_to_profile_id IS NULL) THEN
@@ -277,7 +281,7 @@ BEGIN
  IF NOT public.telegram_funnel_can_manage() THEN RAISE EXCEPTION 'communication_manage_required' USING ERRCODE='42501'; END IF;
  UPDATE public.telegram_funnel_launches SET status='stopped' WHERE id=p_launch;
  FOR e IN SELECT id FROM public.telegram_funnel_enrollments WHERE launch_id=p_launch ORDER BY id FOR UPDATE LOOP
-  UPDATE public.telegram_funnel_enrollments SET status='stopped',stopped_at=now() WHERE id=e.id AND status='active';
+  UPDATE public.telegram_funnel_enrollments SET status='stopped',stopped_at=now() WHERE id=e.id AND status IN('active','scheduled');
   UPDATE public.telegram_funnel_callback_tokens SET revoked_at=now() WHERE enrollment_id=e.id;
   UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='stopped' WHERE enrollment_id=e.id AND status='queued';
   INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind) VALUES(e.id,'stop:'||e.id::text,'stopped') ON CONFLICT(event_key) DO NOTHING;
@@ -475,8 +479,43 @@ BEGIN
  result:=public.telegram_funnel_enroll(l.id,ids);UPDATE public.telegram_funnel_launches SET prepared_at=now() WHERE id=l.id;
  RETURN jsonb_build_object('state','prepared','selected',cardinality(ids));
 END $$;
+-- Freeze recipients at approval; defer lifecycle effects until their scheduled activation.
+CREATE FUNCTION public.telegram_funnel_activate_due(p_launch uuid DEFAULT NULL) RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE l public.telegram_funnel_launches;e public.telegram_funnel_enrollments;old public.telegram_funnel_enrollments;activated integer:=0;
+BEGIN
+ FOR l IN SELECT ln.* FROM public.telegram_funnel_launches ln WHERE ln.status='active' AND ln.scheduled_for<=now() AND(p_launch IS NULL OR ln.id=p_launch) AND EXISTS(SELECT 1 FROM public.telegram_funnel_enrollments en WHERE en.launch_id=ln.id AND en.status='scheduled') ORDER BY ln.scheduled_for,ln.id LIMIT 10 FOR UPDATE LOOP
+ FOR e IN SELECT en.* FROM public.telegram_funnel_enrollments en WHERE en.launch_id=l.id AND en.status='scheduled' ORDER BY en.profile_id LIMIT 200 LOOP
+  PERFORM pg_advisory_xact_lock(hashtextextended(l.funnel_id::text||':'||e.profile_id::text,0));
+  SELECT * INTO e FROM public.telegram_funnel_enrollments WHERE id=e.id FOR UPDATE;
+  IF e.status<>'scheduled' THEN CONTINUE;END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.profiles pr WHERE pr.id=e.profile_id AND pr.user_id IS NOT DISTINCT FROM e.user_id AND pr.telegram_user_id=e.telegram_user_id AND pr.is_archived IS NOT TRUE AND pr.status IS DISTINCT FROM 'archived' AND pr.merged_to_profile_id IS NULL) OR NOT public.telegram_funnel_known_dialog(e.profile_id,l.bot_id) THEN
+   UPDATE public.telegram_funnel_enrollments SET status='skipped',reason='recipient_binding_changed' WHERE id=e.id;
+   UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='recipient_binding_changed' WHERE enrollment_id=e.id AND status='queued';CONTINUE;
+  END IF;
+  SELECT * INTO old FROM public.telegram_funnel_enrollments WHERE funnel_id=l.funnel_id AND profile_id=e.profile_id AND status='active' FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM public.telegram_funnel_deliveries d JOIN public.telegram_funnel_enrollments en ON en.id=d.enrollment_id WHERE en.funnel_id=l.funnel_id AND en.profile_id=e.profile_id AND d.status IN('sending','unknown')) THEN
+   UPDATE public.telegram_funnel_enrollments SET reason='prior_delivery_unresolved' WHERE id=e.id;CONTINUE;
+  END IF;
+  IF old.id IS NOT NULL AND NOT l.restart_existing THEN
+   UPDATE public.telegram_funnel_enrollments SET status='skipped',reason='already_active' WHERE id=e.id;
+   UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='already_active' WHERE enrollment_id=e.id AND status='queued';CONTINUE;
+  END IF;
+  IF old.id IS NOT NULL THEN
+   UPDATE public.telegram_funnel_enrollments SET status='stopped',reason='explicit_restart',stopped_at=now() WHERE id=old.id;
+   UPDATE public.telegram_funnel_callback_tokens SET revoked_at=now() WHERE enrollment_id=old.id;
+   UPDATE public.telegram_funnel_deliveries SET status='skipped',error_code='explicit_restart' WHERE enrollment_id=old.id AND status='queued';
+   INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind)VALUES(old.id,'restart:'||l.id::text||':'||old.id::text,'restarted')ON CONFLICT(event_key)DO NOTHING;
+  END IF;
+  UPDATE public.telegram_funnel_enrollments SET status='active',reason=NULL WHERE id=e.id;
+  INSERT INTO public.telegram_funnel_events(enrollment_id,event_key,kind)VALUES(e.id,'activate:'||e.id::text,'activated')ON CONFLICT(event_key)DO NOTHING;
+  activated:=activated+1;
+ END LOOP;END LOOP;RETURN activated;
+END $$;
+REVOKE ALL ON FUNCTION public.telegram_funnel_activate_due(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.telegram_funnel_activate_due(uuid) TO service_role;
 CREATE FUNCTION public.telegram_funnel_due_deliveries(p_launch uuid DEFAULT NULL,p_limit integer DEFAULT 10) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
+ PERFORM public.telegram_funnel_activate_due(p_launch);
  -- Reconcile interrupted sends conservatively. Nothing is put back into the send queue.
  UPDATE public.telegram_funnel_deliveries SET status='unknown',error_code='interrupted_send' WHERE status='sending' AND started_at<now()-interval '30 seconds' AND(p_launch IS NULL OR EXISTS(SELECT 1 FROM public.telegram_funnel_enrollments e WHERE e.id=enrollment_id AND e.launch_id=p_launch));
  RETURN (SELECT coalesce(jsonb_agg(id),'[]') FROM(SELECT d.id FROM public.telegram_funnel_deliveries d JOIN public.telegram_funnel_enrollments e ON e.id=d.enrollment_id JOIN public.telegram_funnel_launches l ON l.id=e.launch_id WHERE d.status='queued' AND e.status='active' AND l.status='active' AND l.scheduled_for<=now() AND(p_launch IS NULL OR l.id=p_launch) ORDER BY d.created_at,d.id LIMIT least(greatest(p_limit,1),10))q);

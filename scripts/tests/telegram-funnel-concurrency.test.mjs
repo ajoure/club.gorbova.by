@@ -120,9 +120,30 @@ args=[quote(f.delivery_id),json(f.tokens)];
 assert.equal(one.state,'scheduled');assert.equal(two.state,'scheduled');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_callback_tokens WHERE source_delivery_id=${quote(f.delivery_id)}`)).trim(),'0');
 await run(`UPDATE telegram_funnel_launches SET scheduled_for=now()-interval '1 second' WHERE id=${quote(f.launch)}`);
+const activate=launch=>`SELECT jsonb_build_object('activated',public.telegram_funnel_activate_due(${quote(launch)}))`;
+[one,two]=await race(activate(f.launch),activate(f.launch),'due-activation');
+assert.equal(one.activated,1);assert.equal(two.activated,0);
 [one,two]=await race(rpc('telegram_funnel_claim_send',args),rpc('telegram_funnel_claim_send',args),'after-due');
 assert.equal(one.state,'claimed');assert.equal(two.state,'sending');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries WHERE enrollment_id=${quote(f.enrollment_id)}`)).trim(),'1');passes++;
+// A restart scheduled for the future must not revoke today's live buttons.
+// Lifecycle replacement happens once when due, under two competing dispatchers.
+f=await fixture();claimed=await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)]);
+await call('telegram_funnel_finish_send',[quote(f.delivery_id),quote(claimed.lease_id),quote('sent'),'800','NULL']);
+const futureRestart=randomUUID();
+await call('telegram_funnel_begin_launch',[quote(futureRestart),quote(f.funnel),'1',quote(bot),json(everyone),'true',quote('2100-01-01T00:00:00Z')],true);
+assert.equal((await run(`SELECT status FROM telegram_funnel_enrollments WHERE id=${quote(f.enrollment_id)}`)).trim(),'active');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_callback_tokens WHERE enrollment_id=${quote(f.enrollment_id)} AND revoked_at IS NULL`)).trim(),'2');
+const oldClick=await call('telegram_funnel_claim_callback',[quote(f.hashes[0]),quote(bot),'100','100','800',quote('before-future-restart'),'80']);
+assert.equal(oldClick.state,'claimed');
+assert.deepEqual(result(await run(service(activate(futureRestart)))),{activated:0});
+await run(`UPDATE telegram_funnel_launches SET scheduled_for=now()-interval '1 second' WHERE id=${quote(futureRestart)}`);
+[one,two]=await race(activate(futureRestart),activate(futureRestart),'restart-activation');
+assert.equal(one.activated,1);assert.equal(two.activated,0);
+assert.equal((await run(`SELECT status FROM telegram_funnel_enrollments WHERE id=${quote(f.enrollment_id)}`)).trim(),'stopped');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_callback_tokens WHERE enrollment_id=${quote(f.enrollment_id)} AND revoked_at IS NULL`)).trim(),'0');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_enrollments WHERE launch_id=${quote(futureRestart)} AND status='active'`)).trim(),'1');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries d JOIN telegram_funnel_enrollments e ON e.id=d.enrollment_id WHERE e.launch_id=${quote(futureRestart)} AND d.transition_key='start'`)).trim(),'1');passes++;
 // A click received after Telegram accepts the send but before its receipt is
 // persisted must survive. It is deferred, then resolved once across two sessions.
 f=await fixture();claimed=await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)]);

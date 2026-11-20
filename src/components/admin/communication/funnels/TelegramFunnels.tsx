@@ -93,7 +93,7 @@ function FunnelWorkspace({ initial, onSaved }: { initial: FunnelRecord; onSaved:
         const { error, data } = await lease.run(() => lease.client.functions.invoke('telegram-mass-broadcast', { body: { funnel_action: attempt.selfTest ? 'test' : 'dispatch', launch_id: result.id }, headers: { Authorization: `Bearer ${lease.bearer}` } }));
         if (error || data?.error) throw Error('Запуск зарегистрирован; результат обработки пока не подтверждён. Обновите историю и проверьте этот запуск.');
       }
-      rememberPendingFunnelLaunch(lease.actorId, saved.id, null); pendingLaunch.current = null; setConfirmed(false); setNotice(attempt.selfTest ? 'Проверка на себе зарегистрирована только для вашего профиля. Подтверждённые отправки и переходы смотрите в истории.' : attempt.args.p_scheduled_at ? 'Запуск запланирован. Аудитория будет определена по сохранённым условиям при старте.' : 'Запуск зарегистрирован. Подтверждённые отправки и ошибки смотрите в истории.');
+      rememberPendingFunnelLaunch(lease.actorId, saved.id, null); pendingLaunch.current = null; setConfirmed(false); setNotice(attempt.selfTest ? 'Проверка на себе зарегистрирована только для вашего профиля. Подтверждённые отправки и переходы смотрите в истории.' : attempt.args.p_scheduled_at ? 'Запуск запланирован. Аудитория уже зафиксирована. Отправка и перезапуск участников начнутся не раньше назначенного времени.' : 'Запуск зарегистрирован. Подтверждённые отправки и ошибки смотрите в истории.');
       await lease.run(() => launches.refetch()); await lease.run(() => qc.invalidateQueries({ queryKey: ['telegram-funnel-report', actor.actorId, actor.generation] }));
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
