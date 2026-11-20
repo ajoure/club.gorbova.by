@@ -113,6 +113,7 @@ async function handler(path,mock){
   'npm:@supabase/supabase-js@2':{createClient:()=>mock.client},
   '../_shared/telegram-business.ts':{classifyBusinessMessage:unused},
   '../_shared/telegram-monitoring.ts':{persistMonitoredTelegramMessage:async()=>({handled:false,saved:false})},
+  '../_shared/telegram-funnel.ts':{handleFunnelCallback:async()=>({handled:false})},
   '../_shared/accessValidation.ts':{hasCommercialAccess:unused},
   '../_shared/cb21-release.ts':{CB21_RELEASE_DIGEST:'synthetic-release'},
   './questionnaire-bonus.ts':{handleQuestionnaireBonusJoin:unused},

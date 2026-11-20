@@ -1,3 +1,4 @@
+import { drainFunnelQueue } from '../_shared/telegram-funnel.ts';
 import { resolveWebinarBroadcastCounts } from "./webinarRegistration.ts";
 /**
  * process-scheduled-broadcasts
@@ -175,6 +176,13 @@ Deno.serve(async (req) => {
       hint: 'Set broadcast_dispatcher_config.production_approved=true or pass dry_run=true',
       processed: 0, sent: 0, failed: 0,
     });
+  }
+
+  // Same cron secret, kill switch and production approval gates apply to funnel queues.
+  // Never turn a forced unrelated template or a dry-run into a funnel dispatch.
+  if(!isDryRun && !forceTemplateId){
+    try { await drainFunnelQueue(supabase,{supabaseUrl}); }
+    catch { console.error('[broadcast-dispatcher] funnel_queue_unresolved'); }
   }
 
   // ===== Pick due templates =====

@@ -199,6 +199,36 @@ jobs:
       - name: Production build
         run: npm run build
 
+  telegram-funnel-native:
+    name: Telegram funnel real PostgreSQL concurrency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Database roles are cluster-wide. Isolate this fixture from the existing
+    # referral/sales fixtures instead of depending on their execution order.
+    services:
+      funnel-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: funnel-test-only
+          POSTGRES_DB: telegram_funnel_native_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TELEGRAM_FUNNEL_NATIVE_TEST: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: funnel-test-only
+      PGDATABASE: telegram_funnel_native_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/tests/telegram-funnel-concurrency.test.mjs
+
   safe-production-smoke:
     name: Opt-in test-only checkout smoke
     if: github.event_name == 'workflow_dispatch'

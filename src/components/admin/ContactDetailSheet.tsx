@@ -4086,6 +4086,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             <TabsContent value="deals" className="m-0 space-y-3">
               {dealsError ? <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Не удалось загрузить сделки. Закройте и снова откройте вкладку.</p> :
               <ContactDealsTab
+                profileId={contact.id}
                 deals={deals}
                 isLoading={dealsLoading}
                 moduleMetaMap={moduleMetaMap}

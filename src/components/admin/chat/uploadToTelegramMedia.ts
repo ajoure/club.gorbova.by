@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from '@supabase/supabase-js';
 import * as tus from "tus-js-client";
 
 // Файлы больше этого порога идут через TUS resumable upload (обходит лимиты gateway)
@@ -103,7 +104,9 @@ function resolveUploadContentType(rawType: string | undefined | null): string {
  */
 export async function uploadToTelegramMedia(
   file: File,
-  userId: string
+  userId: string,
+  client: { storage: Pick<SupabaseClient['storage'], 'from'>; auth?: Pick<SupabaseClient['auth'], 'getSession'> } = supabase,
+  accessToken?: string,
 ): Promise<{ bucket: string; path: string }> {
   const bucket = "telegram-media";
   const safeName = sanitizeName(file.name);
@@ -125,12 +128,11 @@ export async function uploadToTelegramMedia(
     : file;
 
   if (uploadFile.size > TUS_THRESHOLD_BYTES) {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
+    const token = accessToken || (await client.auth?.getSession())?.data.session?.access_token;
     if (!token) throw new Error("Not authenticated");
     await uploadViaTus({ file: uploadFile, bucket, filePath: path, contentType, token });
   } else {
-    const { error } = await supabase.storage.from(bucket).upload(path, uploadFile, {
+    const { error } = await client.storage.from(bucket).upload(path, uploadFile, {
       contentType,
       upsert: false,
     });
