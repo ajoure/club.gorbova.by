@@ -29,8 +29,16 @@ function session(sql,name='funnel-fixture',hold=false){
  return {done,ready,commit:()=>child.stdin.end('COMMIT;\n'),rollback:()=>child.stdin.end('ROLLBACK;\n')};
 }
 const run=sql=>session(sql).done;
-const result=text=>JSON.parse(text.split('\n').find(x=>x.startsWith('{')||x.startsWith('[')));
-const call=async(name,args,adminCall=false)=>result(await run((adminCall?asAdmin:service)(rpc(name,args))));
+const result=text=>{
+ const line=text.split('\n').find(x=>x.startsWith('{')||x.startsWith('['));
+ assert.ok(line,'a non-void RPC must return its JSON result');
+ return JSON.parse(line);
+};
+const call=async(name,args,adminCall=false)=>{
+ const output=await run((adminCall?asAdmin:service)(rpc(name,args)));
+ // Stop has a SQL void contract, unlike the state-bearing claim/finish RPCs.
+ return name==='telegram_funnel_stop_launch'?null:result(output);
+};
 async function blocked(name){
  for(let n=0;n<150;n++){
   if((await run(`SELECT count(*) FROM pg_stat_activity WHERE application_name=${quote(name)} AND wait_event_type='Lock'`)).trim()==='1')return;
