@@ -17,7 +17,14 @@ export const ALLOWED_BUCKETS = new Set([
 ]);
 export const MAX_ITEMS = 10;
 
-export type Item = { bucket: string; name: string; upload_url: string };
+export type Item = { bucket: string; name: string; upload_url: string; content_type?: string };
+
+// Optional stored mimetype of the source object (the download response may differ).
+export function validContentType(value: unknown): string | null {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i.test(value) && value.length <= 127
+    ? value
+    : null;
+}
 
 export function encodePath(name: string): string {
   return name.split("/").map(encodeURIComponent).join("/");

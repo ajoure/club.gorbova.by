@@ -9,10 +9,10 @@
 // rename objects and cannot read or change anything in this project.
 // Nothing is logged except aggregate counts; no object names, no URLs.
 
-import { ALLOWED_BUCKETS, encodePath, type Item, MAX_ITEMS, validUploadUrl } from "./validate.ts";
+import { ALLOWED_BUCKETS, encodePath, type Item, MAX_ITEMS, validContentType, validUploadUrl } from "./validate.ts";
 
 async function copyOne(item: Item, base: string, key: string) {
-  if (!ALLOWED_BUCKETS.has(item.bucket) || typeof item.name !== "string" || !item.name || item.name.includes("..")) {
+  if (!ALLOWED_BUCKETS.has(item.bucket) || typeof item.name !== "string" || !item.name || item.name.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
     return { ok: false, error: "item_not_allowed" };
   }
   const destination = validUploadUrl(item);
@@ -30,7 +30,7 @@ async function copyOne(item: Item, base: string, key: string) {
   const upload = await fetch(destination, {
     method: "PUT",
     headers: {
-      "Content-Type": source.headers.get("content-type") ?? "application/octet-stream",
+      "Content-Type": validContentType(item.content_type) ?? source.headers.get("content-type") ?? "application/octet-stream",
       ...(source.headers.get("cache-control") ? { "cache-control": source.headers.get("cache-control")! } : {}),
       ...(length ? { "Content-Length": length } : {}),
       "x-upsert": "false",
