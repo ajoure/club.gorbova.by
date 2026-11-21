@@ -7,6 +7,7 @@ async function fixture(options:{image?:boolean;imageStart?:boolean;legacy?:boole
  const {PGlite}=await import(/* @vite-ignore */ process.env.PGLITE_MODULE_PATH||'@electric-sql/pglite');
  const pg=new PGlite();await pg.exec(readFileSync('tests/sql/fixtures/telegram-funnel-base.sql','utf8'));await pg.exec(readFileSync('supabase/migrations/20261120100609_telegram_funnel_buttons.sql','utf8'));
  await pg.exec(readFileSync('supabase/migrations/20261121120000_telegram_funnel_finish_button.sql','utf8'));
+ await pg.exec(readFileSync('supabase/migrations/20261121180000_telegram_funnel_long_image_text.sql','utf8'));
  if(options.legacy)await pg.exec('UPDATE profiles SET user_id=NULL');
  const rpc=async(name:string,args:any)=>{if(!/^telegram_funnel_[a-z_]+$/.test(name))throw Error('unexpected RPC');const entries=Object.entries(args);const result=await pg.query(`SELECT to_jsonb(public.${name}(${entries.map(([k],i)=>`${k}=>$${i+1}`).join(',')})) AS value`,entries.map(([,v])=>v));return{data:result.rows[0]?.value,error:null}};
  const db:any={rpc,from:(name:string)=>{expect(name).toBe('telegram_bots');const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{id:bot,status:'active',bot_token_encrypted:'SYNTHETIC_NOT_A_TOKEN'}})};return q},storage:{from:()=>({createSignedUrl:async()=>({data:{signedUrl:'https://synthetic.invalid/image'}})})}};
@@ -144,6 +145,14 @@ describe('actual reusable sender + compiled durable SQL (fake Telegram only)',()
    expect((await f.h.deliverFunnelStep(f.db,f.en.delivery_id,{supabaseUrl:'https://synthetic.invalid',fetch:transport})).state).toBe('failed');
    expect(transport).toHaveBeenCalledOnce();
    expect((await f.pg.query('SELECT status,error_code FROM telegram_funnel_deliveries WHERE id=$1',[f.en.delivery_id])).rows).toEqual([{status:'failed',error_code:'media_unavailable'}]);
+  }finally{await f.close()}
+ });
+
+ it('saves an image block with text longer than the caption limit, still caps every block at 4096',async()=>{
+  const f=await fixture();try{
+   await f.pg.query('SELECT public.telegram_funnel_validate_graph($1,$2)',[a,JSON.stringify([{id:a,text:'x'.repeat(1500),image_path:'synthetic/a.jpg',buttons:[]}])]);
+   await expect(f.pg.query('SELECT public.telegram_funnel_validate_graph($1,$2)',[a,JSON.stringify([{id:a,text:'x'.repeat(4097),image_path:'synthetic/a.jpg',buttons:[]}])])).rejects.toThrow(/funnel_block_invalid/);
+   await expect(f.pg.query('SELECT public.telegram_funnel_validate_graph($1,$2)',[a,JSON.stringify([{id:a,text:'x',image_path:'../escape.jpg',buttons:[]}])])).rejects.toThrow(/funnel_image_invalid/);
   }finally{await f.close()}
  });
 

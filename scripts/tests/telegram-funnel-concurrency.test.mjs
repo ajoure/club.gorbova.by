@@ -83,6 +83,8 @@ const audienceMigration=await readFile(new URL('../../supabase/migrations/202611
 await run(audienceMigration);
 const finishMigration=await readFile(new URL('../../supabase/migrations/20261121120000_telegram_funnel_finish_button.sql',import.meta.url),'utf8');
 await run(finishMigration);
+const imageTextMigration=await readFile(new URL('../../supabase/migrations/20261121180000_telegram_funnel_long_image_text.sql',import.meta.url),'utf8');
+await run(imageTextMigration);
 let passes=0;
 async function fixture(scheduledAt=null,finish=false){
  const funnel=randomUUID(),launch=randomUUID(),a=randomUUID(),b=randomUUID(),c=randomUUID(),ab=randomUUID(),ac=randomUUID();
