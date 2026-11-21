@@ -81,10 +81,12 @@ const migration=await readFile(new URL('../../supabase/migrations/20261120100609
 await run(migration);
 const audienceMigration=await readFile(new URL('../../supabase/migrations/20261120135114_telegram_funnel_bulk_audience.sql',import.meta.url),'utf8');
 await run(audienceMigration);
+const finishMigration=await readFile(new URL('../../supabase/migrations/20261121120000_telegram_funnel_finish_button.sql',import.meta.url),'utf8');
+await run(finishMigration);
 let passes=0;
-async function fixture(scheduledAt=null){
+async function fixture(scheduledAt=null,finish=false){
  const funnel=randomUUID(),launch=randomUUID(),a=randomUUID(),b=randomUUID(),c=randomUUID(),ab=randomUUID(),ac=randomUUID();
- const graph=[{id:a,text:'Synthetic start',buttons:[{id:ab,text:'B',kind:'next',target_block_id:b},{id:ac,text:'C',kind:'next',target_block_id:c}]},
+ const graph=[{id:a,text:'Synthetic start',buttons:[{id:ab,text:'B',kind:'next',target_block_id:b},finish?{id:ac,text:'End',kind:'finish',tag:'Synthetic finished'}:{id:ac,text:'C',kind:'next',target_block_id:c}]},
   ...[b,c].map(id=>({id,text:'Synthetic end',buttons:[{id:randomUUID(),text:'URL',kind:'url',url:'https://example.invalid/'}]}))];
  await call('telegram_funnel_save',[quote(funnel),'0',quote('Concurrency fixture'),quote(a),json(graph),quote('active')],true);
  await call('telegram_funnel_begin_launch',[quote(launch),quote(funnel),'1',quote(bot),json(everyone),'false',scheduledAt?quote(scheduledAt):'NULL'],true);
@@ -189,4 +191,13 @@ await call('telegram_funnel_save',[quote(f.funnel),'1',quote('Stopped concurrenc
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_launches WHERE funnel_id=${quote(f.funnel)} AND status='active'`)).trim(),'0');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_enrollments WHERE funnel_id=${quote(f.funnel)} AND status='active'`)).trim(),'0');
 assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries d JOIN telegram_funnel_enrollments e ON e.id=d.enrollment_id WHERE e.funnel_id=${quote(f.funnel)} AND d.status='queued'`)).trim(),'0');passes++;
-console.log(`Telegram funnel REAL PostgreSQL two-session concurrency: ${passes} PASS; migration SHA256 ${createHash('sha256').update(migration).digest('hex')}; audience migration SHA256 ${createHash('sha256').update(audienceMigration).digest('hex')}`);
+// A finish press racing a next press on the same message: the run ends exactly once and no queued step survives.
+f=await fixture(null,true);claimed=await call('telegram_funnel_claim_send',[quote(f.delivery_id),json(f.tokens)]);
+await call('telegram_funnel_finish_send',[quote(f.delivery_id),quote(claimed.lease_id),quote('sent'),'500','NULL']);
+[one,two]=await race(click(f.hashes[1],'finish-press',90),click(f.hashes[0],'next-press',91),'finish-vs-next');
+assert.equal(one.state,'finished');assert.ok(['stopped','claimed'].includes(two.state));
+assert.equal((await run(`SELECT status||':'||reason FROM telegram_funnel_enrollments WHERE id=${quote(f.enrollment_id)}`)).trim(),'completed:finished_by_button');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_deliveries WHERE enrollment_id=${quote(f.enrollment_id)} AND status='queued'`)).trim(),'0');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_events WHERE enrollment_id=${quote(f.enrollment_id)} AND kind='finished'`)).trim(),'1');
+assert.equal((await run(`SELECT count(*) FROM telegram_funnel_profile_tags WHERE profile_id=${quote(profile)} AND tag='Synthetic finished'`)).trim(),'1');passes++;
+console.log(`Telegram funnel REAL PostgreSQL two-session concurrency: ${passes} PASS; migration SHA256 ${createHash('sha256').update(migration).digest('hex')}; audience migration SHA256 ${createHash('sha256').update(audienceMigration).digest('hex')}; finish migration SHA256 ${createHash('sha256').update(finishMigration).digest('hex')}`);

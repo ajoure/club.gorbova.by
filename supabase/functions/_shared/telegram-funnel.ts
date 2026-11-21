@@ -1,7 +1,9 @@
 import { logAutomatedTelegramMessage } from './log-automated-telegram.ts';
 // This is the single transport boundary for funnel starts, scheduled jobs and button transitions.
 export const funnelHash = async (value: string): Promise<string> => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(v=>v.toString(16).padStart(2,'0')).join('');
-export type FunnelButton = {id:string;text:string;kind:'url'|'next';url?:string;target_block_id?:string};
+export type FunnelButton = {id:string;text:string;kind:'url'|'next'|'finish';url?:string;target_block_id?:string;tag?:string|null};
+// Callback buttons ('next' and 'finish') are answered in the bot; 'url' buttons open a tracked link.
+const isCallbackButton=(button:FunnelButton)=>button.kind==='next'||button.kind==='finish';
 export type FunnelBlock = {id:string;text:string;image_path?:string;buttons:FunnelButton[]};
 export function classifyFunnelTelegramFailure(status:number,result:unknown):string {
   const value=result&&typeof result==='object'?result as Record<string,unknown>:{};
@@ -19,8 +21,8 @@ export async function deliverFunnelStep(db:any,deliveryId:string,options:{supaba
   const context=await rpc(db,'telegram_funnel_delivery_context',{p_delivery:deliveryId});
   if(!context?.block)return {state:'not_found'};
   const block=context.block as FunnelBlock;
-  const tokens=await Promise.all(block.buttons.map(async button=>{const raw=crypto.randomUUID();return {button,raw,hash:await funnelHash(button.kind==='next'?`tf:${raw}`:raw)}}));
-  const claim=await rpc(db,'telegram_funnel_claim_send',{p_delivery:deliveryId,p_tokens:tokens.filter(t=>t.button.kind==='next').map(t=>({button_id:t.button.id,token_hash:t.hash}))});
+  const tokens=await Promise.all(block.buttons.map(async button=>{const raw=crypto.randomUUID();return {button,raw,hash:await funnelHash(isCallbackButton(button)?`tf:${raw}`:raw)}}));
+  const claim=await rpc(db,'telegram_funnel_claim_send',{p_delivery:deliveryId,p_tokens:tokens.filter(t=>isCallbackButton(t.button)).map(t=>({button_id:t.button.id,token_hash:t.hash}))});
   if(claim?.state!=='claimed')return {state:claim?.state||'unknown'};
   let requestStarted=false;
   let outcome='failed',messageId:number|null=null,errorCode='preflight_failed';
@@ -28,7 +30,7 @@ export async function deliverFunnelStep(db:any,deliveryId:string,options:{supaba
     await rpc(db,'telegram_funnel_prepare_links',{p_delivery:deliveryId,p_lease:claim.lease_id,p_tokens:tokens.filter(t=>t.button.kind==='url').map(t=>({button_id:t.button.id,token_hash:t.hash}))});
     const {data:bot,error}=await Promise.resolve(db.from('telegram_bots').select('id,status,bot_token_encrypted').eq('id',claim.bot_id).eq('status','active').maybeSingle()).catch(()=>({data:null,error:true}));
     if(error||!bot?.bot_token_encrypted)throw Error('bot_unavailable');
-    const keyboard={inline_keyboard:tokens.map(t=>[{text:t.button.text,...(t.button.kind==='next'?{callback_data:`tf:${t.raw}`}:{url:`${options.supabaseUrl}/functions/v1/broadcast-track/c/${t.raw}?funnel=1`})}])};
+    const keyboard={inline_keyboard:tokens.map(t=>[{text:t.button.text,...(isCallbackButton(t.button)?{callback_data:`tf:${t.raw}`}:{url:`${options.supabaseUrl}/functions/v1/broadcast-track/c/${t.raw}?funnel=1`})}])};
     const body:any={chat_id:claim.chat_id,parse_mode:'Markdown',reply_markup:keyboard};
     let method='sendMessage';
     if(block.image_path){const signed=await db.storage.from('telegram-media').createSignedUrl(block.image_path,300).catch(()=>null);if(!signed||signed.error||!signed.data?.signedUrl)throw Error('media_unavailable');body.photo=signed.data.signedUrl;body.caption=block.text;method='sendPhoto'}
@@ -55,7 +57,7 @@ export async function handleFunnelCallback(db:any,botId:string,update:any,option
   if(!/^tf:[0-9a-f-]{36}$/i.test(cb.data)||cb.message?.chat?.type!=='private'||!Number.isSafeInteger(cb.from?.id)||!Number.isSafeInteger(cb.message?.chat?.id)||!Number.isSafeInteger(cb.message?.message_id)||!Number.isSafeInteger(update.update_id))return {handled:true,state:'invalid'};
   const claim=await rpc(db,'telegram_funnel_claim_callback',{p_hash:await funnelHash(cb.data),p_bot:botId,p_chat:cb.message.chat.id,p_user:cb.from.id,p_message:cb.message.message_id,p_callback:cb.id,p_update:update.update_id});
   if(options.botToken){
-    try {await (options.fetch||fetch)(`https://api.telegram.org/bot${options.botToken}/answerCallbackQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({callback_query_id:cb.id}),signal:AbortSignal.timeout(3000),redirect:'error'})}catch{/* UI acknowledgement must never retry delivery */}
+    try {await (options.fetch||fetch)(`https://api.telegram.org/bot${options.botToken}/answerCallbackQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(claim?.state==='finished'?{callback_query_id:cb.id,text:'Спасибо, ответ сохранён'}:{callback_query_id:cb.id}),signal:AbortSignal.timeout(3000),redirect:'error'})}catch{/* UI acknowledgement must never retry delivery */}
   }
   if(claim?.state==='claimed')await deliverFunnelStep(db,claim.delivery_id,options);
   // No ACK is a delivery proof. Telegram will also expire the visual spinner itself.

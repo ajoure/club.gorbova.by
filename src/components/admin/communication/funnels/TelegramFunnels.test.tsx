@@ -68,6 +68,38 @@ describe('authoring and dispatch guardrails', () => {
     expect(args.p_blocks[0].buttons).toEqual([{ id: '77777777-7777-4777-8777-777777777777', text: 'Далее', kind: 'next', target_block_id: fixture.next }, expect.objectContaining({ kind: 'url', url: 'https://example.com/program' })]);
     expect(fixture.invoke).not.toHaveBeenCalled();
   });
+  it('authors a finish button with an optional contact tag and shows it as the end of the funnel', async () => {
+    await openSaved();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить кнопку' }));
+    fireEvent.change(screen.getByLabelText('Действие кнопки 2'), { target: { value: 'finish' } });
+    fireEvent.change(screen.getByLabelText('Текст кнопки 2'), { target: { value: 'В этом году не участвую' } });
+    fireEvent.change(screen.getByLabelText('Метка кнопки 2'), { target: { value: ' ЗГ 2026 — не участвует' } });
+    expect(screen.getByText(/метка кнопки завершения/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Метка кнопки 2'), { target: { value: 'ЗГ 2026 — не участвует' } });
+    expect(screen.getByText(/В этом году не участвую · ⏹ Завершение воронки/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить воронку' }));
+    await screen.findByText(/Воронка сохранена/);
+    const [, args] = fixture.rpc.mock.calls.find(c => c[0] === 'telegram_funnel_save')!;
+    expect(args.p_blocks[0].buttons[1]).toEqual(expect.objectContaining({ kind: 'finish', text: 'В этом году не участвую', tag: 'ЗГ 2026 — не участвует' }));
+    expect(args.p_blocks[0].buttons[1]).not.toHaveProperty('target_block_id');
+    expect(fixture.invoke).not.toHaveBeenCalled();
+  });
+  it('launches through several bots in order: restart only on the first, each launch dispatched once', async () => {
+    await openSaved(); await preview();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Также через Другой бот' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Перезапустить с первого/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить получателей' }));
+    await screen.findByText(/Другой бот —/);
+    fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю запуск .* выбранных ботов \(2\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Запустить воронку' }));
+    await waitFor(() => expect(fixture.invoke).toHaveBeenCalledTimes(2));
+    const launches = fixture.rpc.mock.calls.filter(c => c[0] === 'telegram_funnel_begin_launch').map(c => c[1]);
+    expect(launches.map(a => [a.p_bot, a.p_restart])).toEqual([[fixture.bot, true], [fixture.next, false]]);
+    expect(new Set(launches.map(a => a.p_id)).size).toBe(2);
+    expect(fixture.invoke.mock.calls.map(c => c[1].body.launch_id)).toEqual(launches.map(a => a.p_id));
+    await screen.findByText(/Запусков через ботов: 2/);
+    expect(sessionStorage.length).toBe(0);
+  });
   it('has no ten-message limit and blocks deleted target references', async () => {
     await openSaved();
     for (let i = 0; i < 9; i++) fireEvent.click(screen.getByRole('button', { name: 'Добавить сообщение' }));
@@ -174,9 +206,12 @@ describe('authoring and dispatch guardrails', () => {
       return base(name, args);
     });
     const { container } = reportView(<FunnelReportPanel profileId={fixture.first}/>);
-    await screen.findByText('Первый блок: 2');
+    await screen.findByText('По каждому сообщению');
+    const perBlock = screen.getByText('По каждому сообщению').parentElement!;
+    expect(perBlock.textContent).toMatch(/Первый блок\s*Отправлено: 2/);
+    expect(perBlock.textContent).toMatch(/«Продолжить» · Следующее сообщение: 3 нажатий, 1 чел\./);
+    expect(perBlock.textContent).toMatch(/Следующий блок\s*Отправлено: 1\s*Без кнопок/);
     expect(screen.getByText('50%')).toBeInTheDocument();
-    expect(screen.getByText(/Продолжить.*3 нажатий, 1 человек/)).toBeInTheDocument();
     expect(screen.getByText(/Повторная отправка автоматически не выполняется/)).toBeInTheDocument();
     expect(screen.getByText('Первый блок → Следующий блок: 1 / 2, 50%')).toBeInTheDocument();
     expect(screen.getByText('Кнопка: Продолжить')).toBeInTheDocument();

@@ -27,7 +27,7 @@ export function FunnelGraph({ funnel, selectedId, onSelect }: { funnel: FunnelRe
           <foreignObject x={NODE_X + 12} y={i * ROW_HEIGHT + 24} width={NODE_WIDTH - 24} height="22">
             <div className="truncate text-sm text-foreground" title={title}>{title}</div>
           </foreignObject>
-          <text x={NODE_X + 12} y={i * ROW_HEIGHT + 65} fontSize="13" className="fill-muted-foreground">{b.buttons.length ? `${b.buttons.filter(x => x.kind === 'next').length} переходов · ${b.buttons.filter(x => x.kind === 'url').length} ссылок` : 'Завершение'}</text>
+          <text x={NODE_X + 12} y={i * ROW_HEIGHT + 65} fontSize="13" className="fill-muted-foreground">{b.buttons.length ? `${b.buttons.filter(x => x.kind === 'next').length} переходов · ${b.buttons.filter(x => x.kind === 'url').length} ссылок${b.buttons.some(x => x.kind === 'finish') ? ' · ⏹ завершение' : ''}` : 'Завершение'}</text>
           <text x={NODE_X + 12} y={i * ROW_HEIGHT + 84} fontSize="13" className="fill-muted-foreground">{b.image_path ? 'Изображение · ' : ''}{b.text.length} символов</text>
         </g>;
       })}

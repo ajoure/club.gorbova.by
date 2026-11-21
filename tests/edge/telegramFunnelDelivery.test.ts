@@ -3,13 +3,14 @@ import {readFileSync} from 'node:fs';
 import {load} from './zg27-ingress-harness';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const bot=id(3),profile=id(4),funnel=id(5),launch=id(6),a=id(7),b=id(8),c=id(9),ab=id(10),ac=id(11);
-async function fixture(options:{image?:boolean;imageStart?:boolean;legacy?:boolean}={}){
+async function fixture(options:{image?:boolean;imageStart?:boolean;legacy?:boolean;finish?:boolean}={}){
  const {PGlite}=await import(/* @vite-ignore */ process.env.PGLITE_MODULE_PATH||'@electric-sql/pglite');
  const pg=new PGlite();await pg.exec(readFileSync('tests/sql/fixtures/telegram-funnel-base.sql','utf8'));await pg.exec(readFileSync('supabase/migrations/20261120100609_telegram_funnel_buttons.sql','utf8'));
+ await pg.exec(readFileSync('supabase/migrations/20261121120000_telegram_funnel_finish_button.sql','utf8'));
  if(options.legacy)await pg.exec('UPDATE profiles SET user_id=NULL');
  const rpc=async(name:string,args:any)=>{if(!/^telegram_funnel_[a-z_]+$/.test(name))throw Error('unexpected RPC');const entries=Object.entries(args);const result=await pg.query(`SELECT to_jsonb(public.${name}(${entries.map(([k],i)=>`${k}=>$${i+1}`).join(',')})) AS value`,entries.map(([,v])=>v));return{data:result.rows[0]?.value,error:null}};
  const db:any={rpc,from:(name:string)=>{expect(name).toBe('telegram_bots');const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{id:bot,status:'active',bot_token_encrypted:'SYNTHETIC_NOT_A_TOKEN'}})};return q},storage:{from:()=>({createSignedUrl:async()=>({data:{signedUrl:'https://synthetic.invalid/image'}})})}};
- const graph=[{id:a,text:'*Start*',...(options.imageStart?{image_path:'synthetic/start.jpg'}:{}),buttons:[{id:ab,text:'B',kind:'next',target_block_id:b},{id:ac,text:'C',kind:'next',target_block_id:c},{id:id(12),text:'External',kind:'url',url:'https://example.invalid/'}]},
+ const graph=[{id:a,text:'*Start*',...(options.imageStart?{image_path:'synthetic/start.jpg'}:{}),buttons:[{id:ab,text:'B',kind:'next',target_block_id:b},{id:ac,text:'C',kind:'next',target_block_id:c},{id:id(12),text:'External',kind:'url',url:'https://example.invalid/'},...(options.finish?[{id:id(13),text:'Не участвую',kind:'finish',tag:'ЗГ: не участвует'}]:[])]},
  {id:b,text:'B',...(options.image?{image_path:'synthetic/image.jpg'}:{}),buttons:[]},{id:c,text:'C',buttons:[]}];
  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[id(1)]);
  await rpc('telegram_funnel_save',{p_id:funnel,p_expected_revision:0,p_name:'Synthetic',p_start:a,p_blocks:graph,p_status:'active'});
@@ -89,6 +90,32 @@ describe('actual reusable sender + compiled durable SQL (fake Telegram only)',()
  it('delivers to an existing legacy profile without creating an Auth account or a fake journal identity',async()=>{
   const f=await fixture({legacy:true});try{const transport=vi.fn(async()=>Response.json({ok:true,result:{message_id:901,chat:{id:100}}}));
    expect((await f.h.deliverFunnelStep(f.db,f.en.delivery_id,{supabaseUrl:'https://synthetic.invalid',fetch:transport})).state).toBe('sent');expect((await f.pg.query('SELECT user_id FROM telegram_funnel_enrollments')).rows[0].user_id).toBeNull();expect((await f.pg.query('SELECT count(*)::int n FROM auth.users')).rows[0].n).toBe(2);expect(f.journal).not.toHaveBeenCalled();
+  }finally{await f.close()}
+ });
+
+ it('finish button records one answer, completes the run, saves the tag and revokes the other buttons',async()=>{
+  const f=await fixture({finish:true});try{
+   const calls:any[]=[];const transport=vi.fn(async(url:string,init:any)=>{calls.push({url,body:JSON.parse(init.body)});return Response.json({ok:true,result:{message_id:600+calls.length,chat:{id:100}}})});
+   const opts={supabaseUrl:'https://synthetic.invalid',fetch:transport,botToken:'SYNTHETIC_NOT_A_TOKEN'};
+   expect((await f.h.deliverFunnelStep(f.db,f.en.delivery_id,opts)).state).toBe('sent');const keyboard=calls[0].body.reply_markup.inline_keyboard;
+   expect(keyboard).toHaveLength(4);expect(keyboard[3][0].callback_data).toMatch(/^tf:/);expect(keyboard[3][0].url).toBeUndefined();
+   expect((await f.h.handleFunnelCallback(f.db,bot,callback(keyboard[3][0].callback_data,601,10),opts)).state).toBe('finished');
+   expect(calls.filter(c=>c.url.includes('/answerCallbackQuery')).at(-1).body.text).toBe('Спасибо, ответ сохранён');
+   expect(calls.filter(c=>!c.url.includes('/answerCallbackQuery'))).toHaveLength(1);
+   expect((await f.pg.query('SELECT status,reason FROM telegram_funnel_enrollments')).rows).toEqual([{status:'completed',reason:'finished_by_button'}]);
+   expect((await f.pg.query('SELECT tag FROM telegram_funnel_profile_tags')).rows).toEqual([{tag:'ЗГ: не участвует'}]);
+   const finished=(await f.pg.query("SELECT detail FROM telegram_funnel_events WHERE kind='finished'")).rows;expect(finished).toHaveLength(1);expect(finished[0].detail.button_text).toBe('Не участвую');
+   expect((await f.pg.query("SELECT count(*)::int n FROM telegram_funnel_events WHERE kind='button_pressed'")).rows[0].n).toBe(1);
+   // Repeated finish and a later "next" press are both rejected without any new message.
+   expect((await f.h.handleFunnelCallback(f.db,bot,callback(keyboard[3][0].callback_data,601,11),opts)).state).toBe('stopped');
+   expect((await f.h.handleFunnelCallback(f.db,bot,callback(keyboard[0][0].callback_data,601,12),opts)).state).toBe('stopped');
+   expect(calls.filter(c=>!c.url.includes('/answerCallbackQuery'))).toHaveLength(1);
+  }finally{await f.close()}
+ });
+ it('rejects malformed finish tags at save time',async()=>{
+  const f=await fixture();try{
+   for(const tag of [' padded','x'.repeat(81),'bad\u0007tag',5])await expect(f.pg.query('SELECT public.telegram_funnel_validate_graph($1,$2)',[a,JSON.stringify([{id:a,text:'A',buttons:[{id:ab,text:'End',kind:'finish',tag}]}])])).rejects.toThrow(/funnel_finish_tag_invalid/);
+   await f.pg.query('SELECT public.telegram_funnel_validate_graph($1,$2)',[a,JSON.stringify([{id:a,text:'A',buttons:[{id:ab,text:'End',kind:'finish'}]}])]);
   }finally{await f.close()}
  });
 
