@@ -161,7 +161,7 @@ export async function resolveTelegramFunnelAudience(db: AudienceRpcClient, input
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > TELEGRAM_FUNNEL_SEGMENT_LIMITS.offset
     || !Number.isSafeInteger(limit) || limit < 1 || limit > TELEGRAM_FUNNEL_SEGMENT_LIMITS.page) fail('page_invalid');
   const { data, error } = await db.rpc(options.service === true ? 'telegram_funnel_audience_service' : 'telegram_funnel_audience', { p_segment: segment, p_bot: bot, p_offset: offset, p_limit: limit });
-  if (error) fail('selection_failed');
+  if (error) fail(typeof error === 'object' && error !== null && 'code' in error && error.code === '57014' ? 'selection_timeout' : 'selection_unavailable');
   const page = object(data);
   if (!Number.isSafeInteger(page.total) || Number(page.total) < 0 || !Number.isSafeInteger(page.available_count)
     || Number(page.available_count) < 0 || Number(page.available_count) > Number(page.total)

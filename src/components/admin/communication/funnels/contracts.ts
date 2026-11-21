@@ -55,6 +55,8 @@ export function graphErrors(funnel: FunnelRecord): string[] {
 }
 export const errorText = (error: unknown) => {
   const message = error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String(error.message) : '';
+  if (message === 'telegram_funnel_segment_selection_timeout') return 'Проверка получателей заняла слишком много времени. Отправка не запускалась. Повторите проверку позже.';
+  if (['telegram_funnel_segment_selection_unavailable', 'telegram_funnel_segment_selection_failed'].includes(message)) return 'Не удалось проверить получателей. Отправка не запускалась. Повторите проверку позже.';
   if (message.startsWith('telegram_funnel_segment_')) return 'Проверьте условия сегмента: все продукты, потоки и значения должны быть выбраны. Пустые, неизвестные или слишком сложные условия не допускаются.';
   const messages: Record<string, string> = { funnel_revision_changed: 'Версия воронки изменилась. Загрузите актуальную воронку перед сохранением.', communication_manage_required: 'Недостаточно прав для управления рассылками.', funnel_bot_unavailable: 'Выбранный бот недоступен. Обновите список ботов.', funnel_no_self_profile: 'Ваш профиль не найден. Проверка на себе не запущена.', funnel_no_self_dialog: 'Нет доступного диалога с выбранным ботом. Сначала подключите свой Telegram.' };
   return messages[message] || message || 'Не удалось выполнить действие. Повторите проверку.';
