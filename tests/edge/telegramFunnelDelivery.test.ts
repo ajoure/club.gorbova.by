@@ -1,6 +1,8 @@
 import {describe,it,expect,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {load} from './zg27-ingress-harness';
+// Each case builds a fresh PGlite and applies three funnel migrations; on CI runners this exceeds the 5 s default.
+vi.setConfig({testTimeout:30_000});
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const bot=id(3),profile=id(4),funnel=id(5),launch=id(6),a=id(7),b=id(8),c=id(9),ab=id(10),ac=id(11);
 async function fixture(options:{image?:boolean;imageStart?:boolean;legacy?:boolean;finish?:boolean}={}){
