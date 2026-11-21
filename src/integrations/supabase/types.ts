@@ -22812,47 +22812,53 @@ export type Database = {
       }
       telegram_funnel_callback_tokens: {
         Row: {
+          action: string
           bot_id: string
           button_id: string
           chat_id: number
           created_at: string
           dispatch_id: string | null
           enrollment_id: string
+          finish_tag: string | null
           provider_message_id: number | null
           revoked_at: string | null
           source_block_id: string
           source_delivery_id: string
-          target_block_id: string
+          target_block_id: string | null
           telegram_user_id: number
           token_hash: string
         }
         Insert: {
+          action?: string
           bot_id: string
           button_id: string
           chat_id: number
           created_at?: string
           dispatch_id?: string | null
           enrollment_id: string
+          finish_tag?: string | null
           provider_message_id?: number | null
           revoked_at?: string | null
           source_block_id: string
           source_delivery_id: string
-          target_block_id: string
+          target_block_id?: string | null
           telegram_user_id: number
           token_hash: string
         }
         Update: {
+          action?: string
           bot_id?: string
           button_id?: string
           chat_id?: number
           created_at?: string
           dispatch_id?: string | null
           enrollment_id?: string
+          finish_tag?: string | null
           provider_message_id?: number | null
           revoked_at?: string | null
           source_block_id?: string
           source_delivery_id?: string
-          target_block_id?: string
+          target_block_id?: string | null
           telegram_user_id?: number
           token_hash?: string
         }
