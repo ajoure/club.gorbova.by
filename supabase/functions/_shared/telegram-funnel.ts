@@ -33,16 +33,31 @@ export async function deliverFunnelStep(db:any,deliveryId:string,options:{supaba
     const keyboard={inline_keyboard:tokens.map(t=>[{text:t.button.text,...(isCallbackButton(t.button)?{callback_data:`tf:${t.raw}`}:{url:`${options.supabaseUrl}/functions/v1/broadcast-track/c/${t.raw}?funnel=1`})}])};
     const body:any={chat_id:claim.chat_id,parse_mode:'Markdown',reply_markup:keyboard};
     let method='sendMessage';
-    if(block.image_path){const signed=await db.storage.from('telegram-media').createSignedUrl(block.image_path,300).catch(()=>null);if(!signed||signed.error||!signed.data?.signedUrl)throw Error('media_unavailable');body.photo=signed.data.signedUrl;body.caption=block.text;method='sendPhoto'}
-    else body.text=block.text;
+    const send=(name:string,payload:unknown)=>(options.fetch||fetch)(`https://api.telegram.org/bot${bot.bot_token_encrypted}/${name}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(10000),redirect:'error'});
+    let photoAlone:string|null=null;
+    if(block.image_path){const signed=await db.storage.from('telegram-media').createSignedUrl(block.image_path,300).catch(()=>null);if(!signed||signed.error||!signed.data?.signedUrl)throw Error('media_unavailable');
+      // Telegram caption limit is 1024. Longer text goes as its own message right after the photo, with the buttons.
+      if(block.text.length>1024)photoAlone=signed.data.signedUrl;else{body.photo=signed.data.signedUrl;body.caption=block.text;method='sendPhoto'}}
+    if(method==='sendMessage')body.text=block.text;
     requestStarted=true;
-    const response=await (options.fetch||fetch)(`https://api.telegram.org/bot${bot.bot_token_encrypted}/${method}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000),redirect:'error'});
+    if(photoAlone){
+      const photo=await send('sendPhoto',{chat_id:claim.chat_id,photo:photoAlone});const photoResult=await photo.json().catch(()=>null);
+      if(!(photo.ok&&photoResult?.ok===true)){
+        if(photo.status>=400&&photo.status<500&&photoResult?.ok===false)throw Object.assign(Error('photo_rejected'),{status:photo.status,result:photoResult});
+        throw Error('photo_unconfirmed');
+      }
+    }
+    const response=await send(method,body);
     // Telegram transport acceptance is proved only by ok=true and its own message ID.
     const result=await response.json().catch(()=>null);
     if(response.ok&&result?.ok===true&&Number.isSafeInteger(result.result?.message_id)&&result.result.message_id>0&&Number.isSafeInteger(result.result?.chat?.id)&&result.result.chat.id===Number(claim.chat_id)){outcome='sent';messageId=result.result.message_id;errorCode=''}
     else if(response.status>=400&&response.status<500&&result?.ok===false){outcome='failed';errorCode=classifyFunnelTelegramFailure(response.status,result)}
     else {outcome='unknown';errorCode='telegram_unconfirmed'}
-  } catch(error) {outcome=requestStarted?'unknown':'failed';errorCode=requestStarted?'transport_unknown':error instanceof Error&&['bot_unavailable','media_unavailable'].includes(error.message)?error.message:'preflight_failed'}
+  } catch(error) {
+    // A rejected standalone photo means the text with the buttons was never sent: a definite failure.
+    if(error instanceof Error&&error.message==='photo_rejected'){outcome='failed';errorCode=classifyFunnelTelegramFailure((error as any).status,(error as any).result)}
+    else {outcome=requestStarted?'unknown':'failed';errorCode=requestStarted?'transport_unknown':error instanceof Error&&['bot_unavailable','media_unavailable'].includes(error.message)?error.message:'preflight_failed'}
+  }
   // A failed persistence after transport never authorizes another send. The lease remains durable.
   await rpc(db,'telegram_funnel_finish_send',{p_delivery:deliveryId,p_lease:claim.lease_id,p_outcome:outcome,p_message_id:messageId,p_error:errorCode||null});
   if(outcome==='sent'){

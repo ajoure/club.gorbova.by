@@ -119,6 +119,34 @@ describe('actual reusable sender + compiled durable SQL (fake Telegram only)',()
   }finally{await f.close()}
  });
 
+ it('long text with an image: photo first without caption or buttons, then the text with the buttons bound to that message',async()=>{
+  const f=await fixture();try{
+   const long='Длинный текст. '.repeat(90);
+   await f.pg.query(`UPDATE telegram_funnel_launches SET graph_snapshot=jsonb_set(graph_snapshot,'{blocks,0}',(graph_snapshot#>'{blocks,0}')||jsonb_build_object('image_path','synthetic/start.jpg','text',$1::text)) WHERE id=$2`,[long,launch]);
+   const calls:any[]=[];const transport=vi.fn(async(url:string,init:any)=>{calls.push({url,body:JSON.parse(init.body)});return Response.json({ok:true,result:{message_id:700+calls.length,chat:{id:100}}})});
+   const opts={supabaseUrl:'https://synthetic.invalid',fetch:transport};
+   expect(long.length).toBeGreaterThan(1024);
+   expect((await f.h.deliverFunnelStep(f.db,f.en.delivery_id,opts)).state).toBe('sent');
+   expect(calls.map(c=>c.url.split('/').pop())).toEqual(['sendPhoto','sendMessage']);
+   expect(calls[0].body).toEqual({chat_id:100,photo:'https://synthetic.invalid/image'});
+   expect(calls[1].body.text).toBe(long);expect(calls[1].body.reply_markup.inline_keyboard).toHaveLength(3);
+   expect((await f.pg.query('SELECT provider_message_id::int AS id FROM telegram_funnel_deliveries WHERE id=$1',[f.en.delivery_id])).rows[0].id).toBe(702);
+   // The buttons live on the text message: a press on it is accepted and opens the next step.
+   expect((await f.h.handleFunnelCallback(f.db,bot,callback(calls[1].body.reply_markup.inline_keyboard[0][0].callback_data,702),opts)).state).toBe('claimed');
+   // A short text keeps the single photo-with-caption message.
+   expect(calls[2].url).toContain('/sendMessage');
+  }finally{await f.close()}
+ });
+ it('long text with an image: a rejected photo fails the step and never sends the text',async()=>{
+  const f=await fixture();try{
+   await f.pg.query(`UPDATE telegram_funnel_launches SET graph_snapshot=jsonb_set(graph_snapshot,'{blocks,0}',(graph_snapshot#>'{blocks,0}')||jsonb_build_object('image_path','synthetic/start.jpg','text',repeat('x',1500))) WHERE id=$1`,[launch]);
+   const transport=vi.fn(async()=>Response.json({ok:false,error_code:400,description:'Bad Request: wrong file identifier/HTTP URL specified'},{status:400}));
+   expect((await f.h.deliverFunnelStep(f.db,f.en.delivery_id,{supabaseUrl:'https://synthetic.invalid',fetch:transport})).state).toBe('failed');
+   expect(transport).toHaveBeenCalledOnce();
+   expect((await f.pg.query('SELECT status,error_code FROM telegram_funnel_deliveries WHERE id=$1',[f.en.delivery_id])).rows).toEqual([{status:'failed',error_code:'media_unavailable'}]);
+  }finally{await f.close()}
+ });
+
 });
 
 it('scoped drain passes its launch to reconciliation and never broadens stale-send processing',async()=>{
