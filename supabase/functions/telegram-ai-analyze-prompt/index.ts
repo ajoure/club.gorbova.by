@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,7 +70,7 @@ ${truncatedContent}
 Проанализируй этот материал и создай пакет промптов для бота Олег.`
 
     // Call Lovable AI
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

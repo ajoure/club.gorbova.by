@@ -6,6 +6,7 @@ import {
 import { validateActReconciliationInput } from "../_shared/act-reconciliation-input.ts";
 import { parseActReconciliationExtraction } from "../_shared/act-reconciliation-extraction.ts";
 import { renderActReconciliationReport } from "../_shared/act-reconciliation-report.ts";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,7 +46,7 @@ acts_recognized=true только если распознаны именно д�
 
   let response: Response;
   try {
-    response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),

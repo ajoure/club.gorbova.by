@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -153,7 +154,7 @@ ${questionsList ? `- Вопросы в этом выпуске:\n- ${questionsLi
 
     console.log("Generating notification with AI using style profile...");
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResponse = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${lovableApiKey}`,

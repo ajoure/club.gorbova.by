@@ -54,7 +54,7 @@ function harness(options: { adapter?: boolean; output?: unknown; authenticated?:
   const fetch = vi.fn(async (_url: string, _init: any) => options.adapter
     ? Response.json((options.upstreamStatus || 200) >= 400 ? options.upstreamBody : canonicalReply, { status: options.upstreamStatus || 200 })
     : Response.json({ choices: [{ message: { content: options.output === undefined ? 'Согласно Указу №227 сообщаем...' : options.output } }] }));
-  const injected: Record<string, any> = { ...access, ...(options.adapter ? {} : law), persistAiChatExchange, writeAccessAudit, createClient: () => db, fetch,
+  const injected: Record<string, any> = { ...access, ...(options.adapter ? {} : law), persistAiChatExchange, writeAccessAudit, createClient: () => db, fetch, aiFetch: fetch,
     resolveAiAccess: async () => ({ tier: 'full', is_admin: true }), isModeAllowed: () => ({ allowed: options.allowed !== false, reason: '107NK_not_in_tier' }) };
   const source = readFileSync(`supabase/functions/${options.adapter ? 'mns-response-generator' : 'gorbova-ai-chat'}/index.ts`, 'utf8').replace(/^import[^;]+;\s*/gm, '');
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;

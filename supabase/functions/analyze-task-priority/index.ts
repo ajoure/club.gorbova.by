@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 // Security: This function requires JWT verification at the platform level (verify_jwt = true in config.toml)
 // The manual auth validation below provides defense-in-depth and detailed error handling
@@ -127,7 +128,7 @@ ${spheresList}
     const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout
     
     try {
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,
