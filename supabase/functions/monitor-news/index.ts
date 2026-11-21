@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 // Declare EdgeRuntime for background tasks
 declare const EdgeRuntime: {
@@ -1226,7 +1227,7 @@ ${audienceTopics.slice(0, 10).join(', ')}`;
 
 Отвечай ТОЛЬКО валидным JSON без markdown.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${lovableKey}`,

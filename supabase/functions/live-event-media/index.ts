@@ -13,6 +13,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildLiveEventTranscriptDocx } from "../_shared/live-event-transcript-docx.ts";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -151,7 +152,7 @@ async function signedUrl(service: any, bucket: string, path: string) {
 }
 
 async function makeWebinarBrief(apiKey: string, transcript: string, fallbackSummary: string) {
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({

@@ -1,3 +1,4 @@
+import { aiFetch } from "./ai-gateway.ts";
 // Shared AI access helper.
 // SOT — существующие entitlements; никакой новой тарифной подсистемы.
 //
@@ -418,7 +419,7 @@ export async function classifyOffTopic(apiKey: string, userText: string): Promis
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const r = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const r = await aiFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({

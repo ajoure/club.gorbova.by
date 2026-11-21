@@ -1,3 +1,4 @@
+import { aiFetch } from "../ai-gateway.ts";
 import {DB, must, read} from './db.ts';
 import {describeAttachment, MEDIA_SYSTEM, validateMediaObservation} from './history.mjs';
 import {readAIConfig, requestAI} from './ai.mjs';
@@ -30,7 +31,7 @@ export async function hydrateMedia(db:DB, context:any, config:any, scope:any, an
         {type:'text',text:'Прочитай это изображение клиента. Верни только согласованный JSON.'},
         {type:'image_url',image_url:{url:`data:${source.mime};base64,${base64(new Uint8Array(await blob.arrayBuffer()))}`}},
       ];
-      const observation=validateMediaObservation(await (analyze ? analyze(content) : requestAI(c,MEDIA_SYSTEM,content,{key:Deno.env.get('LOVABLE_API_KEY')})));
+      const observation=validateMediaObservation(await (analyze ? analyze(content) : requestAI(c,MEDIA_SYSTEM,content,{key:Deno.env.get('LOVABLE_API_KEY'),fetcher:aiFetch})));
       // Metadata may change while the model reads. Never cache a stale result as
       // current and never accept a path from the model or a different contact.
       const fresh=await read(db.from('telegram_messages').select('id,meta').eq('id',source.messageId)

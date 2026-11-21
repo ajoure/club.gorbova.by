@@ -1,3 +1,4 @@
+import { aiFetch } from "../ai-gateway.ts";
 export type IdentificationConfidence = "high" | "medium" | "low";
 export type AssetCatalogScope =
   | "potential_fixed_asset"
@@ -505,7 +506,7 @@ function applyVerifiedObjectGuard(
 export async function identifyObjectWithGemini(
   query: string,
   lovableApiKey: string | undefined,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = aiFetch,
   timeoutMs = 12_000,
 ): Promise<IdentificationOutcome> {
   if (!lovableApiKey) {

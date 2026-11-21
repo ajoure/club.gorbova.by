@@ -15,6 +15,7 @@ import {
   renderBankStatementReport,
   type BankStatementReportRow,
 } from "../_shared/bank-statement-report.ts";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -67,7 +68,7 @@ async function extractPaymentsWithAi(
 
     let response: Response;
     try {
-      response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      response = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         signal: AbortSignal.timeout(AI_TIMEOUT_MS),

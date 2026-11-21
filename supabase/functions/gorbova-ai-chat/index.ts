@@ -18,6 +18,7 @@ import {
   sumChatContextCharsToday,
   countChatMessagesLastMinute,
 } from '../_shared/ai-access.ts';
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -711,7 +712,7 @@ Deno.serve(async (req) => {
     metadata.model_used = chosenModel;
     metadata.routing_reason = mode === 'chat' ? 'free_chat_flash_lite' : 'scenario_pro';
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await aiFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,

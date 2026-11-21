@@ -1,3 +1,4 @@
+import { aiFetch } from "./ai-gateway.ts";
 // ============================================================================
 // _shared/transcribe-audio.ts
 // ----------------------------------------------------------------------------
@@ -54,7 +55,7 @@ export function base64FromBytes(buf: Uint8Array): string {
 }
 
 async function callGateway(apiKey: string, messages: any[], timeoutMs?: number): Promise<string> {
-  const res = await fetch(GATEWAY, {
+  const res = await aiFetch(GATEWAY, {
     method: "POST",
     ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

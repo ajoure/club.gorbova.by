@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { AI_MODEL } from "../_shared/custdev-workspace.ts";
 import { CUSTDEV_RELEASE, handleCustdev } from "./handler.ts";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -25,7 +26,7 @@ Deno.serve(async (req: Request) => {
       const controller = new AbortController(),
         timer = setTimeout(() => controller.abort(), 55000);
       try {
-        const r = await fetch(
+        const r = await aiFetch(
           "https://ai.gateway.lovable.dev/v1/chat/completions",
           {
             method: "POST",

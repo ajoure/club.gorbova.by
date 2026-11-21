@@ -3,6 +3,7 @@ import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
 import { policyInput } from "../_shared/sales-runtime/replies.mjs";
 import {isActivation, hasExplicitTechnicalProblem, hasIdentityQuestion, planDialogueReply, SEQUENCE_SYSTEM, slotValues, indexedEvidenceHistory, assessmentTrace} from "../_shared/sales-runtime/sequence.mjs";
 import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
+import { aiFetch } from "../_shared/ai-gateway.ts";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
 import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
@@ -42,7 +43,7 @@ async function draftReply(
             checkout_quote: isActivation(context) || context.firstReply ? null : context.lastCheckout,
             checkout_addons: isActivation(context) || context.firstReply ? [] : context.checkoutAddons,
             legal_entities: isActivation(context) || context.firstReply ? [] : context.legalEntities,
-          }), {key:Deno.env.get('LOVABLE_API_KEY')});
+          }), {key:Deno.env.get('LOVABLE_API_KEY'),fetcher:aiFetch});
   onAssessment?.(assessmentTrace(selection,context));
   const candidate = planDialogueReply(context, selection);
   return candidate;
@@ -105,7 +106,7 @@ Deno.serve(async (request) => {
       const observation=validateMediaObservation(await requestAI(readAIConfig(p.ai_config),MEDIA_SYSTEM,[
         {type:'text',text:'Прочитай служебное изображение. Не выдумывай надписей; если их нет, status=unreadable, text и problem пустые.'},
         {type:'image_url',image_url:{url:body.action==='preview_image_text'?'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOgAAAAsCAIAAADgsmONAAACdklEQVR4nO2YQW4EQQgD5/+fTs4tDZId4x6IXMcRVBuW0z4/ISzk+TpACH8hhxtWksMNK8nhhpXkcMNKcrhhJTncsJLycB8BxdOVBxp+WB43N/fjyHP0KqGRYZReh4d13szj5uZ+HHmOXiU0MozS6/Cwzpt53NzcjyPP0auERoZReh0e1nkzj5ub+3HkOXodUsVT1f9Xjxv24NxzsXlKT1egLo/7UKZ53LCH4p6LzVN6ugJ1edyHMs3jhj0U91xsntLTFajL4z6UaR437KG452LzlJ6uQF0e96FM8zhQMrM1ilPZSQ73Y48DJTNboziVneRwP/Y4UDKzNYpT2UkO92OPAyUzW6M4lZ3Y/2Cf7IEWVNR35emia3ZkXuU7W1P2IlLlh5nsgRZU1Hfl6aJrdmRe5TtbU/YiUuWHmeyBFlTUd+Xpomt2ZF7lO1tT9iJS5YeZ7IEWVNR35emia3ZkXuU7W1P2OqSIh/W7PV3vdu2N5RFAPMi7jjzlu2wgFmSwCZ6ud7v2xoIexRuIB3nXkad8lw3Eggw2wdP1btfeWNCjeAPxIO868pTvsoFYkMEmeLre7dobC3oUbyAe5F1HnvJdNhCLMvxXNUi94y03N/dj73VIWc+0GqTe8Zabm/ux9zqkrGdaDVLveMvNzf3Yex1S1jOtBql3vOXm5n7svYiURQnn9rAzKn6l3oGSmd2PI8/Rq4RGhlGW5fCwMyp+pd6BkpndjyPP0auERoZRluXwsDMqfqXegZKZ3Y8jz9GrhEaGUZbl8LAzKn6l3oGSmd2PI8/RqzwcwlfkcMNKcrhhJTncsJIcblhJDjesJIcbVpLDDSv5BbPW9ySy4VUQAAAAAElFTkSuQmCC':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII='}},
-      ],{key:Deno.env.get('LOVABLE_API_KEY')}));
+      ],{key:Deno.env.get('LOVABLE_API_KEY'),fetcher:aiFetch}));
       return json({ok:body.action==='preview_image_text'?observation.status==='readable'&&/404/.test(observation.text):observation.status==='unreadable'&&!observation.text&&!observation.problem,mode:'synthetic_image_no_send',model:readAIConfig(p.ai_config).model,status:observation.status});
     }
     if (body.action === 'preview_context') {

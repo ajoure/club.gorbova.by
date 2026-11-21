@@ -10,6 +10,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { aiFetch } from "../_shared/ai-gateway.ts";
 
 // =============================================
 // TYPES
@@ -1110,7 +1111,7 @@ ${sp.vocabulary_level ? `Уровень лексики: ${sp.vocabulary_level}` 
 
     console.log(`[AI Support] Calling Lovable AI with ${aiMessages.length} messages`);
     
-    const aiResponse = await fetch(LOVABLE_API_URL, {
+    const aiResponse = await aiFetch(LOVABLE_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1183,7 +1184,7 @@ ${sp.vocabulary_level ? `Уровень лексики: ${sp.vocabulary_level}` 
         });
       }
       
-      const followupResponse = await fetch(LOVABLE_API_URL, {
+      const followupResponse = await aiFetch(LOVABLE_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
