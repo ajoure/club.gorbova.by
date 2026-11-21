@@ -5,14 +5,14 @@ export type { TelegramFunnelSegment, TelegramFunnelSegmentNode } from '../../../
 
 // Additive managed schema: keep contracts outside generated types.ts until Cloud sync.
 export const funnelDb = supabase as unknown as SupabaseClient;
-export type FunnelButton = { id: string; text: string } & ({ kind: 'url'; url: string } | { kind: 'next'; target_block_id: string });
+export type FunnelButton = { id: string; text: string } & ({ kind: 'url'; url: string } | { kind: 'next'; target_block_id: string } | { kind: 'finish'; tag?: string | null });
 export interface FunnelBlock { id: string; text: string; image_path?: string | null; buttons: FunnelButton[] }
 export interface FunnelRecord { id: string; name: string; status: 'draft' | 'active' | 'stopped'; revision: number; start_block_id: string; blocks: FunnelBlock[]; created_at?: string; created_by?: string }
 export interface FunnelLaunch { id: string; funnel_id: string; bot_id: string; scheduled_for: string; status: string; created_at: string }
 export interface FunnelReportRow { id?: string; enrollment_id?: string; funnel_name?: string; profile_name?: string; status?: string; reason?: string | null; current_block?: string; block_id?: string; text?: string; buttons?: FunnelButton[]; created_at?: string; kind?: string; button_id?: string; error_code?: string | null; detail?: Record<string, unknown> }
 export interface FunnelReport { total: number; enrollments: FunnelReportRow[]; deliveries: FunnelReportRow[]; events: FunnelReportRow[]; summary: { entered: number; skipped: number; sent: number; failed: number; unknown: number; clicked: number; url_clicked: number }; blocks?: unknown[]; buttons?: unknown[] }
 export interface NamedOption { id: string; name: string; product_id?: string }
-export interface PendingFunnelLaunch { id: string; actor_id: string; args: Record<string, unknown>; selfTest: boolean }
+export interface PendingFunnelLaunch { id: string; actor_id: string; args: Record<string, unknown>; selfTest: boolean; queue?: { id: string; args: Record<string, unknown> }[] }
 const pendingKey = (actorId: string, funnelId: string) => `telegram-funnel-pending:${actorId}:${funnelId}`;
 export function readPendingFunnelLaunch(actorId: string, funnelId: string): PendingFunnelLaunch | null {
   try {
@@ -21,6 +21,7 @@ export function readPendingFunnelLaunch(actorId: string, funnelId: string): Pend
     if (!value || value.actor_id !== actorId || typeof value.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(value.id) || typeof value.selfTest !== 'boolean'
       || !value.args || value.args.p_id !== value.id || value.args.p_funnel !== funnelId) throw Error();
     if (!value.selfTest) parseTelegramFunnelSegmentForPending(value.args.p_filters);
+    if (value.queue !== undefined && (value.selfTest || !Array.isArray(value.queue) || value.queue.length > 20 || value.queue.some(q => !q || typeof q.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(q.id) || !q.args || q.args.p_id !== q.id || q.args.p_funnel !== funnelId || (parseTelegramFunnelSegmentForPending(q.args.p_filters), false)))) throw Error();
     return value;
   } catch { return null; }
 }
@@ -45,6 +46,7 @@ export function graphErrors(funnel: FunnelRecord): string[] {
     for (const button of block.buttons) {
       if (!button.text.trim() || button.text.length > 64) errors.push(`Сообщение ${i + 1}: текст кнопки должен содержать 1–64 символа.`);
       if (button.kind === 'next' && !ids.has(button.target_block_id)) errors.push(`Сообщение ${i + 1}: выберите существующее целевое сообщение.`);
+      if (button.kind === 'finish' && button.tag && (button.tag !== button.tag.trim() || button.tag.length > 80 || [...button.tag].some(ch => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127))) errors.push(`Сообщение ${i + 1}: метка кнопки завершения — до 80 символов, без пробелов по краям.`);
       if (button.kind === 'url') {
         try { const url = new URL(button.url); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw Error(); }
         catch { errors.push(`Сообщение ${i + 1}: укажите корректную ссылку http/https.`); }
@@ -58,6 +60,6 @@ export const errorText = (error: unknown) => {
   if (message === 'telegram_funnel_segment_selection_timeout') return 'Проверка получателей заняла слишком много времени. Отправка не запускалась. Повторите проверку позже.';
   if (['telegram_funnel_segment_selection_unavailable', 'telegram_funnel_segment_selection_failed'].includes(message)) return 'Не удалось проверить получателей. Отправка не запускалась. Повторите проверку позже.';
   if (message.startsWith('telegram_funnel_segment_')) return 'Проверьте условия сегмента: все продукты, потоки и значения должны быть выбраны. Пустые, неизвестные или слишком сложные условия не допускаются.';
-  const messages: Record<string, string> = { funnel_revision_changed: 'Версия воронки изменилась. Загрузите актуальную воронку перед сохранением.', communication_manage_required: 'Недостаточно прав для управления рассылками.', funnel_bot_unavailable: 'Выбранный бот недоступен. Обновите список ботов.', funnel_no_self_profile: 'Ваш профиль не найден. Проверка на себе не запущена.', funnel_no_self_dialog: 'Нет доступного диалога с выбранным ботом. Сначала подключите свой Telegram.' };
+  const messages: Record<string, string> = { funnel_revision_changed: 'Версия воронки изменилась. Загрузите актуальную воронку перед сохранением.', communication_manage_required: 'Недостаточно прав для управления рассылками.', funnel_bot_unavailable: 'Выбранный бот недоступен. Обновите список ботов.', funnel_no_self_profile: 'Ваш профиль не найден. Проверка на себе не запущена.', funnel_no_self_dialog: 'Нет доступного диалога с выбранным ботом. Сначала подключите свой Telegram.', funnel_finish_tag_invalid: 'Метка кнопки завершения: до 80 символов, без пробелов по краям.', funnel_button_kind_invalid: 'Неизвестный тип кнопки. Обновите страницу.' };
   return messages[message] || message || 'Не удалось выполнить действие. Повторите проверку.';
 };
