@@ -93,7 +93,7 @@ def main():
                 if url == 'exists':
                     record(item, 'exists')
                     continue
-                payload.append(dict(bucket=item['b'], name=item['n'], upload_url=url))
+                payload.append(dict(bucket=item['b'], name=item['n'], upload_url=url, content_type=item.get('m')))
                 sent.append(item)
             if not payload:
                 continue
