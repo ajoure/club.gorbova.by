@@ -87,6 +87,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { BulkSmsDialog } from "@/components/admin/sms/BulkSmsDialog";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSection";
 import { BroadcastAuditProofCard } from "./BroadcastAuditProofCard";
@@ -231,7 +232,8 @@ export function BroadcastsTabContent() {
   const [pageAutomationRequest] = useState(() => readSitePageAutomationRequest(new URLSearchParams(window.location.search)));
   const [pageAutomationReady, setPageAutomationReady] = useState(!pageAutomationRequest?.blockId);
   const [pageAutomationWebinar, setPageAutomationWebinar] = useState(false);
-  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics" | "funnels">(pageAutomationRequest?.view || "templates");
+  const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics" | "funnels" | "sms">(pageAutomationRequest?.view || "templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const openTemplateForSendRef = useRef(false);
@@ -1247,14 +1249,30 @@ export function BroadcastsTabContent() {
         onConfirm={() => void startManualSend(true)}
       />
       {/* Main Tabs: Templates vs Quick Send */}
-      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics" | "funnels")}>
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics" | "funnels" | "sms")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger className="shrink-0" value="templates">📋 Шаблоны</TabsTrigger>
           <TabsTrigger className="shrink-0" value="quick">⚡ Быстрая рассылка</TabsTrigger>
           <TabsTrigger className="shrink-0" value="scheduled">📅 Запланированные</TabsTrigger>
           <TabsTrigger className="shrink-0" value="analytics">📊 Аналитика</TabsTrigger>
           <TabsTrigger className="shrink-0" value="funnels">Воронки</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="sms">SMS</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="sms" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Массовая SMS-рассылка</CardTitle>
+              <CardDescription>
+                Отправка SMS выбранным контактам через SMS.by. Подключение и отправитель настраиваются в «Интеграции → Разное».
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={() => setBulkSmsOpen(true)}>Массовая SMS-рассылка</Button>
+            </CardContent>
+          </Card>
+          <BulkSmsDialog open={bulkSmsOpen} onOpenChange={setBulkSmsOpen} />
+        </TabsContent>
 
         <TabsContent value="funnels" className="mt-6">
           <Suspense fallback={<p role="status">Загружаем воронки…</p>}><TelegramFunnels /></Suspense>
