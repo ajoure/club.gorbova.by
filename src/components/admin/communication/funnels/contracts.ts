@@ -42,7 +42,7 @@ export function graphErrors(funnel: FunnelRecord): string[] {
   if (ids.size !== funnel.blocks.length) errors.push('Повторяются ID сообщений.');
   for (const [i, block] of funnel.blocks.entries()) {
     if (!block.text.trim() && !block.image_path) errors.push(`Сообщение ${i + 1}: добавьте текст или изображение.`);
-    if (block.text.length > (block.image_path ? 1024 : 4096)) errors.push(`Сообщение ${i + 1}: превышен лимит ${block.image_path ? 1024 : 4096} символов.`);
+    if (block.text.length > 4096) errors.push(`Сообщение ${i + 1}: превышен лимит 4096 символов.`);
     for (const button of block.buttons) {
       if (!button.text.trim() || button.text.length > 64) errors.push(`Сообщение ${i + 1}: текст кнопки должен содержать 1–64 символа.`);
       if (button.kind === 'next' && !ids.has(button.target_block_id)) errors.push(`Сообщение ${i + 1}: выберите существующее целевое сообщение.`);
