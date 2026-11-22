@@ -588,8 +588,8 @@ export function RoleAccessEditor() {
           const resources = (resourcesBySection.get(s.id) ?? []).sort((a, b) => a.sort_order - b.sort_order);
           return (
             <div key={s.id} className="border rounded-md">
-              <div className="flex items-center justify-between gap-3 p-3 bg-muted/30">
-                <div>
+              <div className="flex flex-col gap-2 p-3 bg-muted/30 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div className="min-w-0 break-words">
                   <div className="font-medium text-sm">{s.label}</div>
                   <div className="text-xs text-muted-foreground">{s.code} · {s.route_prefix}</div>
                 </div>
@@ -602,7 +602,7 @@ export function RoleAccessEditor() {
               </div>
               {resources.length > 0 && (
                 <div className="divide-y">
-                  <div className="flex items-center justify-end gap-2 px-3 py-2 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 px-3 py-2 text-xs text-muted-foreground sm:justify-end">
                     <span>Применить ко всем ресурсам:</span>
                     {(["none", "view", "edit", "manage"] as UiLevel[]).map((lvl) => (
                       <button
@@ -621,7 +621,7 @@ export function RoleAccessEditor() {
                     const explicit = draftResources.get(key);
                     const effective: UiLevel = explicit ?? secLevel;
                     return (
-                      <div key={r.id} className="flex items-center justify-between gap-3 p-3 pl-6">
+                      <div key={r.id} className="flex flex-col gap-2 p-3 pl-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:pl-6">
                         <div>
                           <div className="text-sm">{r.label}</div>
                           <div className="text-xs text-muted-foreground">
@@ -833,11 +833,11 @@ function LevelRadio({
     <RadioGroup
       value={value}
       onValueChange={(v) => onChange(v as UiLevel)}
-      className="flex items-center gap-3"
+      className="grid grid-cols-2 gap-x-3 gap-y-2 sm:flex sm:items-center sm:gap-3"
       disabled={disabled}
     >
       {(["none", "view", "edit", "manage"] as UiLevel[]).map((lvl) => (
-        <div key={lvl} className="flex items-center gap-1">
+        <div key={lvl} className="flex items-center gap-1.5">
           <RadioGroupItem id={`${name}-${lvl}`} value={lvl} disabled={disabled} />
           <Label htmlFor={`${name}-${lvl}`} className="text-xs cursor-pointer">
             {LEVEL_LABEL[lvl]}
