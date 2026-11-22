@@ -2,8 +2,9 @@ name: Verify no legacy Supabase project_ref
 
 # Guard for Infrastructure Cleanup.
 # Single canonical Supabase project_ref = hdjgkjceownmmnrqqtuz.
-# Any reappearance of legacy ref ypwsuumurrtkxatoyqhk in the repo
-# (code, config, workflows, docs, migrations, scripts) is a hard fail.
+# Production remains on Lovable until separately verified cutover.
+# The reviewed rollback-only migration runner may pin the independent target.
+# All other non-documentation mentions remain forbidden.
 
 on:
   push:
@@ -35,6 +36,13 @@ jobs:
             --exclude='verify-no-legacy-ref.yml' \
             --exclude-dir=copy-private-storage-bridge \
             -- "$LEGACY" . || true)
+          # Only the exact target pin in the operator's rollback-only tool is allowed.
+          # This does not permit target references in runtime, configuration or other lines.
+          MATCHES=$(printf '%s\n' "$MATCHES" | python3 -c '
+          import re, sys
+          allowed = r"^\./scripts/auth_restore_dryrun\.py:\d+:TARGET = " + re.escape(repr(sys.argv[1])) + r"$"
+          print("\n".join(line for line in sys.stdin.read().splitlines() if line and not re.fullmatch(allowed, line)))
+          ' "$LEGACY")
           if [ -n "$MATCHES" ]; then
             echo "::error::Legacy Supabase project_ref '$LEGACY' detected in code/config. Canonical ref is 'hdjgkjceownmmnrqqtuz'."
             echo "$MATCHES"
