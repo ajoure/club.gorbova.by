@@ -1,10 +1,10 @@
 import {
   Node3
-} from "./chunk-6ZIB3ELV.js";
-import "./chunk-GRNRBE2N.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
-// ../persist/node_modules/@tiptap/extension-document/dist/index.js
+// node_modules/@tiptap/extension-document/dist/index.js
 var Document = Node3.create({
   name: "doc",
   topNode: true,

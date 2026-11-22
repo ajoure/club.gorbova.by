@@ -3,11 +3,11 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-6ZIB3ELV.js";
-import "./chunk-GRNRBE2N.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
-// ../persist/node_modules/@tiptap/extension-code/dist/index.js
+// node_modules/@tiptap/extension-code/dist/index.js
 var inputRegex = /(^|[^`])`([^`]+)`(?!`)$/;
 var pasteRegex = /(^|[^`])`([^`]+)`(?!`)/g;
 var inputRegexMatch = (text) => {

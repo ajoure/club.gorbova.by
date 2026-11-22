@@ -1,12 +1,12 @@
 "use client";
 import {
   require_react
-} from "./chunk-QPCZW4V5.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// ../persist/node_modules/next-themes/dist/index.mjs
+// node_modules/next-themes/dist/index.mjs
 var t = __toESM(require_react(), 1);
 var P = ["light", "dark"];
 var E = "(prefers-color-scheme: dark)";

@@ -55,7 +55,7 @@ import {
   util_FeatureTest,
   util_ImageKind,
   version
-} from "./chunk-6MD3JAN5.js";
+} from "./chunk-TVQQVJC2.js";
 import "./chunk-OL46QLBJ.js";
 export {
   AbortException,

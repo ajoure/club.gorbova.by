@@ -1,14 +1,14 @@
 import {
   require_react_dom
-} from "./chunk-CO6ZALLC.js";
-import "./chunk-QPCZW4V5.js";
+} from "./chunk-3I6JAFN6.js";
+import "./chunk-UVNPGZG7.js";
 import {
   __commonJS
 } from "./chunk-OL46QLBJ.js";
 
-// ../persist/node_modules/react-dom/client.js
+// node_modules/react-dom/client.js
 var require_client = __commonJS({
-  "../persist/node_modules/react-dom/client.js"(exports) {
+  "node_modules/react-dom/client.js"(exports) {
     var m = require_react_dom();
     if (false) {
       exports.createRoot = m.createRoot;
