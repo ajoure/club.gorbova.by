@@ -40,5 +40,5 @@ export function SegmentBuilder({ value, onChange, products, flows, tags = [] }: 
       {remove && <Button size="sm" variant="ghost" onClick={remove}>Удалить условие</Button>}
     </div>;
   };
-  return <div className="space-y-2"><p className="text-sm text-muted-foreground">Участие учитывает подтверждённую историю, включая импорт. Неизвестный год или поток не подтверждает условие «Нет».</p>{render(value.root, root => onChange({ version: 1, root }), 1)}</div>;
+  return <div className="space-y-2"><p className="text-sm text-muted-foreground">Участие учитывает подтверждённую историю, включая импорт. Неизвестный год или поток не подтверждает условие «Нет». «И» — человек подходит под все условия сразу, «ИЛИ» — под любое из них. Чтобы отправить сразу нескольким группам, выберите «Любое условие (ИЛИ)».</p>{render(value.root, root => onChange({ version: 1, root }), 1)}</div>;
 }
