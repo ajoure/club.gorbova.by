@@ -1,5 +1,4 @@
 -- SMS is an existing broadcast/funnel transport. No recipients or campaigns are seeded.
-BEGIN;
 CREATE OR REPLACE FUNCTION public.sms_normalize_phone(p_phone text) RETURNS text
 LANGUAGE sql IMMUTABLE SET search_path='' AS $$
  SELECT CASE WHEN regexp_replace(coalesce(p_phone,''),'[^0-9+]','','g') ~ '^\+?[0-9]{8,15}$'
@@ -532,4 +531,3 @@ CREATE OR REPLACE FUNCTION public.sms_broadcast_audience_count(p_filters jsonb) 
 $$;
 REVOKE ALL ON FUNCTION public.sms_broadcast_audience_count(jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.sms_broadcast_audience_count(jsonb) TO service_role;
-COMMIT;
