@@ -1,10 +1,11 @@
+import { smsConfiguration, sendSmsByTransport } from './sms-transport.ts';
 import { logAutomatedTelegramMessage } from './log-automated-telegram.ts';
 // This is the single transport boundary for funnel starts, scheduled jobs and button transitions.
 export const funnelHash = async (value: string): Promise<string> => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(v=>v.toString(16).padStart(2,'0')).join('');
 export type FunnelButton = {id:string;text:string;kind:'url'|'next'|'finish';url?:string;target_block_id?:string;tag?:string|null};
 // Callback buttons ('next' and 'finish') are answered in the bot; 'url' buttons open a tracked link.
 const isCallbackButton=(button:FunnelButton)=>button.kind==='next'||button.kind==='finish';
-export type FunnelBlock = {id:string;text:string;image_path?:string;buttons:FunnelButton[]};
+export type FunnelBlock = {id:string;text:string;channel?:'telegram'|'sms';image_path?:string;buttons:FunnelButton[]};
 export function classifyFunnelTelegramFailure(status:number,result:unknown):string {
   const value=result&&typeof result==='object'?result as Record<string,unknown>:{};
   const code=typeof value.error_code==='number'?value.error_code:status;
@@ -21,6 +22,15 @@ export async function deliverFunnelStep(db:any,deliveryId:string,options:{supaba
   const context=await rpc(db,'telegram_funnel_delivery_context',{p_delivery:deliveryId});
   if(!context?.block)return {state:'not_found'};
   const block=context.block as FunnelBlock;
+  if(block.channel==='sms'){
+    const config=await smsConfiguration(db);
+    const claim=await rpc(db,'sms_funnel_claim_send',{p_delivery:deliveryId});
+    if(claim?.state!=='claimed')return {state:claim?.state||'unknown'};
+    const outcome=await sendSmsByTransport(config,claim.phone,claim.text,options.fetch||fetch);
+    await rpc(db,'sms_funnel_finish_send',{p_delivery:deliveryId,p_lease:claim.lease_id,p_outcome:outcome.status,p_external:outcome.external_id||null,p_error:outcome.error||null});
+    return {state:outcome.status};
+  }
+
   const tokens=await Promise.all(block.buttons.map(async button=>{const raw=crypto.randomUUID();return {button,raw,hash:await funnelHash(isCallbackButton(button)?`tf:${raw}`:raw)}}));
   const claim=await rpc(db,'telegram_funnel_claim_send',{p_delivery:deliveryId,p_tokens:tokens.filter(t=>isCallbackButton(t.button)).map(t=>({button_id:t.button.id,token_hash:t.hash}))});
   if(claim?.state!=='claimed')return {state:claim?.state||'unknown'};

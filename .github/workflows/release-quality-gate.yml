@@ -258,6 +258,39 @@ jobs:
           node-version: 22
       - run: node tests/sql/telegram-funnel-audience.mjs
 
+  sms-broadcast-native:
+    name: SMS broadcast and funnel native safety
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      sms-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: sms-test-only
+          POSTGRES_DB: sms_broadcast_native_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SMS_BROADCAST_NATIVE_TEST: '1'
+      TELEGRAM_FUNNEL_NATIVE_TEST: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: sms-test-only
+      PGDATABASE: sms_broadcast_native_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test scripts/tests/sms-scheduler.test.mjs
+      - run: node scripts/tests/sms-handler.test.mjs
+      - run: npx vitest run tests/edge/smsTransport.test.ts tests/edge/smsAudience.test.ts
+      - run: node scripts/tests/sms-broadcast-native.test.mjs
+
   safe-production-smoke:
     name: Opt-in test-only checkout smoke
     if: github.event_name == 'workflow_dispatch'

@@ -74,6 +74,8 @@ interface BroadcastFunctionResult {
   sent?: number;
   failed?: number;
   skipped?: number;
+  queued?: number;
+  unknown?: number;
   per_bot?: unknown;
   error?: string;
 }
@@ -223,6 +225,11 @@ Deno.serve(async (req) => {
       body: { action: 'process_manual_email_queue' },
     });
     perTemplateLog.push({ manual_email_queue: error ? { error: 'email_queue_worker_failed' } : data });
+    const smsQueue = await supabase.functions.invoke('websms-send', {
+      headers: { 'x-system-actor': 'broadcast-dispatcher', 'x-broadcast-internal-secret': internalSecret },
+      body: { action: 'process_sms_queue' },
+    });
+    perTemplateLog.push({ sms_queue: smsQueue.error ? { error: 'sms_queue_worker_unresolved' } : smsQueue.data });
   }
 
 
@@ -250,7 +257,7 @@ Deno.serve(async (req) => {
           }
           const eventTemplate = automationTemplate as BroadcastTemplate;
           const isSiteFormEvent = eventTemplate.trigger_kind === 'site_form_event';
-          if (isSiteFormEvent && !['email','telegram'].includes(delivery.channel || '')) {
+          if (isSiteFormEvent && !['email','telegram','sms'].includes(delivery.channel || '')) {
             throw new Error('Канал события анкеты не указан');
           }
           if (isSiteFormEvent) {
@@ -275,6 +282,7 @@ Deno.serve(async (req) => {
           };
           let sent = 0;
           let failed = 0;
+          let smsUnresolved = false;
           const analyticsCampaignId = isSiteFormEvent ? delivery.id : crypto.randomUUID();
           for (const channel of eventChannels) {
             const directFilters = {
@@ -333,6 +341,18 @@ Deno.serve(async (req) => {
               if (error) throw new Error(error.message);
               sent += Number((data as BroadcastFunctionResult | null)?.sent || 0);
               failed += Number((data as BroadcastFunctionResult | null)?.failed || 0);
+            } else if (channel === 'sms') {
+              const { data, error } = await supabase.functions.invoke('websms-send', {
+                headers: systemHeaders,
+                body: { action: 'broadcast', request_id: delivery.id,
+                  text: eventTemplate.metadata?.sms_text || '', filters: directFilters,
+                  analytics_campaign_id: analyticsCampaignId, analytics_template_id: eventTemplate.id,
+                  analytics_automation_delivery_id: delivery.id },
+              });
+              // A lost response never proves failure or authorizes another paid send.
+              if (error || data?.error) { smsUnresolved = true; continue; }
+              sent += Number(data?.sent || 0); failed += Number(data?.failed || 0);
+              smsUnresolved ||= Number(data?.unknown || 0) > 0 || Number(data?.queued || 0) > 0;
             } else if (channel === 'email') {
               const { data, error } = await supabase.functions.invoke('email-mass-broadcast', {
                 headers: systemHeaders,
@@ -351,11 +371,11 @@ Deno.serve(async (req) => {
               failed += Number((data as BroadcastFunctionResult | null)?.failed || 0);
             }
           }
-          const status = sent > 0 && failed === 0 ? 'sent' : 'failed';
+          const status = smsUnresolved ? 'processing' : sent > 0 && failed === 0 ? 'sent' : 'failed';
           await supabase.from('broadcast_automation_deliveries').update({
             status,
             sent_at: status === 'sent' ? new Date().toISOString() : null,
-            error: status === 'sent' ? null : 'Не удалось доставить автоматическое сообщение',
+            error: smsUnresolved ? 'sms_delivery_unresolved_no_retry' : status === 'sent' ? null : 'Не удалось доставить автоматическое сообщение',
           }).eq('id', delivery.id);
           totalSent += sent;
           totalFailed += failed;
@@ -386,8 +406,19 @@ Deno.serve(async (req) => {
 
     // Resolve before acquiring the slot, so a failed restricted lookup cannot strand a claim.
     let aud: Record<string, unknown>;
+    let smsCount = 0;
     try {
-      if (tpl.audience_filters?.webinar_registration !== undefined) {
+      if (channels.includes('sms')) {
+        const preview = await supabase.functions.invoke('websms-send', {
+          headers: { 'x-system-actor': 'broadcast-dispatcher', 'x-broadcast-internal-secret': internalSecret },
+          body: { action: 'broadcast', dry_run: true, filters: tpl.audience_filters || {} },
+        });
+        if (preview.error || !Number.isSafeInteger(preview.data?.sms_count) || preview.data.sms_count < 0) throw new Error('sms_audience_unavailable');
+        smsCount = preview.data.sms_count;
+      }
+      if (!channels.some(channel => channel === 'telegram' || channel === 'email')) {
+        aud = { telegram_count: 0, email_count: 0, total_count: 0 };
+      } else if (tpl.audience_filters?.webinar_registration !== undefined) {
         aud = await resolveWebinarBroadcastCounts(supabase, tpl.audience_filters, tpl.email_only_when_no_telegram, channels);
       } else {
         const { data, error } = await supabase.rpc('resolve_broadcast_audience', {
@@ -442,7 +473,7 @@ Deno.serve(async (req) => {
     //  - scheduled  → revert to 'draft', clear next_run_at, requires operator action
     //  - recurring  → roll forward next_run_at to the next slot (skip cycle), keep status
     //  - dry_run    → just record skipped run, no template mutation
-    if (totalCount === 0) {
+    if (totalCount === 0 && smsCount === 0) {
       console.warn(`[broadcast-dispatcher] template ${tpl.id} empty audience — skipping send`);
       for (const channel of channels) {
         const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
@@ -524,9 +555,10 @@ Deno.serve(async (req) => {
           dry_run: isDryRun,
           triggered_by: triggeredBy,
           idempotency_key: idemKey,
-          audience_count: channel === 'telegram' ? tgCount : emailCount,
+          audience_count: channel === 'telegram' ? tgCount : channel === 'sms' ? smsCount : emailCount,
           audience_snapshot: {
             telegram_count: tgCount,
+            sms_count: smsCount,
             email_count: emailCount,
             total_count: totalCount,
             email_only_when_no_telegram: tpl.email_only_when_no_telegram,
@@ -597,7 +629,17 @@ Deno.serve(async (req) => {
           });
           if (error) throw new Error(error.message);
           result = (data || {}) as BroadcastFunctionResult;
-        } else {
+        } else if (channel === 'sms') {
+          if (!runId) throw new Error('sms_run_identity_required');
+          const { data, error } = await supabase.functions.invoke('websms-send', {
+            headers: systemHeaders,
+            body: { action: 'broadcast', request_id: runId, text: tpl.metadata?.sms_text || '',
+              filters: tpl.audience_filters || {}, analytics_campaign_id: analyticsCampaignId,
+              analytics_template_id: tpl.id, analytics_run_id: runId },
+          });
+          if (error || data?.error) throw new Error('sms_dispatch_unresolved_no_retry');
+          result = data as BroadcastFunctionResult;
+        } else if (channel === 'email') {
           // email channel: optionally narrow audience to "no telegram"
           let emailFilters: Record<string, unknown> = tpl.audience_filters || {};
           if (tpl.email_only_when_no_telegram) {
@@ -618,7 +660,7 @@ Deno.serve(async (req) => {
           });
           if (error) throw new Error(error.message);
           result = (data || {}) as BroadcastFunctionResult;
-        }
+        } else { throw new Error('broadcast_channel_unsupported'); }
 
         const sent = Number(result.sent || 0);
         const failed = Number(result.failed || 0);
@@ -630,6 +672,7 @@ Deno.serve(async (req) => {
           finished_at: new Date().toISOString(),
           sent_count: sent,
           failed_count: failed,
+          error: channel === 'sms' && Number(result.unknown || 0) > 0 ? 'sms_delivery_unknown_no_retry' : null,
           skipped_count: skipped,
           audience_snapshot: {
             telegram_count: tgCount,
@@ -637,6 +680,9 @@ Deno.serve(async (req) => {
             total_count: totalCount,
             email_only_when_no_telegram: tpl.email_only_when_no_telegram,
             per_bot: result.per_bot ?? null,
+            sms_count: smsCount,
+            sms_queued: result.queued ?? null,
+            sms_unknown: result.unknown ?? null,
           },
         }).eq('id', runId);
       } catch (e) {

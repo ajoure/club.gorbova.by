@@ -42,7 +42,7 @@ export function BroadcastFullAudienceDialog({ confirmation, onCancel, onConfirm 
         <ul className="space-y-2 text-sm">
           {confirmation?.channels.map(({ channel, count, fullAudience }) => (
             <li key={channel} className="flex flex-wrap justify-between gap-2">
-              <span>{channel === "telegram" ? "Telegram" : "Email"}: {count} получателей</span>
+              <span>{channel === "telegram" ? "Telegram" : channel === "sms" ? "SMS" : "Email"}: {count} получателей</span>
               <span className={fullAudience ? "font-medium text-destructive" : "text-muted-foreground"}>
                 {fullAudience ? "Вся база" : "Выбранная аудитория"}
               </span>

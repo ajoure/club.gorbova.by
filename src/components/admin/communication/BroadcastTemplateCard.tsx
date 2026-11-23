@@ -18,7 +18,9 @@ import {
 export interface BroadcastTemplate {
   id: string;
   name: string;
-  channel: "telegram" | "email";
+  channel: "telegram" | "email" | "sms";
+  channels?: ("telegram" | "email" | "sms")[];
+  metadata?: { sms_text?: string } | null;
   message_text: string | null;
   button_text: string | null;
   button_url: string | null;
@@ -52,7 +54,7 @@ export function BroadcastTemplateCard({
   const isTelegram = template.channel === "telegram";
   const preview = isTelegram
     ? template.message_text?.slice(0, 120) + (template.message_text && template.message_text.length > 120 ? "..." : "")
-    : template.email_subject;
+    : template.channel === "sms" ? template.metadata?.sms_text : template.email_subject;
 
   const statusBadge = {
     draft: { label: "Черновик", variant: "outline" as const },
@@ -84,7 +86,7 @@ export function BroadcastTemplateCard({
             <div>
               <h3 className="font-semibold">{template.name}</h3>
               <p className="text-xs text-muted-foreground">
-                {isTelegram ? "Telegram" : "Email"} •{" "}
+                {(template.channels?.length ? template.channels : [template.channel]).map(c => c === "telegram" ? "Telegram" : c === "sms" ? "SMS" : "Email").join(" + ")} •{" "}
                 {format(new Date(template.created_at), "dd MMM yyyy", {
                   locale: ru,
                 })}

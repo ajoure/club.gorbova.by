@@ -87,7 +87,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { BulkSmsDialog } from "@/components/admin/sms/BulkSmsDialog";
+import { Textarea } from "@/components/ui/textarea";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSection";
 import { BroadcastAuditProofCard } from "./BroadcastAuditProofCard";
@@ -101,6 +101,7 @@ import { RuleListEditor, type AudienceEntry } from "./RuleListEditor";
 import { BroadcastFullAudienceDialog, type FullAudienceConfirmation } from "./BroadcastFullAudienceDialog";
 import { WebinarRegistrationAudienceFilter } from "./WebinarRegistrationAudienceFilter";
 import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
+import { smsAudienceCount, smsBroadcastRequestId, smsBroadcastCampaignId, smsTextFromMetadata } from "@/lib/smsBroadcast";
 import { readSitePageAutomationRequest, siteFormConditionForSave } from "@/lib/sitePageAutomation";
 
 const BroadcastAnalyticsSection = lazy(() =>
@@ -121,7 +122,7 @@ interface BroadcastFilters {
   club_ids: string[];
   club_membership: "current" | "ever" | "any";
   bot_ids: string[];      // [] = primary bot
-  channels?: ("telegram" | "email")[];
+  channels?: ("telegram" | "email" | "sms")[];
   webinar_registration?: { page_id: string; block_id: string };
   education?: {
     module_id: string;
@@ -232,15 +233,19 @@ export function BroadcastsTabContent() {
   const [pageAutomationRequest] = useState(() => readSitePageAutomationRequest(new URLSearchParams(window.location.search)));
   const [pageAutomationReady, setPageAutomationReady] = useState(!pageAutomationRequest?.blockId);
   const [pageAutomationWebinar, setPageAutomationWebinar] = useState(false);
-  const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
-  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics" | "funnels" | "sms">(pageAutomationRequest?.view || "templates");
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics" | "funnels">(pageAutomationRequest?.view || "templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const openTemplateForSendRef = useRef(false);
 
-  // Channel toggles — независимые: можно отправить TG-only / Email-only / TG+Email одновременно
+  // Channel toggles are independent; each transport keeps its own recipients and content.
   const [sendToTelegram, setSendToTelegram] = useState(true);
   const [sendToEmail, setSendToEmail] = useState(false);
+  const [sendToSms, setSendToSms] = useState(false);
+  const [smsText, setSmsText] = useState("");
+  const [smsDispatchPending, setSmsDispatchPending] = useState(false);
+  const [smsTestId, setSmsTestId] = useState<string | null>(null);
+  const [smsTestDelivery, setSmsTestDelivery] = useState("");
 
   // Send mode
   const [sendMode, setSendMode] = useState<SendMode>(pageAutomationRequest?.blockId ? "event" : "now");
@@ -482,7 +487,16 @@ export function BroadcastsTabContent() {
     refetchInterval: false,
     retry: 1,
   });
-  const hasAudienceError = !!audienceError;
+  const { data: smsCount, isLoading: smsAudienceLoading, error: smsAudienceError, refetch: refetchSmsAudience } = useQuery<number, Error>({
+    queryKey: ["sms-broadcast-audience", rpcFilters],
+    enabled: mainTab === "quick" || sendToSms,
+    queryFn: async () => {
+      const { data, error } = await operationalSupabase.functions.invoke("websms-send", { body: { action: "broadcast", dry_run: true, filters: rpcFilters } });
+      if (error || data?.error) throw new Error("Не удалось рассчитать аудиторию SMS. Отправка не запускалась.");
+      return smsAudienceCount(data);
+    }, retry: false,
+  });
+  const hasAudienceError = ((sendToTelegram || sendToEmail) && !!audienceError) || (sendToSms && !!smsAudienceError);
 
   const { data: historyItems } = useQuery({
     queryKey: ["broadcast-history"],
@@ -545,6 +559,7 @@ export function BroadcastsTabContent() {
     return JSON.stringify({
       sendToTelegram,
       sendToEmail,
+      sendToSms, smsText,
       sendMode,
       siteFormCondition,
       scheduledName,
@@ -567,7 +582,7 @@ export function BroadcastsTabContent() {
       scheduledTime,
     });
   }, [
-    sendToTelegram, sendToEmail, sendMode, siteFormCondition, scheduledName, message, emailSubject,
+    sendToTelegram, sendToEmail, sendToSms, smsText, sendMode, siteFormCondition, scheduledName, message, emailSubject,
     emailBody, includeButton, buttonText, buttonUrl, includeAdditionalButton, additionalButtonText, additionalButtonUrl, filters, includeArchived, mediaFile, recurrence,
     scheduledAt, scheduledTime,
   ]);
@@ -586,6 +601,12 @@ export function BroadcastsTabContent() {
     setMessage("");
     setEmailSubject("");
     setEmailBody("");
+    setSmsText("");
+    // An explicit new composer is a new intent; persisted request identities
+    // still prevent the same uncertain payload from becoming a second send.
+    setSmsDispatchPending(false);
+    setSmsTestId(null);
+    setSmsTestDelivery("");
     setScheduledName("");
     setScheduledAt(null);
     setSendMode("now");
@@ -599,6 +620,7 @@ export function BroadcastsTabContent() {
     setAdditionalButtonUrl("");
     setSendToTelegram(true);
     setSendToEmail(false);
+    setSendToSms(false);
     setIncludeArchived(false);
     setFilters({ include: [], exclude: [], club_ids: [], club_membership: "current", bot_ids: [] });
     removeMedia();
@@ -749,6 +771,71 @@ export function BroadcastsTabContent() {
     },
   });
 
+  const sendSmsMutation = useMutation({
+    retry: false,
+    mutationFn: async ({ analyticsCampaignId, campaignName, fullAudienceConfirmed }: { analyticsCampaignId: string; campaignName: string; fullAudienceConfirmed: boolean }) => {
+      const full = isFullBroadcastAudience(filters, "sms");
+      if (full && !fullAudienceConfirmed) throw new Error("Подтвердите отправку по всей базе");
+      const { data: { user }, error: actorError } = await supabase.auth.getUser();
+      if (actorError || !user) throw new Error("Сессия истекла. Войдите снова.");
+      const content = { text: smsText.trim(), filters: { ...filters, include_archived: includeArchived } };
+      const requestId = await smsBroadcastRequestId(user.id, content);
+      const stableCampaignId = smsBroadcastCampaignId(requestId, analyticsCampaignId);
+      // The key is durable before this boundary. No automatic resend on timeout.
+      setSmsDispatchPending(true);
+      const { data, error } = await operationalSupabase.functions.invoke("websms-send", { body: {
+        action: "broadcast", ...content, request_id: requestId, analytics_campaign_id: stableCampaignId,
+        analytics_campaign_name: campaignName, ...(full ? { allow_full_audience: true, confirm_full_audience_text: "SEND TO ALL" } : {}),
+      } });
+      if (error || data?.error) throw new Error("Результат SMS-запроса не подтверждён. Проверьте ту же отправку в истории перед повтором.");
+      return data;
+    },
+    onSuccess: data => {
+      const unknown = Number(data.unknown || 0);
+      if (unknown) toast.warning(`SMS: неизвестный результат у ${unknown} получателей. Повторная отправка не выполняется.`);
+      else if (data.queued) toast.success(`SMS-рассылка зарегистрирована: ${data.queued} получателей. Проверьте статусы в истории SMS.`);
+      else toast.success(`SMS: отправлено ${Number(data.sent || 0)}, ошибок ${Number(data.failed || 0)}`);
+      // Keep the registered operation visibly separate from an intentional new campaign.
+      queryClient.invalidateQueries({ queryKey: ["sms-history"] });
+      queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
+    },
+    onError: error => toast.error(readableBroadcastError(error)),
+  });
+
+  const sendSmsTestMutation = useMutation({
+    retry: false,
+    mutationFn: async () => {
+      const text = smsText.trim();
+      if (!text || text.length > 1000) throw new Error("Введите текст SMS: от 1 до 1000 символов");
+      const { data: { user }, error: actorError } = await supabase.auth.getUser();
+      if (actorError || !user) throw new Error("Не удалось определить текущего администратора");
+      const requestId = await smsBroadcastRequestId(user.id, { action: "test_self", text });
+      const { data, error } = await operationalSupabase.functions.invoke("websms-send", { body: { action: "test_self", text, request_id: requestId } });
+      if (error || data?.error) throw new Error("Результат тестовой SMS не подтверждён. Проверьте историю; новый запрос не создаётся.");
+      return data;
+    },
+    onSuccess: data => {
+      if (Array.isArray(data.sms_ids) && typeof data.sms_ids[0] === "string") setSmsTestId(data.sms_ids[0]);
+      setSmsTestDelivery("Доставка пока не подтверждена");
+      if (Number(data.unknown || 0)) toast.warning("Результат тестовой SMS неизвестен. Не отправляйте повторно.");
+      else toast.info("Тестовая SMS зарегистрирована. Статус доставки проверяется по данным SMS.by.");
+      queryClient.invalidateQueries({ queryKey: ["sms-history"] });
+    },
+    onError: error => toast.error(readableBroadcastError(error)),
+  });
+
+  const smsStatusMutation = useMutation({
+    retry: false,
+    mutationFn: async () => {
+      if (!smsTestId) throw new Error("Нет зарегистрированной тестовой SMS");
+      const { data, error } = await operationalSupabase.functions.invoke("websms-send", { body: { action: "status", sms_id: smsTestId } });
+      if (error || data?.error || data?.sms_id !== smsTestId) throw new Error("Не удалось проверить доставку. Повторная отправка не выполнялась.");
+      return data;
+    },
+    onSuccess: data => setSmsTestDelivery(data.delivery_status === "delivered" ? "SMS.by подтвердил доставку" : data.status === "failed" ? "SMS отклонена" : data.delivery_status === "unknown" ? "Результат проверки доставки неизвестен" : "Доставка пока не подтверждена"),
+    onError: error => toast.error(readableBroadcastError(error)),
+  });
+
   // Telegram-тест текущему авторизованному администратору.
   const sendTelegramTestMutation = useMutation<unknown, Error, void>({
     mutationFn: async () => {
@@ -896,12 +983,13 @@ export function BroadcastsTabContent() {
     return d.toISOString();
   }, [scheduledAt, scheduledTime]);
 
-  const channelsArr = useMemo<("telegram" | "email")[]>(() => {
-    const arr: ("telegram" | "email")[] = [];
+  const channelsArr = useMemo<("telegram" | "email" | "sms")[]>(() => {
+    const arr: ("telegram" | "email" | "sms")[] = [];
     if (sendToTelegram) arr.push("telegram");
     if (sendToEmail) arr.push("email");
+    if (sendToSms) arr.push("sms");
     return arr;
-  }, [sendToTelegram, sendToEmail]);
+  }, [sendToTelegram, sendToEmail, sendToSms]);
 
   // Hydrate composer from existing template when editTemplateId is set
   // Гидратация запускается только при смене id. snapshotCurrentComposer намеренно
@@ -933,6 +1021,8 @@ export function BroadcastsTabContent() {
       const ch = (tpl.channels as string[]) || [];
       setSendToTelegram(ch.includes("telegram"));
       setSendToEmail(ch.includes("email"));
+      setSendToSms(ch.includes("sms"));
+      setSmsText(smsTextFromMetadata(tpl.metadata));
       setScheduledName(String(tpl.name || ""));
       setMessage(String(tpl.message_text || ""));
       setEmailSubject(String(tpl.email_subject || ""));
@@ -1072,7 +1162,7 @@ export function BroadcastsTabContent() {
         next_run_at: nextRunAt,
         trigger_kind: isEvent ? siteFormCondition ? "site_form_event" : "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
         education_condition: isEvent && siteFormCondition ? null : filters.education || null,
-        metadata: { ...templateMetadataRef.current, additional_button: sendToTelegram ? composerAdditionalButton() : null, site_form_condition: isEvent && siteFormCondition ? siteFormConditionForSave(siteFormCondition, templateMetadataRef.current.site_form_condition, new Date().toISOString()) : null },
+        metadata: { ...templateMetadataRef.current, sms_text: sendToSms ? smsText.trim() : null, additional_button: sendToTelegram ? composerAdditionalButton() : null, site_form_condition: isEvent && siteFormCondition ? siteFormConditionForSave(siteFormCondition, templateMetadataRef.current.site_form_condition, new Date().toISOString()) : null },
         ...(isEvent && siteFormCondition ? { approval_status: "pending_approval", approved_at: null, approved_by: null } : {}),
       };
 
@@ -1142,6 +1232,7 @@ export function BroadcastsTabContent() {
       const sends = [];
       if (sendToTelegram) sends.push(sendTelegramMutation.mutateAsync(variables));
       if (sendToEmail) sends.push(sendEmailMutation.mutateAsync(variables));
+      if (sendToSms) sends.push(sendSmsMutation.mutateAsync(variables));
       await Promise.allSettled(sends);
     } finally {
       manualSendLockRef.current = false;
@@ -1157,19 +1248,22 @@ export function BroadcastsTabContent() {
       toast.error("Для вебинара выберите отправку после завершённой регистрации");
       return;
     }
-    if (!sendToTelegram && !sendToEmail) {
-      toast.error("Выберите хотя бы один канал: Telegram или Email");
+    if (!sendToTelegram && !sendToEmail && !sendToSms) {
+      toast.error("Выберите хотя бы один канал: Telegram, Email или SMS");
       return;
     }
-    if (hasAudienceError) {
+    if (hasAudienceError || (sendToSms && (smsAudienceLoading || smsCount === undefined))) {
       toast.error("Аудитория не рассчитана", {
-        description: audienceError?.message || "Исправьте фильтры или повторите позже",
+        description: smsAudienceError?.message || audienceError?.message || "Исправьте фильтры или повторите позже",
       });
       return;
     }
     if (sendToTelegram && !message.trim() && !mediaFile) {
       toast.error("Введите текст сообщения или добавьте медиа для Telegram");
       return;
+    }
+    if (sendToSms && (!smsText.trim() || smsText.trim().length > 1000)) {
+      toast.error("Введите текст SMS: от 1 до 1000 символов"); return;
     }
     if (sendToEmail && (!emailSubject.trim() || !emailBody.trim())) {
       toast.error("Заполните тему и текст письма для Email");
@@ -1188,7 +1282,7 @@ export function BroadcastsTabContent() {
       return;
     }
     if (sendMode === "event" && siteFormCondition?.event === "email_confirmed_incomplete" &&
-        (!Number.isInteger(siteFormCondition.delay_minutes) || (siteFormCondition.delay_minutes ?? 0) < 15 || (siteFormCondition.delay_minutes ?? 0) > 10080 || sendToTelegram || !sendToEmail)) {
+        (!Number.isInteger(siteFormCondition.delay_minutes) || (siteFormCondition.delay_minutes ?? 0) < 15 || (siteFormCondition.delay_minutes ?? 0) > 10080 || sendToTelegram || sendToSms || !sendToEmail)) {
       toast.error("Для напоминания выберите только email и задержку от 15 до 10080 минут");
       return;
     }
@@ -1210,6 +1304,7 @@ export function BroadcastsTabContent() {
       const channels: FullAudienceConfirmation["channels"] = [];
       if (sendToTelegram) channels.push({ channel: "telegram", count: audience?.telegramCount ?? 0, fullAudience: isFullBroadcastAudience(filters, "telegram") });
       if (sendToEmail) channels.push({ channel: "email", count: audience?.emailCount ?? 0, fullAudience: isFullBroadcastAudience(filters, "email") });
+      if (sendToSms) channels.push({ channel: "sms", count: smsCount ?? 0, fullAudience: isFullBroadcastAudience(filters, "sms") });
       if (channels.some((channel) => channel.fullAudience)) {
         setFullAudienceConfirmation({ channels });
       } else {
@@ -1234,11 +1329,13 @@ export function BroadcastsTabContent() {
 
   const isSendDisabled =
     !pageAutomationReady ||
-    (!sendToTelegram && !sendToEmail) ||
+    (!sendToTelegram && !sendToEmail && !sendToSms) ||
     hasAudienceError ||
-    audienceLoading ||
+    ((sendToTelegram || sendToEmail) && audienceLoading) ||
+    (sendToSms && (smsAudienceLoading || smsCount === undefined)) ||
     sendTelegramMutation.isPending ||
     sendEmailMutation.isPending ||
+    sendSmsMutation.isPending || (sendToSms && sendMode === "now" && smsDispatchPending) ||
     saveScheduledMutation.isPending;
 
   return (
@@ -1249,30 +1346,14 @@ export function BroadcastsTabContent() {
         onConfirm={() => void startManualSend(true)}
       />
       {/* Main Tabs: Templates vs Quick Send */}
-      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics" | "funnels" | "sms")}>
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics" | "funnels")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger className="shrink-0" value="templates">📋 Шаблоны</TabsTrigger>
           <TabsTrigger className="shrink-0" value="quick">⚡ Быстрая рассылка</TabsTrigger>
           <TabsTrigger className="shrink-0" value="scheduled">📅 Запланированные</TabsTrigger>
           <TabsTrigger className="shrink-0" value="analytics">📊 Аналитика</TabsTrigger>
           <TabsTrigger className="shrink-0" value="funnels">Воронки</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="sms">SMS</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="sms" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Массовая SMS-рассылка</CardTitle>
-              <CardDescription>
-                Отправка SMS выбранным контактам через SMS.by. Подключение и отправитель настраиваются в «Интеграции → Разное».
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button onClick={() => setBulkSmsOpen(true)}>Массовая SMS-рассылка</Button>
-            </CardContent>
-          </Card>
-          <BulkSmsDialog open={bulkSmsOpen} onOpenChange={setBulkSmsOpen} />
-        </TabsContent>
 
         <TabsContent value="funnels" className="mt-6">
           <Suspense fallback={<p role="status">Загружаем воронки…</p>}><TelegramFunnels /></Suspense>
@@ -1355,7 +1436,7 @@ export function BroadcastsTabContent() {
                 size="sm"
                 onClick={() => {
                   // Крестик закрывает редактор и возвращает к списку шаблонов.
-                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || scheduledName.trim() || mediaFile);
+                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || smsText.trim() || scheduledName.trim() || mediaFile);
                   if (hasContent) {
                     setExitConfirmOpen({ kind: "new" });
                   } else {
@@ -1407,7 +1488,7 @@ export function BroadcastsTabContent() {
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Каналы рассылки</CardTitle>
               <CardDescription>
-                Можно отправлять одновременно в Telegram и Email
+                Можно отправлять одновременно в Telegram, Email и SMS
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -1416,8 +1497,8 @@ export function BroadcastsTabContent() {
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription className="space-y-2">
                     <div className="font-medium">Ошибка расчёта аудитории</div>
-                    <div className="text-xs opacity-90 break-words">{readableBroadcastError(audienceError)}</div>
-                    <Button type="button" variant="outline" size="sm" onClick={() => refetchAudience()}>
+                    <div className="text-xs opacity-90 break-words">{readableBroadcastError(smsAudienceError || audienceError)}</div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => { void refetchAudience(); if (sendToSms) void refetchSmsAudience(); }}>
                       Повторить расчёт
                     </Button>
                   </AlertDescription>
@@ -1465,7 +1546,14 @@ export function BroadcastsTabContent() {
                   onCheckedChange={setSendToEmail}
                 />
               </div>
-              {sendToEmail && (
+              <div className="flex items-center justify-between gap-3 p-3 rounded-lg border">
+                <div className="flex items-center gap-3"><MessageCircle className="h-5 w-5 text-green-600 shrink-0" /><div>
+                  <Label htmlFor="ch-sms" className="cursor-pointer font-medium">Отправлять SMS</Label>
+                  {!smsAudienceError && smsCount !== undefined ? <p className="text-xs text-muted-foreground">{smsCount} получателей с телефоном</p> : <p className="text-xs text-muted-foreground">{smsAudienceLoading ? "Считаем получателей с телефоном…" : "Контакты с известным телефоном"}</p>}
+                </div></div>
+                <Switch id="ch-sms" checked={sendToSms} onCheckedChange={setSendToSms} />
+              </div>
+              {(sendToEmail || sendToSms) && (
                 <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
                   <div className="flex items-center gap-3">
                     <div>
@@ -1474,7 +1562,7 @@ export function BroadcastsTabContent() {
                       </Label>
                       <p className="text-xs text-muted-foreground">
                         По умолчанию архивные исключены. Включи, чтобы охватить всю историческую базу
-                        {audience ? ` (+${audience.emailArchivedCount})` : ""}.
+                        {sendToEmail && audience ? ` (+${audience.emailArchivedCount})` : ""}.
                       </p>
                     </div>
                   </div>
@@ -1949,6 +2037,14 @@ export function BroadcastsTabContent() {
             </Card>
           )}
 
+          {sendToSms && <Card><CardHeader className="pb-3"><CardTitle className="text-lg">SMS-рассылка</CardTitle><CardDescription>Контакты с известным телефоном · SMS.by</CardDescription></CardHeader><CardContent className="space-y-2">
+            <Label htmlFor="broadcast-sms-text">Текст SMS</Label><Textarea id="broadcast-sms-text" value={smsText} onChange={e => setSmsText(e.target.value)} maxLength={1000} rows={5} placeholder="Введите текст SMS…" />
+            <p className="text-xs text-muted-foreground">{smsText.length} / 1000 символов. Без форматирования, изображений и Telegram-кнопок. Длинное сообщение может состоять из нескольких платных частей.</p>
+            <Button type="button" variant="outline" disabled={!smsText.trim() || smsText.trim().length > 1000 || sendSmsTestMutation.isPending} onClick={() => sendSmsTestMutation.mutate()}>{sendSmsTestMutation.isPending ? 'Проверяем отправку…' : 'Тестовая SMS на свой номер'}</Button>
+            <p className="text-xs text-muted-foreground">Одна SMS на телефон вашего профиля. Аудитория рассылки не используется. Повтор той же проверки использует прежний запрос.</p>
+            {smsTestId && <div className="flex flex-wrap items-center gap-2"><span role="status" className="text-sm">{smsTestDelivery}</span><Button type="button" variant="outline" size="sm" disabled={smsStatusMutation.isPending} onClick={() => smsStatusMutation.mutate()}>Проверить доставку SMS</Button></div>}
+            {smsDispatchPending && <p role="status" className="text-sm text-amber-700">Предыдущая SMS-рассылка зарегистрирована или её результат пока неизвестен. Проверьте историю отправок; повторная отправка заблокирована.</p>}
+          </CardContent></Card>}
           {/* Email composer */}
           {sendToEmail && (
             <Card>
@@ -2098,7 +2194,7 @@ export function BroadcastsTabContent() {
               onClick={handleSend}
               disabled={isSendDisabled}
             >
-              {(sendTelegramMutation.isPending || sendEmailMutation.isPending || saveScheduledMutation.isPending) ? (
+              {(sendTelegramMutation.isPending || sendEmailMutation.isPending || sendSmsMutation.isPending || saveScheduledMutation.isPending) ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {sendMode === "now" ? "Отправка..." : "Сохранение..."}
@@ -2109,7 +2205,7 @@ export function BroadcastsTabContent() {
                   Отправить
                   {channelsArr.length > 0 && (
                     <Badge variant="secondary" className="ml-2">
-                      {channelsArr.map((c) => (c === "telegram" ? "TG" : "Email")).join(" + ")}
+                      {channelsArr.map((c) => (c === "telegram" ? "TG" : c === "sms" ? "SMS" : "Email")).join(" + ")}
                     </Badge>
                   )}
                 </>
@@ -2436,8 +2532,8 @@ export function BroadcastsTabContent() {
                     <AlertTriangle className="h-4 w-4" />
                     <AlertDescription className="text-xs space-y-2">
                       <div className="font-medium">Ошибка расчёта</div>
-                      <div className="break-words opacity-90">{readableBroadcastError(audienceError)}</div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => refetchAudience()}>
+                      <div className="break-words opacity-90">{readableBroadcastError(smsAudienceError || audienceError)}</div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => { void refetchAudience(); if (sendToSms) void refetchSmsAudience(); }}>
                         Повторить
                       </Button>
                     </AlertDescription>
@@ -2460,6 +2556,7 @@ export function BroadcastsTabContent() {
                     </div>
                   </div>
                 )}
+                <div className="flex items-center justify-between gap-2 text-sm mt-2"><span>SMS</span><span className="font-medium">{smsAudienceError ? 'Ошибка расчёта' : smsAudienceLoading ? 'Подсчёт…' : smsCount ?? 'Не рассчитано'}</span></div>
               </div>
 
               {/* Preview Button */}

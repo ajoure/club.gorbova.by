@@ -1,4 +1,4 @@
-export type BroadcastChannel = "telegram" | "email";
+export type BroadcastChannel = "telegram" | "email" | "sms";
 
 export const FULL_AUDIENCE_PHRASE = "ОТПРАВИТЬ ВСЕМ";
 
@@ -18,7 +18,7 @@ export function isFullBroadcastAudience(filters: ConfirmationFilters, channel: B
     && !filters.club_ids?.length
     && !filters.education
     && !filters.webinar_registration
-    && (channel === "email" || !filters.bot_ids?.length);
+    && (channel !== "telegram" || !filters.bot_ids?.length);
 }
 
 export function isFullAudiencePhrase(value: string): boolean {

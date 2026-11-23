@@ -6,9 +6,9 @@ export type { TelegramFunnelSegment, TelegramFunnelSegmentNode } from '../../../
 // Additive managed schema: keep contracts outside generated types.ts until Cloud sync.
 export const funnelDb = supabase as unknown as SupabaseClient;
 export type FunnelButton = { id: string; text: string } & ({ kind: 'url'; url: string } | { kind: 'next'; target_block_id: string } | { kind: 'finish'; tag?: string | null });
-export interface FunnelBlock { id: string; text: string; image_path?: string | null; buttons: FunnelButton[] }
+export interface FunnelBlock { channel?: 'telegram' | 'sms'; id: string; text: string; image_path?: string | null; buttons: FunnelButton[] }
 export interface FunnelRecord { id: string; name: string; status: 'draft' | 'active' | 'stopped'; revision: number; start_block_id: string; blocks: FunnelBlock[]; created_at?: string; created_by?: string }
-export interface FunnelLaunch { id: string; funnel_id: string; bot_id: string; scheduled_for: string; status: string; created_at: string }
+export interface FunnelLaunch { id: string; funnel_id: string; bot_id: string | null; scheduled_for: string; status: string; created_at: string }
 export interface FunnelReportRow { id?: string; enrollment_id?: string; funnel_name?: string; profile_name?: string; status?: string; reason?: string | null; current_block?: string; block_id?: string; text?: string; buttons?: FunnelButton[]; created_at?: string; kind?: string; button_id?: string; error_code?: string | null; detail?: Record<string, unknown> }
 export interface FunnelReport { total: number; enrollments: FunnelReportRow[]; deliveries: FunnelReportRow[]; events: FunnelReportRow[]; summary: { entered: number; skipped: number; sent: number; failed: number; unknown: number; clicked: number; url_clicked: number }; blocks?: unknown[]; buttons?: unknown[] }
 export interface NamedOption { id: string; name: string; product_id?: string }
@@ -41,6 +41,10 @@ export function graphErrors(funnel: FunnelRecord): string[] {
   if (!ids.has(funnel.start_block_id)) errors.push('Выберите стартовое сообщение.');
   if (ids.size !== funnel.blocks.length) errors.push('Повторяются ID сообщений.');
   for (const [i, block] of funnel.blocks.entries()) {
+    if (block.channel === 'sms') {
+      if (!block.text.trim() || block.text.length > 1000) errors.push(`Сообщение ${i + 1}: текст SMS должен содержать 1–1000 символов.`);
+      if (block.image_path || block.buttons.length) errors.push(`Сообщение ${i + 1}: SMS не поддерживает изображения и интерактивные кнопки.`);
+    }
     if (!block.text.trim() && !block.image_path) errors.push(`Сообщение ${i + 1}: добавьте текст или изображение.`);
     if (block.text.length > 4096) errors.push(`Сообщение ${i + 1}: превышен лимит 4096 символов.`);
     for (const button of block.buttons) {
@@ -63,3 +67,17 @@ export const errorText = (error: unknown) => {
   const messages: Record<string, string> = { funnel_revision_changed: 'Версия воронки изменилась. Загрузите актуальную воронку перед сохранением.', communication_manage_required: 'Недостаточно прав для управления рассылками.', funnel_bot_unavailable: 'Выбранный бот недоступен. Обновите список ботов.', funnel_no_self_profile: 'Ваш профиль не найден. Проверка на себе не запущена.', funnel_no_self_dialog: 'Нет доступного диалога с выбранным ботом. Сначала подключите свой Telegram.', funnel_finish_tag_invalid: 'Метка кнопки завершения: до 80 символов, без пробелов по краям.', funnel_button_kind_invalid: 'Неизвестный тип кнопки. Обновите страницу.' };
   return messages[message] || message || 'Не удалось выполнить действие. Повторите проверку.';
 };
+
+/** SMS uses the same bounded page contract with phone reachability in has_dialog. */
+export function parseSmsFunnelAudience(value: unknown, offset = 0, limit = 50): import('../../../../../supabase/functions/_shared/telegram-funnel-segments').TelegramFunnelAudiencePage {
+  const fail = () => { throw Error('Не удалось проверить получателей SMS. Отправка не запускалась.'); };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return fail();
+  const p = value as Record<string, unknown>, uuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  if (!Number.isSafeInteger(p.total) || Number(p.total) < 0 || !Number.isSafeInteger(p.available_count) || Number(p.available_count) < 0 || Number(p.available_count) > Number(p.total) || !Array.isArray(p.recipients) || p.recipients.length > limit || p.recipients.length > Math.max(0, Number(p.total) - offset)) return fail();
+  const seen = new Set();
+  for (const r of p.recipients) {
+    if (!r || typeof r !== 'object' || !uuid(r.profile_id) || seen.has(r.profile_id) || !(r.user_id === null || uuid(r.user_id)) || !(r.full_name === null || typeof r.full_name === 'string') || typeof r.has_dialog !== 'boolean') return fail();
+    seen.add(r.profile_id);
+  }
+  return p as unknown as import('../../../../../supabase/functions/_shared/telegram-funnel-segments').TelegramFunnelAudiencePage;
+}
