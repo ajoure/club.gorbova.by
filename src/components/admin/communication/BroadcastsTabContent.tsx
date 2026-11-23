@@ -602,6 +602,11 @@ export function BroadcastsTabContent() {
     setEmailSubject("");
     setEmailBody("");
     setSmsText("");
+    // An explicit new composer is a new intent; persisted request identities
+    // still prevent the same uncertain payload from becoming a second send.
+    setSmsDispatchPending(false);
+    setSmsTestId(null);
+    setSmsTestDelivery("");
     setScheduledName("");
     setScheduledAt(null);
     setSendMode("now");
@@ -1431,7 +1436,7 @@ export function BroadcastsTabContent() {
                 size="sm"
                 onClick={() => {
                   // Крестик закрывает редактор и возвращает к списку шаблонов.
-                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || scheduledName.trim() || mediaFile);
+                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || smsText.trim() || scheduledName.trim() || mediaFile);
                   if (hasContent) {
                     setExitConfirmOpen({ kind: "new" });
                   } else {
