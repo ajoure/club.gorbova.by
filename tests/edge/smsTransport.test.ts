@@ -1,14 +1,17 @@
 import {describe,it,expect,vi} from 'vitest';
-import {normalizeSmsPhone,sendSmsByTransport,checkSmsDelivery,drainSmsBroadcastQueue,smsConfiguration} from '../../supabase/functions/_shared/sms-transport';
+import {normalizeSmsPhone,sendSmsByTransport,checkSmsDelivery,drainSmsBroadcastQueue,smsConfiguration,reconcileSmsDeliveries} from '../../supabase/functions/_shared/sms-transport';
 const config={token:'synthetic-token-only',alphanameId:'1',sender:'Fixture'};
 const phone='+99900123456';
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
-function dbFixture(rows:any[]=[]){
- const updates:any[]=[];let claimed=false;
- return {updates,db:{rpc:vi.fn(async()=>({data:claimed?[]:(claimed=true,rows),error:null})),from:(table:string)=>{
+function dbFixture(rows:any[]=[],acceptedRows:any[]=[]){
+ const updates:any[]=[],filters:any[]=[],limits:number[]=[];let claimed=false;
+ return {updates,filters,limits,db:{rpc:vi.fn(async()=>({data:claimed?[]:(claimed=true,rows),error:null})),from:(table:string)=>{
   if(table==='integrations')return {select:()=>({eq:()=>({maybeSingle:async()=>({data:{is_enabled:true},error:null})})})};
   if(table==='integration_credentials')return {select:()=>({eq:async()=>({data:[{secrets:{token:config.token},config:{}}],error:null})})};
-  return {update:(value:any)=>{updates.push(value);return {eq:()=>({eq:async()=>({error:null})})};}};
+  return {
+   update:(value:any)=>{updates.push(value);const chain:any={eq:()=>chain,then:(resolve:any)=>Promise.resolve({error:null}).then(resolve)};return chain;},
+   select:()=>{const chain:any={not:(...args:any[])=>{filters.push(['not',...args]);return chain;},eq:(...args:any[])=>{filters.push(['eq',...args]);return chain;},order:()=>chain,limit:async(n:number)=>{limits.push(n);return {data:acceptedRows.filter(row=>row.dispatch_key!=null&&row.status==='sent'&&row.external_id!=null).slice(0,n),error:null};}};return chain;},
+  };
  }}};
 }
 describe('SMS.by transport acceptance and uncertainty',()=>{
@@ -46,5 +49,41 @@ describe('SMS.by transport acceptance and uncertainty',()=>{
  it('rejects an alternate provider origin before any SMS request',async()=>{
   const fixture=dbFixture();const original=fixture.db.from;fixture.db.from=(table:string)=>table==='integration_credentials'?{select:()=>({eq:async()=>({data:[{secrets:{token:'synthetic'},config:{base_url:'https://other.invalid'}}],error:null})})} as any:original(table);
   await expect(smsConfiguration(fixture.db)).rejects.toThrow('sms_provider_url_invalid');
+ });
+});
+
+describe('bounded delivery reconciliation in the existing SMS queue',()=>{
+ const accepted={id:'receipt-row',dispatch_key:'durable-request:fixture',status:'sent',external_id:'21',metadata:{campaign_id:'fixture-campaign'}};
+ it('leaves accepted pending messages accepted and never resends them',async()=>{
+  const fixture=dbFixture([], [accepted]);const fetcher=vi.fn(async()=>response({sms_id:21,delivered:0}));
+  expect(await reconcileSmsDeliveries(fixture.db,config,fetcher as typeof fetch)).toEqual({checked:1,delivered:0});
+  expect(fixture.updates[0]).toEqual({updated_at:expect.any(String)});
+  expect(fetcher).toHaveBeenCalledTimes(1);expect(new URL(fetcher.mock.calls[0][0] as string).pathname).toBe('/api/v1/checkSMS');
+ });
+ it('persists only matching delivery proof with a numeric timestamp and sanitized metadata',async()=>{
+  const fixture=dbFixture([], [{...accepted,metadata:{...accepted.metadata,token:'must-not-copy',raw_response:{private:'must-not-copy'},phone:'must-not-copy'}}]);
+  expect(await reconcileSmsDeliveries(fixture.db,config,vi.fn(async()=>response({sms_id:21,delivered:1616407673})) as typeof fetch)).toEqual({checked:1,delivered:1});
+  expect(fixture.updates[0]).toEqual({updated_at:expect.any(String),status:'delivered',metadata:{campaign_id:'fixture-campaign',smsby_delivered_at:1616407673,verified_at:expect.any(String)}});
+ });
+ it('never checks uncertain sends or old legacy rows and never calls a send endpoint',async()=>{
+  const fixture=dbFixture([], [{...accepted,status:'unknown'},{...accepted,dispatch_key:null}]);const fetcher=vi.fn();
+  expect(await drainSmsBroadcastQueue(fixture.db,undefined,fetcher as typeof fetch)).toEqual({sent:0,failed:0,unknown:0});
+  expect(fetcher).not.toHaveBeenCalled();expect(fixture.filters).toContainEqual(['not','dispatch_key','is',null]);expect(fixture.filters).toContainEqual(['eq','status','sent']);expect(fixture.filters).toContainEqual(['not','external_id','is',null]);
+ });
+ it('checks at most five receipts in one cron tick and uses a three-second timeout',async()=>{
+  const fixture=dbFixture([],Array.from({length:8},(_,n)=>({...accepted,id:'receipt-'+n,external_id:String(21+n)})));
+  const fetcher=vi.fn(async(url:string)=>response({sms_id:Number(new URL(url).searchParams.get('sms_id')),delivered:0}));
+  const timeout=vi.spyOn(AbortSignal,'timeout');
+  try{await drainSmsBroadcastQueue(fixture.db,undefined,fetcher as typeof fetch);expect(fetcher).toHaveBeenCalledTimes(5);expect(fixture.limits).toEqual([5]);expect(timeout).toHaveBeenCalledWith(3000);}finally{timeout.mockRestore();}
+ });
+ it('preserves acceptance after unknown or mismatched status results without requeueing',async()=>{
+  for(const fetcher of [vi.fn(async()=>{throw Error('offline');}),vi.fn(async()=>response({sms_id:99,delivered:1616407673}))]){
+   const fixture=dbFixture([], [accepted]);await reconcileSmsDeliveries(fixture.db,config,fetcher as typeof fetch);expect(fixture.updates[0]).toEqual({updated_at:expect.any(String)});
+  }
+ });
+ it('does not poll other batches during a manual dispatch and rejects non-timestamp booleans',async()=>{
+  const fixture=dbFixture([], [accepted]);const fetcher=vi.fn(async()=>response({sms_id:21,delivered:true}));
+  await drainSmsBroadcastQueue(fixture.db,'own-dispatch',fetcher as typeof fetch);expect(fetcher).not.toHaveBeenCalled();
+  expect(await checkSmsDelivery(config,'21',fetcher as typeof fetch)).toBe('pending');
  });
 });
