@@ -1,3 +1,4 @@
+import { grantForPersistedPayment, classifySubscriptionGrant } from './subscription-payment-grant.ts';
 import { isIsolatedZg27SandboxNotification } from './zg27-sandbox-notification.ts';
 import { requireZg27ActivatedSubscription } from '../_shared/zg27-subscription.ts';
 import { settleZg27InstallmentReceipt } from '../_shared/zg27-installment-receipt.ts';
@@ -2321,7 +2322,7 @@ Deno.serve(async (req) => {
                 ?? null;
               rebillAccessOutcome = classifyRebillAccessOutcome(rebillResult.decision);
               // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
-              // STEP E payments_v2 upsert MUST route to the REBILL order, NOT parent
+              // Receipt payments_v2 upsert MUST route to the REBILL order, NOT parent
               // (PATCH-RB1.2: prevent legacy STEP E from overwriting payment back to parent).
             }
           } catch (rebillErr) {
@@ -2409,63 +2410,76 @@ Deno.serve(async (req) => {
           Number.isInteger(guardBillingCycles) &&
           paidCycles >= guardBillingCycles;
 
-        // === STEP A: Canonical writer FIRST (single access write-path) ===
-        // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
-        // against the REBILL-order (rebillHandled=true). Provider-sync (STEPS C/D/E) still
-        // runs below to mirror provider state into subscriptions_v2/provider_subscriptions/payments_v2.
-        let grantOutcome: 'ok' | 'skip' | 'error' = 'error';
-        let grantStatus = 0;
-        let grantResult: any = null;
-        if (rebillHandled) {
-          grantOutcome = rebillAccessOutcome ?? 'error';
-          console.log(
-            '[WEBHOOK-SUBSCRIPTION] STEP A skipped: REBILL flow terminal outcome=',
-            grantOutcome,
-          );
-        } else if (orderV2Id) {
-          try {
-            const grantResp = await fetch(
-              `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-                },
-                body: JSON.stringify({
-                  orderId: orderV2Id,
-                  source: 'bepaid_webhook',
-                  context: 'subscription_renewal',
-                }),
-              }
-            );
-            grantStatus = grantResp.status;
-            grantResult = await grantResp.json().catch(() => null);
+        // Persist the payment fact before the canonical access writer.
+        // Keep the existing UID upsert and finite/REBILL order routing.
+        const paymentAmount = transaction?.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : 0);
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', subV2.user_id)
+          .maybeSingle();
 
-            if (!grantResp.ok || !grantResult) {
-              grantOutcome = 'error';
-            } else if (
-              grantResult.skipped === true ||
-              grantResult.status === 'skipped' ||
-              String(grantResult.reason || '').startsWith('skip_') ||
-              String(grantResult.reason || '') === 'sbs_mismatch' ||
-              String(grantResult.reason || '') === 'manual_review'
-            ) {
-              grantOutcome = 'skip';
-            } else if (grantResult.success === false) {
-              grantOutcome = 'error';
-            } else {
-              grantOutcome = 'ok';
-            }
-            console.log('[WEBHOOK-SUBSCRIPTION] grant-access outcome:', grantOutcome, grantStatus, grantResult);
-          } catch (grantErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] grant-access error:', grantErr);
-            grantOutcome = 'error';
-          }
-        } else {
-          console.warn('[WEBHOOK-SUBSCRIPTION] No orderV2Id — cannot invoke canonical writer');
-          grantOutcome = 'error';
-        }
+        // Stage 2: exact finite-internal-installment guard wins over REBILL routing.
+        // All payments in this ветка attach to the ORIGINAL order (single-deal policy).
+        const stepEOrderId = finiteInternalGuardActive
+          ? originalOrderIdForGuard!
+          : ((rebillHandled && rebillOrderIdFromFlow)
+              ? rebillOrderIdFromFlow
+              : orderV2Id);
+        const subPayResult = await upsertPaymentV2(supabase, {
+            order_id: stepEOrderId,
+            user_id: subV2.user_id,
+            profile_id: profile?.id || null,
+            amount: paymentAmount,
+            currency: body.plan?.currency || 'BYN',
+            status: 'succeeded',
+            provider: 'bepaid',
+            provider_payment_id: transactionUid || subscriptionId,
+            card_brand: subscription?.card?.brand || body.card?.brand || null,
+            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+            paid_at: transaction?.paid_at || now.toISOString(),
+            is_recurring: true,
+            meta: {
+              bepaid_subscription_id: subscriptionId,
+              provider_managed: true,
+              bepaid_description: extractBepaidDescription(body),
+              ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
+              ...(finiteInternalGuardActive
+                ? {
+                    payment_method: 'internal_installment',
+                    model: 'bepaid_finite_subscription',
+                    subscription_v2_id: subscriptionV2Id,
+                    provider_subscription_id: subscriptionId,
+                    original_order_id: originalOrderIdForGuard,
+                  }
+                : {}),
+            },
+          }, '[WEBHOOK-SUBSCRIPTION]');
+        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
+
+        // === STEP A: Canonical writer after the payment fact (single access write-path) ===
+        // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
+        // against the REBILL-order (rebillHandled=true). Provider-sync (STEPS C/D)
+        // still runs below; the UID receipt above preserves REBILL routing.
+        const grantAttempt = await grantForPersistedPayment(subPayResult, async () => {
+          if (rebillHandled) return { outcome: rebillAccessOutcome ?? 'error', status: 0, result: null };
+          if (!orderV2Id) return { outcome: 'error', status: 0, result: { error: 'missing_order_id' } };
+          const response = await fetch(
+            `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              },
+              body: JSON.stringify({ orderId: orderV2Id, source: 'bepaid_webhook', context: 'subscription_renewal' }),
+            },
+          );
+          const result = await response.json().catch(() => null);
+          return classifySubscriptionGrant(response.ok, response.status, result);
+        });
+        const { outcome: grantOutcome, status: grantStatus, result: grantResult } = grantAttempt;
+        console.log('[WEBHOOK-SUBSCRIPTION] grant-access outcome:', grantOutcome, grantStatus);
 
         // STEP B: skip/error → audit + NO fallback access write. Provider-sync continues.
         if (grantOutcome !== 'ok') {
@@ -2670,52 +2684,6 @@ Deno.serve(async (req) => {
           .update(providerStepDPatch)
           .eq('provider_subscription_id', subscriptionId);
         console.log('[WEBHOOK-SUBSCRIPTION] provider_subscriptions updated', providerStepDPatch.state, 'finiteFinalCycle=', finiteFinalCycle);
-
-        // STEP E: payments_v2 (payment fact, not access)
-        const paymentAmount = transaction?.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : 0);
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('user_id', subV2.user_id)
-          .maybeSingle();
-
-        // Stage 2: exact finite-internal-installment guard wins over REBILL routing.
-        // All payments in this ветка attach to the ORIGINAL order (single-deal policy).
-        const stepEOrderId = finiteInternalGuardActive
-          ? originalOrderIdForGuard!
-          : ((rebillHandled && rebillOrderIdFromFlow)
-              ? rebillOrderIdFromFlow
-              : orderV2Id);
-        const subPayResult = await upsertPaymentV2(supabase, {
-            order_id: stepEOrderId,
-            user_id: subV2.user_id,
-            profile_id: profile?.id || null,
-            amount: paymentAmount,
-            currency: body.plan?.currency || 'BYN',
-            status: 'succeeded',
-            provider: 'bepaid',
-            provider_payment_id: transactionUid || subscriptionId,
-            card_brand: subscription?.card?.brand || body.card?.brand || null,
-            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
-            paid_at: transaction?.paid_at || now.toISOString(),
-            is_recurring: true,
-            meta: {
-              bepaid_subscription_id: subscriptionId,
-              provider_managed: true,
-              bepaid_description: extractBepaidDescription(body),
-              ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
-              ...(finiteInternalGuardActive
-                ? {
-                    payment_method: 'internal_installment',
-                    model: 'bepaid_finite_subscription',
-                    subscription_v2_id: subscriptionV2Id,
-                    provider_subscription_id: subscriptionId,
-                    original_order_id: originalOrderIdForGuard,
-                  }
-                : {}),
-            },
-          }, '[WEBHOOK-SUBSCRIPTION]');
-        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
 
         // PATCH-RB1.2: post-check that payment is on REBILL order if rebill handled.
         if (rebillHandled && rebillOrderIdFromFlow && transactionUid) {
@@ -3017,12 +2985,13 @@ Deno.serve(async (req) => {
         // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR
         // Close the corresponding payment_reconcile_queue row ONLY after the
         // full provider-managed cycle succeeded:
-        //   1) payments_v2 upserted in STEP E (subPayResult.action !== 'error')
+        //   1) payments_v2 upserted before STEP A (subPayResult.action !== 'error')
         //   2) grant-access-for-order confirmed access (including a confirmed
         //      idempotent prior grant). Payment materialization alone is not
         //      access fulfillment.
-        // On grant skip/error we MUST leave the queue row as-is so manual
-        // review still sees it.
+        // On grant skip/error leave the existing durable row retryable.
+        // bepaid-queue-cron → payments-reconcile owns CAS/backoff and independently
+        // proves payment + fulfillment before completing it; never enqueue a duplicate.
         if (
           transactionUid &&
           grantOutcome === 'ok' &&
