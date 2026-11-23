@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelegramFunnels } from './TelegramFunnels';
 import { SegmentBuilder, emptySegment } from './SegmentBuilder';
-import { graphErrors, makeFunnel } from './contracts';
+import { graphErrors, makeFunnel, parseSmsFunnelAudience } from './contracts';
 import { ContactFunnelHistory, FunnelReportPanel } from './FunnelReportPanel';
 import { FunnelActorBoundary, useFunnelActor } from './FunnelActor';
 
@@ -32,7 +32,7 @@ beforeEach(() => {
   fixture.session.mockReset().mockImplementation(async () => ({ data: { session: fixture.currentActor ? { user: { id: fixture.currentActor }, access_token: `synthetic-${fixture.currentActor}` } : null }, error: null }));
   fixture.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
     if (name === 'list_operational_telegram_bots') return { data: [{ id: fixture.bot, bot_name: 'Учебный бот', status: 'active' }, { id: fixture.next, bot_name: 'Другой бот', status: 'active' }], error: null };
-    if (name === 'telegram_funnel_audience') return { data: { total: 101, available_count: 80, recipients: [{ profile_id: fixture.first, user_id: fixture.next, full_name: 'Тестовый участник', has_dialog: true }] }, error: null };
+    if (name === 'telegram_funnel_audience' || name === 'sms_funnel_audience') return { data: { total: 101, available_count: 80, recipients: [{ profile_id: fixture.first, user_id: fixture.next, full_name: 'Тестовый участник', has_dialog: true }] }, error: null };
     if (name === 'telegram_funnel_save') return { data: { id: args.p_id, name: args.p_name, status: args.p_status, revision: Number(args.p_expected_revision) + 1, start_block_id: args.p_start, blocks: args.p_blocks }, error: null };
     if (name === 'telegram_funnel_begin_launch' || name === 'telegram_funnel_begin_self_test') return { data: { id: args.p_id, status: 'active' }, error: null };
     return { data: report, error: null };
@@ -52,6 +52,51 @@ async function openSaved() { view(); fireEvent.click(await screen.findByRole('bu
 async function preview() { fireEvent.change(screen.getByLabelText('Продукт условия'), { target: { value: fixture.product } }); fireEvent.change(screen.getByLabelText('Бот запуска'), { target: { value: fixture.bot } }); fireEvent.click(screen.getByRole('button', { name: 'Проверить получателей' })); await screen.findByText('Тестовый участник'); }
 
 describe('authoring and dispatch guardrails', () => {
+  it('selects SMS on a step, removes Telegram-only content, and saves without sending', async () => {
+    await openSaved();
+    fireEvent.change(screen.getByLabelText('Канал сообщения'), { target: { value: 'sms' } });
+    expect(screen.queryByRole('button', { name: 'Добавить кнопку' })).toBeNull();
+    expect(screen.queryByLabelText('Изображение сообщения')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Жирный' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Текст сообщения'), { target: { value: 'Учебное SMS' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить воронку' }));
+    await screen.findByText(/Воронка сохранена/);
+    const [, args] = fixture.rpc.mock.calls.find(c => c[0] === 'telegram_funnel_save')!;
+    expect(args.p_blocks[0]).toEqual(expect.objectContaining({ channel: 'sms', text: 'Учебное SMS', image_path: null, buttons: [] }));
+    expect(fixture.invoke).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Бот запуска')).toBeNull();
+  });
+
+  it('previews and self-tests an SMS start without selecting a Telegram bot', async () => {
+    await openSaved();
+    fireEvent.change(screen.getByLabelText('Канал сообщения'), { target: { value: 'sms' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить воронку' }));
+    await screen.findByText(/Воронка сохранена/);
+    fireEvent.change(screen.getByLabelText('Продукт условия'), { target: { value: fixture.product } });
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить получателей' }));
+    await screen.findByText('Телефон доступен');
+    expect(fixture.rpc.mock.calls.filter(c => c[0] === 'sms_funnel_audience')).toHaveLength(1);
+    expect(fixture.rpc.mock.calls.filter(c => c[0] === 'telegram_funnel_audience')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить на себе' }));
+    await waitFor(() => expect(fixture.rpc.mock.calls.some(c => c[0] === 'telegram_funnel_begin_self_test')).toBe(true));
+    expect(fixture.rpc.mock.calls.find(c => c[0] === 'telegram_funnel_begin_self_test')![1].p_bot).toBeNull();
+  });
+
+  it('rejects malformed SMS preview pages instead of enabling a send', () => {
+    const page = { total: 1, available_count: 1, recipients: [{ profile_id: fixture.first, user_id: null, full_name: 'Учебный контакт', has_dialog: true }] };
+    expect(parseSmsFunnelAudience(page)).toEqual(page);
+    for (const invalid of [null, { ...page, available_count: 2 }, { ...page, recipients: [page.recipients[0], page.recipients[0]], total: 2 }, { ...page, recipients: [{ ...page.recipients[0], has_dialog: 'yes' }] }]) expect(() => parseSmsFunnelAudience(invalid)).toThrow();
+  });
+
+  it('validates plain SMS limits without changing valid Telegram next-to-SMS branching', () => {
+    const valid = structuredClone(fixture.record);
+    const next = { ...valid.blocks[1], channel: 'sms' as const, text: 'Ссылка в SMS: https://example.com', buttons: [] };
+    expect(graphErrors({ ...valid, status: 'active', blocks: [valid.blocks[0], next] } as Parameters<typeof graphErrors>[0])).toEqual([]);
+    for (const bad of [{ ...next, text: '' }, { ...next, text: 'а'.repeat(1001) }, { ...next, image_path: 'synthetic.png' }, { ...next, buttons: valid.blocks[0].buttons }]) {
+      expect(graphErrors({ ...valid, status: 'active', blocks: [valid.blocks[0], bad] } as Parameters<typeof graphErrors>[0]).some(e => e.includes('SMS'))).toBe(true);
+    }
+  });
+
   it('authors 3+ messages with stable next IDs and a URL button; editing and saving send nothing', async () => {
     await openSaved();
     fireEvent.click(screen.getByRole('button', { name: 'Добавить сообщение' }));

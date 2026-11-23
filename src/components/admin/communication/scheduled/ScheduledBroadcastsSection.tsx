@@ -117,7 +117,7 @@ interface BroadcastRunRow {
 
 type TypeFilter = "all" | "scheduled" | "recurring" | "event";
 type StatusFilter = "all" | "active" | "paused" | "sent" | "error" | "archived";
-type ChannelFilter = "all" | "telegram" | "email";
+type ChannelFilter = "all" | "telegram" | "email" | "sms";
 
 interface Props {
   pageId?: string;
@@ -708,6 +708,7 @@ export function ScheduledBroadcastsSection({ onEdit, pageId }: Props) {
             <SelectItem value="all">Все каналы</SelectItem>
             <SelectItem value="telegram">Telegram</SelectItem>
             <SelectItem value="email">Email</SelectItem>
+            <SelectItem value="sms">SMS</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -842,6 +843,7 @@ export function ScheduledBroadcastsSection({ onEdit, pageId }: Props) {
                             <MessageCircle className="h-3 w-3" /> TG
                           </Badge>
                         )}
+                        {row.channels?.includes("sms") && <Badge variant="outline" className="gap-1">SMS</Badge>}
                         {row.channels?.includes("email") && (
                           <Badge variant="outline" className="gap-1">
                             <Mail className="h-3 w-3" /> Email

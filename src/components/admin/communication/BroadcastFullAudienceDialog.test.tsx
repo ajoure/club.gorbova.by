@@ -6,6 +6,7 @@ import { isFullBroadcastAudience } from "@/lib/broadcastConfirmation";
 const confirmation: FullAudienceConfirmation = { channels: [
   { channel: "telegram", count: 120, fullAudience: true },
   { channel: "email", count: 170, fullAudience: true },
+  { channel: "sms", count: 90, fullAudience: true },
 ] };
 
 describe("manual broadcast confirmation", () => {
@@ -24,6 +25,7 @@ describe("manual broadcast confirmation", () => {
     render(<BroadcastFullAudienceDialog confirmation={confirmation} onCancel={vi.fn()} onConfirm={onConfirm} />);
     expect(screen.getByText("Telegram: 120 получателей")).toBeVisible();
     expect(screen.getByText("Email: 170 получателей")).toBeVisible();
+    expect(screen.getByText("SMS: 90 получателей")).toBeVisible();
     const button = screen.getByRole("button", { name: "Подтвердить и отправить" });
     expect(button).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Введите фразу/), { target: { value: "123456" } });

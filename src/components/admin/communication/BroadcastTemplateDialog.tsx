@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -40,12 +41,13 @@ export function BroadcastTemplateDialog({
   isSaving,
 }: BroadcastTemplateDialogProps) {
   const [templateType, setTemplateType] = useState<"general" | "webinar_invite">("general");
-  const [channel, setChannel] = useState<"telegram" | "email">("telegram");
+  const [channel, setChannel] = useState<"telegram" | "email" | "sms">("telegram");
   const [name, setName] = useState("");
   const [messageText, setMessageText] = useState("");
   const [buttonText, setButtonText] = useState("Открыть платформу");
   const [buttonUrl, setButtonUrl] = useState("");
   const [includeButton, setIncludeButton] = useState(true);
+  const [smsText, setSmsText] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBodyHtml, setEmailBodyHtml] = useState("");
 
@@ -54,6 +56,7 @@ export function BroadcastTemplateDialog({
       setTemplateType((template.template_type as "general" | "webinar_invite") || "general");
       setChannel(template.channel);
       setName(template.name);
+      setSmsText(template.metadata?.sms_text || "");
       setMessageText(template.message_text || "");
       setButtonText(template.button_text || "Открыть платформу");
       setButtonUrl(template.button_url || "");
@@ -64,6 +67,7 @@ export function BroadcastTemplateDialog({
       setTemplateType("general");
       setChannel("telegram");
       setName("");
+      setSmsText("");
       setMessageText("");
       setButtonText("Открыть платформу");
       setButtonUrl("");
@@ -79,7 +83,7 @@ export function BroadcastTemplateDialog({
     const data: Partial<BroadcastTemplate> = {
       id: template?.id,
       name,
-      channel,
+      channel, channels: [channel], metadata: { ...template?.metadata, sms_text: channel === "sms" ? smsText.trim() : undefined },
       template_type: templateType,
       // Legacy: keep live_event_id if template already had one, otherwise null
       live_event_id: template?.live_event_id || null,
@@ -98,7 +102,7 @@ export function BroadcastTemplateDialog({
   const isValid =
     name.trim() &&
     ((channel === "telegram" && messageText.trim()) ||
-      (channel === "email" && emailSubject.trim() && emailBodyHtml.trim()));
+      (channel === "email" && emailSubject.trim() && emailBodyHtml.trim()) || (channel === "sms" && smsText.trim() && smsText.trim().length <= 1000));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -154,9 +158,9 @@ export function BroadcastTemplateDialog({
 
           <Tabs
             value={channel}
-            onValueChange={(v) => setChannel(v as "telegram" | "email")}
+            onValueChange={(v) => setChannel(v as "telegram" | "email" | "sms")}
           >
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="telegram" className="gap-2">
                 <MessageCircle className="h-4 w-4" />
                 Telegram
@@ -165,6 +169,7 @@ export function BroadcastTemplateDialog({
                 <Mail className="h-4 w-4" />
                 Email
               </TabsTrigger>
+              <TabsTrigger value="sms">SMS</TabsTrigger>
             </TabsList>
 
             <TabsContent value="telegram" className="space-y-4 mt-4">
@@ -222,6 +227,7 @@ export function BroadcastTemplateDialog({
               )}
             </TabsContent>
 
+            <TabsContent value="sms" className="space-y-4 mt-4"><Label htmlFor="template-sms-text">Текст SMS</Label><Textarea id="template-sms-text" value={smsText} onChange={e => setSmsText(e.target.value)} maxLength={1000} rows={8}/><p className="text-xs text-muted-foreground">Обычный текст, до 1000 символов. Без изображений и интерактивных кнопок.</p></TabsContent>
             <TabsContent value="email" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Тема письма</Label>

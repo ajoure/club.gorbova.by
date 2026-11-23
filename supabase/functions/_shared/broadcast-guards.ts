@@ -132,7 +132,7 @@ export function evaluateBroadcastGuards(input: BroadcastGuardInput): BroadcastGu
 
 export interface AuditBlockedAttemptInput {
   supabase: any;
-  channel: 'telegram' | 'email';
+  channel: 'telegram' | 'email' | 'sms';
   actorUserId: string | null;
   isSystemActor: boolean;
   reason: BroadcastGuardBlock['reason'];
