@@ -40,6 +40,16 @@ code+=`
  assert.equal((await run("SELECT has_table_privilege('authenticated','public.sms_messages','update')")).trim(),'f');
  const claimSms=async id=>JSON.parse((await run(service("SELECT coalesce(jsonb_agg(to_jsonb(s)),'[]') FROM public.sms_broadcast_claim("+quote(id)+",10)s"))).trim());
  let smsPasses=0;
+ // SMS ignores Telegram bot selection and retains canonical exact-user filters.
+ const smsAudience=async filters=>JSON.parse((await run(service("SELECT coalesce(jsonb_agg(to_jsonb(c)),'[]') FROM resolve_sms_broadcast_contacts("+json(filters)+")c"))).trim());
+ const botAudience=await smsAudience({bot_ids:[randomUUID()]});
+ assert.deepEqual(botAudience,await smsAudience({}));smsPasses++;
+ const exact=await smsAudience({include:[user]});
+ assert.ok(exact.length>0);assert.ok(exact.every(row=>row.user_id===user));
+ const excluded=await smsAudience({exclude:[user]});
+ assert.ok(excluded.every(row=>row.user_id!==user));smsPasses++;
+ for(const bad of [{exclude:[{mode:'typo'}]},{exclude:[{unknown:true}]},{exclude:[{mode:'purchased',tariff_ids:[null]}]}])await assert.rejects(()=>run(service(rpc('resolve_sms_broadcast_contacts',[json(bad)]))),/sms_filter_invalid/);smsPasses++;
+
  const request=randomUUID(),meta={self_test:false};
  const filters={direct_profile_ids:[phoneOnly]};
  const enqueue=()=>call('sms_broadcast_enqueue',[quote(request),quote(request),quote(admin),quote('Synthetic SMS test'),json(filters),json(meta),'false','NULL']);

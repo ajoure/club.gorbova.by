@@ -43,8 +43,33 @@ DECLARE
   _club_membership text := COALESCE(_filters->>'club_membership', 'current');
   _include_archived boolean := COALESCE((_filters->>'include_archived')::boolean, false);
   _system_bypass boolean := COALESCE((_filters->>'__system_bypass')::boolean, false);
+  _field text;
+  _rule jsonb;
 BEGIN
   IF _filters?'hasActiveSubscription' OR _filters?'productId' OR _filters?'productIds' OR _filters?'tariffId' OR _filters?'tariffIds' OR _filters?'clubId' THEN RAISE EXCEPTION 'sms_legacy_filter_unsupported';END IF;
+  FOREACH _field IN ARRAY ARRAY['include','exclude'] LOOP
+    IF _filters ? _field THEN
+      IF jsonb_typeof(_filters->_field) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'sms_filter_invalid'; END IF;
+      FOR _rule IN SELECT value FROM jsonb_array_elements(_filters->_field) LOOP
+        IF jsonb_typeof(_rule)='string' THEN
+          PERFORM (_rule #>> '{}')::uuid;
+          IF (_rule #>> '{}') IS NULL THEN RAISE EXCEPTION 'sms_filter_invalid'; END IF;
+          CONTINUE;
+        END IF;
+        IF jsonb_typeof(_rule) IS DISTINCT FROM 'object' OR NOT (_rule?'mode' OR _rule?'product_id')
+          OR EXISTS(SELECT 1 FROM jsonb_object_keys(_rule) k WHERE k NOT IN ('mode','product_id','tariff_ids'))
+          OR coalesce(_rule->>'mode','purchased') NOT IN ('purchased','active_access')
+          OR (_rule?'tariff_ids' AND jsonb_typeof(_rule->'tariff_ids') IS DISTINCT FROM 'array') THEN RAISE EXCEPTION 'sms_filter_invalid'; END IF;
+        PERFORM NULLIF(_rule->>'product_id','')::uuid;
+        IF _rule?'tariff_ids' THEN
+          IF EXISTS(SELECT 1 FROM jsonb_array_elements(_rule->'tariff_ids') v WHERE jsonb_typeof(v) IS DISTINCT FROM 'string') THEN RAISE EXCEPTION 'sms_filter_invalid'; END IF;
+          PERFORM (jsonb_array_elements_text(_rule->'tariff_ids'))::uuid;
+        END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+  IF (_filters?'club_ids' AND jsonb_typeof(_filters->'club_ids') IS DISTINCT FROM 'array')
+    OR (_filters?'club_membership' AND _club_membership NOT IN ('current','ever','any')) THEN RAISE EXCEPTION 'sms_filter_invalid'; END IF;
   RETURN QUERY
   WITH
   inc_rules AS (
@@ -82,7 +107,6 @@ BEGIN
     WHERE public.sms_normalize_phone(p.phone) IS NOT NULL AND p.merged_to_profile_id IS NULL
       AND (jsonb_typeof(_filters->'direct_user_ids') IS DISTINCT FROM 'array' OR p.user_id::text IN(SELECT jsonb_array_elements_text(_filters->'direct_user_ids')))
       AND (jsonb_typeof(_filters->'direct_profile_ids') IS DISTINCT FROM 'array' OR p.id::text IN(SELECT jsonb_array_elements_text(_filters->'direct_profile_ids')))
-      AND (jsonb_typeof(_filters->'bot_ids') IS DISTINCT FROM 'array' OR jsonb_array_length(_filters->'bot_ids')=0 OR p.telegram_link_bot_id::text IN(SELECT jsonb_array_elements_text(_filters->'bot_ids')) OR EXISTS(SELECT 1 FROM public.telegram_messages tm WHERE tm.telegram_user_id=p.telegram_user_id AND tm.bot_id::text IN(SELECT jsonb_array_elements_text(_filters->'bot_ids')) AND tm.transport='bot' AND(tm.direction='incoming' OR tm.status IN('sent','delivered'))))
   ),
   inc_purchased_contacts AS (
     SELECT DISTINCT bc.profile_id
@@ -112,6 +136,8 @@ BEGIN
     SELECT profile_id FROM inc_purchased_contacts
     UNION
     SELECT profile_id FROM inc_active_access_contacts
+    UNION
+    SELECT bc.profile_id FROM base_contacts bc JOIN jsonb_array_elements(_include) v ON jsonb_typeof(v)='string' AND bc.user_id::text=(v #>> '{}')
   ),
   exc_purchased_contacts AS (
     SELECT DISTINCT bc.profile_id
@@ -141,6 +167,8 @@ BEGIN
     SELECT profile_id FROM exc_purchased_contacts
     UNION
     SELECT profile_id FROM exc_active_access_contacts
+    UNION
+    SELECT bc.profile_id FROM base_contacts bc JOIN jsonb_array_elements(_exclude) v ON jsonb_typeof(v)='string' AND bc.user_id::text=(v #>> '{}')
   ),
   filtered AS (
     SELECT bc.*

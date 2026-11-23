@@ -1,7 +1,26 @@
 import { filterUsersByEducationCondition, parseEducationCondition } from './broadcastEducation.ts';
 import { filterUsersByWebinarRegistration } from '../broadcast-audience-preview/webinarRegistration.ts';
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Invalid exclusions must never silently turn a restricted SMS into a full-base send. */
+export function validateSmsAudienceFilters(filters:Record<string,any>){
+ for(const field of ['include','exclude']){
+  if(filters[field]===undefined)continue;
+  if(!Array.isArray(filters[field]))throw Error('sms_filter_invalid');
+  for(const rule of filters[field]){
+   if(typeof rule==='string'){if(!uuid.test(rule))throw Error('sms_filter_invalid');continue;}
+   if(!rule||typeof rule!=='object'||Array.isArray(rule)||!('mode'in rule||'product_id'in rule)
+    ||Object.keys(rule).some(key=>!['mode','product_id','tariff_ids'].includes(key))
+    ||!['purchased','active_access'].includes(rule.mode??'purchased')
+    ||(rule.product_id!=null&&rule.product_id!==''&&(typeof rule.product_id!=='string'||!uuid.test(rule.product_id)))
+    ||(rule.tariff_ids!==undefined&&(!Array.isArray(rule.tariff_ids)||rule.tariff_ids.some((id:any)=>typeof id!=='string'||!uuid.test(id)))))throw Error('sms_filter_invalid');
+  }
+ }
+ if(filters.club_ids!==undefined&&(!Array.isArray(filters.club_ids)||filters.club_ids.some((id:any)=>typeof id!=='string'||!uuid.test(id))))throw Error('sms_filter_invalid');
+ if(filters.club_membership!==undefined&&!['current','ever','any'].includes(filters.club_membership))throw Error('sms_filter_invalid');
+}
 /** Reuse contact filters, then the same education/webinar eligibility as other channels. */
 export async function resolveSmsAudience(db:any,filters:Record<string,any>){
+ validateSmsAudienceFilters(filters);
  if(filters.education!==undefined&&!parseEducationCondition(filters.education))throw Error('sms_education_filter_invalid');
  const rows:any[]=[];
  for(let offset=0;;offset+=200){

@@ -1,6 +1,7 @@
-import { resolveSmsAudience } from '../_shared/sms-audience.ts';
+import { resolveSmsAudience, validateSmsAudienceFilters } from '../_shared/sms-audience.ts';
+import { evaluateWebinarBroadcastGuards } from '../broadcast-audience-preview/webinarRegistration.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
+import { auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 import { normalizeSmsPhone, smsConfiguration, sendSmsByTransport, drainSmsBroadcastQueue, smsDispatchSummary, checkSmsDelivery } from '../_shared/sms-transport.ts';
 const corsHeaders={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,x-client-info,apikey,content-type,x-supabase-client-platform,x-supabase-client-platform-version,x-supabase-client-runtime,x-supabase-client-runtime-version','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(status:number,body:unknown)=>new Response(JSON.stringify(body),{status,headers:{...corsHeaders,'Content-Type':'application/json'}});
@@ -40,13 +41,16 @@ Deno.serve(async(req)=>{
   if(body.action==='broadcast'||body.action==='test_self'){
    const text=String(body.text??'').trim();
    const filters=body.filters&&typeof body.filters==='object'&&!Array.isArray(body.filters)?body.filters:{};
+   try{validateSmsAudienceFilters(filters);}catch{return json(400,{error:'sms_filter_invalid'});}
    if(!isSystem&&Object.keys(filters).some(k=>k.startsWith('__')||k==='direct_user_ids'||k==='direct_profile_ids'))return json(400,{error:'sms_filter_invalid'});
    const self=body.action==='test_self';if(self&&isSystem)return json(403,{error:'self_test_requires_user'});
    if(body.dry_run===true){
     if(filters.education===undefined&&filters.webinar_registration===undefined){const {data,error}=await db.rpc('sms_broadcast_audience_count',{p_filters:filters});if(error)throw Error('sms_audience_unavailable');return json(200,{sms_count:Number(data||0)});}
     return json(200,{sms_count:(await resolveSmsAudience(db,filters)).length});
    }
-   if(!isSystem&&!self){const guard=evaluateBroadcastGuards({filters,messageText:text,isDryRun:body.dry_run===true,isTestSelf:false,allowFullAudience:body.allow_full_audience===true,confirmFullAudienceText:body.confirm_full_audience_text??null});if(guard.blocked){await auditBlockedAttempt({supabase:db,channel:'sms',actorUserId:actor,isSystemActor:false,reason:guard.reason,filters,messageText:text});return json(400,{error:guard.reason,message:guard.message});}}
+   // Bot selection narrows Telegram only. Webinar/education restrictions are
+   // enforced again by the same server-side audience intersection before enqueue.
+   if(!isSystem&&!self){const guard=evaluateWebinarBroadcastGuards({filters:{...filters,bot_ids:[]},messageText:text,isDryRun:body.dry_run===true,isTestSelf:false,allowFullAudience:body.allow_full_audience===true,confirmFullAudienceText:body.confirm_full_audience_text??null});if(guard.blocked){await auditBlockedAttempt({supabase:db,channel:'sms',actorUserId:actor,isSystemActor:false,reason:guard.reason,filters,messageText:text});return json(400,{error:guard.reason,message:guard.message});}}
    if(!text||text.length>1000)return json(400,{error:'sms_text_invalid'});
    if(!uuid(body.request_id))return json(400,{error:'sms_request_id_required'});
    await smsConfiguration(db);
