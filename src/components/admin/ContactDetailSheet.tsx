@@ -1,8 +1,9 @@
+import { Layers } from "lucide-react";
 import { CB2_PRODUCT_ID } from "@/lib/cb2Access";
 import { startBoundImpersonation } from "@/lib/adminReturn";
 import { EffectiveProductAccessNote } from "@/components/purchases/EffectiveProductAccessNote";
 import { isContactVisibleDeal } from "@/lib/deals/dealFinancialKind";
-import { useState, useRef, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { resolveStripeNextChargeAt } from "@/utils/resolveStripeNextChargeAt";
@@ -208,6 +209,8 @@ interface Contact {
   loyalty_updated_at?: string | null;
   communication_style?: CommunicationStyle | null;
 }
+
+const ContactFunnelHistory = lazy(() => import("./communication/funnels/FunnelReportPanel").then(module => ({ default: module.ContactFunnelHistory })));
 
 interface ContactDetailSheetProps {
   contact: Contact | null;
@@ -2122,6 +2125,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="funnels" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Layers className="w-3 h-3 mr-1" />
+                Воронки
               </TabsTrigger>
               <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Задачи {openTasksCount > 0 && <Badge variant="secondary" className="ml-1 text-xs">{openTasksCount}</Badge>}
@@ -4086,7 +4093,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             <TabsContent value="deals" className="m-0 space-y-3">
               {dealsError ? <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Не удалось загрузить сделки. Закройте и снова откройте вкладку.</p> :
               <ContactDealsTab
-                profileId={contact.id}
                 deals={deals}
                 isLoading={dealsLoading}
                 moduleMetaMap={moduleMetaMap}
@@ -4095,6 +4101,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 onRefund={(id) => setRefundDealId(id)}
               />
               }
+            </TabsContent>
+
+            <TabsContent value="funnels" className="m-0 min-w-0 space-y-3">
+              {activeTab === "funnels" && <Suspense fallback={<div role="status" className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-48 w-full" /><span className="sr-only">Загружаем воронки…</span></div>}>
+                <ContactFunnelHistory key={contact.id} profileId={contact.id} />
+              </Suspense>}
             </TabsContent>
 
             {/* Tasks Tab */}
