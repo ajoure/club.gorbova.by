@@ -138,6 +138,10 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: Verify service-only referral date repair
+        run: |
+          deno check --no-lock supabase/functions/referral-sale-date-repair/index.ts
+          deno test --no-lock supabase/functions/referral-sale-date-repair/handler_test.ts
       - name: BKB custdev Edge types
         run: deno check --no-lock supabase/functions/training-custdev/index.ts
       - name: CB2 renewal, sender authorization and purchase proof

@@ -301,3 +301,7 @@ verify_jwt = false
 
 [functions.copy-private-storage-bridge]
 verify_jwt = false
+
+# Exact managed service key is checked before the fixed repair RPC.
+[functions.referral-sale-date-repair]
+verify_jwt = false
