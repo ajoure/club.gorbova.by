@@ -260,6 +260,13 @@
       "when": 1795515676883,
       "tag": "0036_sms_broadcast_channel_summaries",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795518593898,
+      "tag": "0037_referral_authorized_date_repair_once",
+      "breakpoints": true
     }
   ]
 }
