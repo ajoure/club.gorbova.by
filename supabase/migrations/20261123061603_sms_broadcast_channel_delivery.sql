@@ -1,3 +1,4 @@
+
 CREATE OR REPLACE FUNCTION public.sms_funnel_audience(p_segment jsonb,p_offset integer DEFAULT 0,p_limit integer DEFAULT 50) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE result jsonb;
 BEGIN

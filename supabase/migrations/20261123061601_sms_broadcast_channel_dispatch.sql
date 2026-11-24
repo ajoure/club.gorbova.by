@@ -231,4 +231,3 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.sms_broadcast_enqueue(uuid,text,uuid,text,jsonb,jsonb,boolean,uuid[]),public.sms_broadcast_claim(uuid,integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.sms_broadcast_enqueue(uuid,text,uuid,text,jsonb,jsonb,boolean,uuid[]),public.sms_broadcast_claim(uuid,integer) TO service_role;
-

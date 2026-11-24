@@ -1,3 +1,4 @@
+
 -- Expand only the existing communication channel checks.
 ALTER TABLE public.broadcast_templates DROP CONSTRAINT IF EXISTS broadcast_templates_channel_check;
 ALTER TABLE public.broadcast_templates ADD CONSTRAINT broadcast_templates_channel_check CHECK(channel IN('telegram','email','sms'));
@@ -154,4 +155,3 @@ BEGIN
   activated:=activated+1;
  END LOOP;END LOOP;RETURN activated;
 END $$;
-
