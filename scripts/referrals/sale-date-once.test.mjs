@@ -38,6 +38,7 @@ try{
  const fingerprint=Object.values((await db.query(fingerprintQuery)).rows[0])[0];
  once=once.replace(/fingerprint IS DISTINCT FROM '[0-9a-f]{32}'/,`fingerprint IS DISTINCT FROM '${fingerprint}'`);
  await db.exec('BEGIN');await db.exec('DELETE FROM referral_sale_attributions WHERE id=(SELECT min(id::text)::uuid FROM referral_sale_attributions)');await assert.rejects(()=>db.exec(once),/incomplete_frozen_cohort/);await db.exec('ROLLBACK');
+ await db.exec('BEGIN');await db.exec("UPDATE orders_v2 SET status='cancelled'");await assert.rejects(()=>db.exec(once),/paid_order_state_changed/);await db.exec('ROLLBACK');
  const initial=await snap();await db.exec('BEGIN');await db.exec("UPDATE payments_v2 SET refunded_amount=1 WHERE id=(SELECT min(id::text)::uuid FROM payments_v2)");await assert.rejects(()=>db.exec(once),/frozen_financial_snapshot_changed/);await db.exec('ROLLBACK');assert.equal(await snap(),initial);
  await db.exec('BEGIN');await db.exec(once);await db.exec('COMMIT');
  const shid=before.balances.find(x=>x.balance.pending===79162).partner_id;

@@ -20,6 +20,10 @@ BEGIN
  IF matching_ids<>5 THEN RAISE EXCEPTION 'incomplete_frozen_cohort'; END IF;
  PERFORM set_config('lock_timeout','5s',true);
  LOCK TABLE public.referral_sale_attributions IN SHARE ROW EXCLUSIVE MODE;
+ PERFORM 1 FROM public.orders_v2 WHERE id IN (SELECT order_id FROM public.referral_sale_attributions) ORDER BY id FOR SHARE;
+ PERFORM 1 FROM public.payments_v2 WHERE id IN (SELECT payment_id FROM public.referral_sale_attributions) ORDER BY id FOR SHARE;
+ IF EXISTS(SELECT 1 FROM public.orders_v2 o JOIN public.referral_sale_attributions a ON a.order_id=o.id
+  WHERE o.status::text<>'paid' OR coalesce(o.is_deleted,false) OR o.currency<>'BYN') THEN RAISE EXCEPTION 'paid_order_state_changed'; END IF;
  SELECT md5(jsonb_agg(jsonb_build_array(
   a.id::text,a.partner_id::text,a.order_id::text,a.payment_id::text,
   CASE WHEN a.metadata->'old_dates'->>'operation_key'=op THEN
