@@ -21,6 +21,7 @@ BEGIN
  -- rather than wait in a sale-row/advisory-lock cycle with the scheduled worker.
  FOREACH partner IN ARRAY partners LOOP
   IF NOT pg_try_advisory_xact_lock(hashtextextended(partner::text,0)) THEN RAISE EXCEPTION 'wallet_busy_retry'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.referral_partners p WHERE p.id=partner AND p.status='active') THEN RAISE EXCEPTION 'partner_hold'; END IF;
  END LOOP;
  PERFORM 1 FROM public.referral_sale_attributions WHERE id=ANY(ids) ORDER BY id FOR UPDATE NOWAIT;
  SELECT s.hold_days INTO hold_days FROM public.referral_program_settings s WHERE singleton FOR SHARE;
@@ -40,6 +41,8 @@ BEGIN
   SELECT * INTO pay FROM public.payments_v2 WHERE id=sale.payment_id FOR SHARE;
   IF pay.id IS NULL OR pay.order_id IS DISTINCT FROM sale.order_id OR pay.status::text<>'succeeded' OR pay.is_deleted IS TRUE
     OR pay.amount<=0 OR pay.paid_at IS NULL OR pay.paid_at IS DISTINCT FROM (item->>'sale_paid_at')::timestamptz THEN RAISE EXCEPTION 'payment_snapshot_changed'; END IF;
+  IF NOT referral_private.refunds_reconciled(sale.order_id,sale.commission_basis_minor,sale.commission_minor,sale.reversed_minor)
+   THEN RAISE EXCEPTION 'maturation_preflight_changed'; END IF;
   expected_at:=pay.paid_at+make_interval(days=>hold_days);
   IF sale.metadata->'old_dates'->>'operation_key'=p_operation_key THEN
    IF sale.available_at IS DISTINCT FROM expected_at
@@ -64,6 +67,20 @@ BEGIN
   AND a.available_at<=now() AND NOT(a.id=ANY(ids))) THEN RAISE EXCEPTION 'unrelated_due_sales'; END IF;
  IF EXISTS(SELECT 1 FROM public.referral_balance_transactions t WHERE t.idempotency_key IN
   (SELECT 'referral:mature:'||i FROM unnest(due_ids)i)) THEN RAISE EXCEPTION 'unexpected_prior_maturation'; END IF;
+ -- Preview must reject the same paused/refund/ledger anomalies as execution,
+ -- even while the original availability date is still in the future.
+ IF EXISTS(WITH candidates AS (
+  SELECT a.*,a.commission_minor-a.reversed_minor remaining,
+   CASE WHEN coalesce((a.rule_snapshot->>'split_60_40_enabled')::boolean,false)
+    THEN round(a.commission_minor*coalesce((a.rule_snapshot->>'withdrawable_percent_bps')::integer,10000)::numeric/10000)::bigint
+     -round(a.reversed_minor*coalesce((a.rule_snapshot->>'withdrawable_percent_bps')::integer,10000)::numeric/10000)::bigint
+    ELSE a.commission_minor-a.reversed_minor END cash
+  FROM public.referral_sale_attributions a WHERE a.id=ANY(due_ids)
+ ) SELECT 1 FROM candidates c LEFT JOIN public.referral_partners p ON p.id=c.partner_id
+ WHERE p.status IS DISTINCT FROM 'active' OR c.cash<0 OR c.remaining-c.cash<0
+  OR c.cash IS DISTINCT FROM (SELECT coalesce(sum(e.amount_minor),0) FROM public.referral_balance_entries e JOIN public.referral_balance_transactions t ON t.id=e.transaction_id WHERE t.source_id=c.id AND e.partner_id=c.partner_id AND e.bucket='pending')
+  OR c.remaining-c.cash IS DISTINCT FROM (SELECT coalesce(sum(e.amount_minor),0) FROM public.referral_balance_entries e JOIN public.referral_balance_transactions t ON t.id=e.transaction_id WHERE t.source_id=c.id AND e.partner_id=c.partner_id AND e.bucket='internal_pending')
+ ) THEN RAISE EXCEPTION 'maturation_preflight_changed'; END IF;
  IF p_dry_run THEN RETURN jsonb_build_object('dry_run',true,'no_writes',true,'date_changes',cardinality(ids),
   'expected_matured',cardinality(due_ids),'balances_before',before_balances); END IF;
  SELECT coalesce(array_agg(id),ARRAY[]::uuid[]) INTO before_txs FROM public.referral_balance_transactions;
