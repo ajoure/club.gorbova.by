@@ -97,6 +97,17 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     return { success: false, provider: 'stripe', error: 'missing_currency' };
   }
 
+  // Stripe checkout has no finite-cycle writer. Reject legacy or malformed
+  // installment links before resolving credentials or materializing a purchase.
+  const installment = meta_extra?.installment as Record<string, unknown> | undefined;
+  if (meta_extra?.payment_method === 'internal_installment'
+    || installment?.payment_method === 'internal_installment'
+    || installment?.as_finite_subscription === true
+    || installment?.model === 'bepaid_finite_subscription'
+    || installment?.infinite === false) {
+    return { success: false, provider: 'stripe', error: 'stripe_finite_installment_unsupported' };
+  }
+
   try {
     await assertZg27Checkout({ db: supabase, userId: user_id, productId: product_id,
       tariffId: tariff_id, offerId: offer_id, amountMinor: Math.round(amountMajor * 100), currency });

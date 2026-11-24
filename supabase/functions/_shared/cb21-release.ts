@@ -1,3 +1,3 @@
 // This digest covers the four CB21 function directories and shared function code.
 // The repository test recalculates it whenever those sources change.
-export const CB21_RELEASE_DIGEST = "7ee5b354c649f1580b0aaf10627c08d116f58269f9596d5500186aaa77127522";
+export const CB21_RELEASE_DIGEST = "7e394a7062ef1c8786e07380e06f9dafe158e49d656a14f110e145200c76e225";
