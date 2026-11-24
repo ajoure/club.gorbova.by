@@ -4,6 +4,7 @@ CREATE TABLE public.telegram_funnel_crm_bindings (
  pipeline_id uuid NOT NULL REFERENCES public.crm_pipelines(id),
  product_id uuid NOT NULL REFERENCES public.products_v2(id),
  block_stages jsonb NOT NULL CHECK(jsonb_typeof(block_stages)='object'),
+ refusal_button_ids uuid[] NOT NULL DEFAULT '{}',
  refusal_stage_id uuid NOT NULL REFERENCES public.crm_pipeline_stages(id),
  paid_stage_id uuid NOT NULL REFERENCES public.crm_pipeline_stages(id),
  created_at timestamptz NOT NULL DEFAULT now()
@@ -49,7 +50,9 @@ BEGIN
  SELECT * INTO c FROM public.telegram_funnel_crm_bindings WHERE funnel_id=e.funnel_id;
  IF NOT FOUND OR EXISTS(SELECT 1 FROM public.telegram_funnel_launches WHERE id=e.launch_id AND test_profile_id IS NOT NULL) THEN RETURN NEW;END IF;
  IF public.telegram_funnel_crm_has_paid(e.profile_id,c.product_id) THEN target:=c.paid_stage_id;
- ELSIF NEW.kind='finished' THEN target:=c.refusal_stage_id;
+ ELSIF NEW.kind='finished' THEN
+  IF NOT coalesce((NEW.detail->>'button_id')::uuid=ANY(c.refusal_button_ids),false) THEN RETURN NEW;END IF;
+  target:=c.refusal_stage_id;
  ELSE
   SELECT * INTO d FROM public.telegram_funnel_deliveries WHERE id=NEW.delivery_id AND enrollment_id=e.id AND status='sent';
   IF NOT FOUND THEN RETURN NEW;END IF;

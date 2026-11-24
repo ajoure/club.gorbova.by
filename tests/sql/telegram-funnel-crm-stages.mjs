@@ -15,7 +15,7 @@ for(const [n,[key,name,type]]of stages.entries())await db.query('INSERT INTO crm
 for(let n=0;n<256;n++){await db.query('INSERT INTO profiles(id)VALUES($1)',[id(1000+n)]);await db.query('INSERT INTO telegram_funnel_profile_tags(profile_id,tag,created_by)VALUES($1,$2,$3)',[id(1000+n),n<142?'ЦБ 2.0 + Закрой год':n<162?'ЦБ 1.0 + Закрой год':'ЦБ 2.0, без Закрой год',id(1)]);}
 const funnelIds=['1edf4ce9-ad2f-40b9-8591-3bf540df7d15','84bf5843-9f96-4ee3-98b6-f29e3043ac50','54d7da56-1ed6-40ba-88af-a445d9ed8339','8ae9ee07-dddd-4816-a4cd-831217ce85b8'];
 const graphs=[];
-for(let n=0;n<4;n++){const graph=Array.from({length:n<2?9:1},(_,i)=>({id:id(100+n*20+i),text:n<2?`synthetic ${n} step ${i}`:`synthetic ${n-2} step 1`,buttons:[]}));graphs.push(graph);await db.query('INSERT INTO telegram_funnels(id,name,status,revision,start_block_id,blocks,created_by)VALUES($1,$2,\'active\',$3,$4,$5,$6)',[funnelIds[n],'Synthetic', [9,14,3,2][n],graph[0].id,JSON.stringify(graph),id(1)]);}
+for(let n=0;n<4;n++){const graph=Array.from({length:n<2?9:1},(_,i)=>({id:id(100+n*20+i),text:n<2?`synthetic ${n} step ${i}`:`synthetic ${n-2} step 1`,buttons:n<2&&i===8?[{id:id(500+n),text:'Refuse',kind:'finish',tag:'ЗГ 2027 не участвую'}]:[]}));graphs.push(graph);await db.query('INSERT INTO telegram_funnels(id,name,status,revision,start_block_id,blocks,created_by)VALUES($1,$2,\'active\',$3,$4,$5,$6)',[funnelIds[n],'Synthetic', [9,14,3,2][n],graph[0].id,JSON.stringify(graph),id(1)]);}
 await db.query("INSERT INTO orders_v2(id,profile_id,product_id,status,paid_amount,final_price)VALUES($1,$2,$3,'paid',890,890),($4,$5,$3,'partial',430,1290)",[id(6000),id(1000),product,id(6001),id(1200)]);
 // Mismatched membership must roll the entire operation back, including stage edits.
 await db.query('DELETE FROM telegram_funnel_profile_tags WHERE profile_id=$1',[id(1255)]);
@@ -41,7 +41,7 @@ await db.query("INSERT INTO telegram_funnel_enrollments(id,launch_id,funnel_id,p
 await db.query("INSERT INTO telegram_funnel_deliveries(id,enrollment_id,transition_key,block_id,status)VALUES($1,$2,'synthetic',$3,'sent')",[delivery,eventEn,graphs[0][1].id]);
 await db.query("INSERT INTO telegram_funnel_events(enrollment_id,delivery_id,event_key,kind)VALUES($1,$2,'synthetic-sent','sent')",[eventEn,delivery]);
 assert.equal(await scalar("SELECT pipeline_stage_id::text v FROM orders_v2 WHERE profile_id=$1 AND campaign_key IS NOT NULL",[eventProfile]),await stage(2));
-await db.query("INSERT INTO telegram_funnel_events(enrollment_id,event_key,kind)VALUES($1,'synthetic-refused','finished')",[eventEn]);
+await db.query("INSERT INTO telegram_funnel_events(enrollment_id,event_key,kind,detail)VALUES($1,'synthetic-refused','finished',$2)",[eventEn,JSON.stringify({button_id:id(500)})]);
 assert.equal(await scalar("SELECT pipeline_stage_id::text v FROM orders_v2 WHERE profile_id=$1 AND campaign_key IS NOT NULL",[eventProfile]),await stage(10));
 await db.query("INSERT INTO orders_v2(id,profile_id,product_id,status)VALUES($1,$2,$3,'pending')",[id(7010),eventProfile,product]);
 await db.query("INSERT INTO payments_v2(order_id,status,amount)VALUES($1,'succeeded',100)",[id(7010)]);

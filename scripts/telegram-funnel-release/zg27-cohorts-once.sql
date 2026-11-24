@@ -38,7 +38,7 @@ BEGIN
     AND md5(f.blocks->0->>'text')=md5(b.block->>'text');
    IF stage_map IS NULL THEN RAISE EXCEPTION 'zg27_single_message_mapping_missing';END IF;
   END IF;
-  INSERT INTO public.telegram_funnel_crm_bindings(funnel_id,pipeline_id,product_id,block_stages,refusal_stage_id,paid_stage_id) VALUES(f.id,pipeline,product,stage_map,'b7e5ca02-37d3-42dd-a4ce-33cb79e52ed0','a718bf28-f445-4555-89f2-9494a1f0aa08');
+  INSERT INTO public.telegram_funnel_crm_bindings(funnel_id,pipeline_id,product_id,block_stages,refusal_button_ids,refusal_stage_id,paid_stage_id) VALUES(f.id,pipeline,product,stage_map,ARRAY(SELECT (bt->>'id')::uuid FROM jsonb_array_elements(f.blocks)bl CROSS JOIN LATERAL jsonb_array_elements(bl->'buttons')bt WHERE bt->>'kind'='finish' AND bt->>'tag' IN('ЗГ 2027 не участвую','ЗГ 2027 - не участвует')),'b7e5ca02-37d3-42dd-a4ce-33cb79e52ed0','a718bf28-f445-4555-89f2-9494a1f0aa08');
  END LOOP;
  IF (SELECT count(*) FROM public.telegram_funnel_crm_bindings WHERE pipeline_id=pipeline)<>4 THEN RAISE EXCEPTION 'zg27_funnel_binding_missing';END IF;
  -- Bounded deterministic batches inside the single transaction. Campaign+profile is the identity.
@@ -56,7 +56,7 @@ BEGIN
  FOR r IN SELECT DISTINCT e.profile_id,c.pipeline_id,(c.block_stages->>d.block_id::text)::uuid stage_id FROM public.telegram_funnel_events ev JOIN public.telegram_funnel_deliveries d ON d.id=ev.delivery_id AND d.status='sent' JOIN public.telegram_funnel_enrollments e ON e.id=ev.enrollment_id JOIN public.telegram_funnel_launches l ON l.id=e.launch_id AND l.test_profile_id IS NULL JOIN public.telegram_funnel_crm_bindings c ON c.funnel_id=e.funnel_id WHERE ev.kind='sent' AND c.block_stages ? d.block_id::text LOOP
   PERFORM public.telegram_funnel_crm_move(r.profile_id,r.pipeline_id,r.stage_id);
  END LOOP;
- FOR r IN SELECT DISTINCT e.profile_id,c.pipeline_id,c.refusal_stage_id FROM public.telegram_funnel_events ev JOIN public.telegram_funnel_enrollments e ON e.id=ev.enrollment_id JOIN public.telegram_funnel_launches l ON l.id=e.launch_id AND l.test_profile_id IS NULL JOIN public.telegram_funnel_crm_bindings c ON c.funnel_id=e.funnel_id WHERE ev.kind='finished' LOOP
+ FOR r IN SELECT DISTINCT e.profile_id,c.pipeline_id,c.refusal_stage_id FROM public.telegram_funnel_events ev JOIN public.telegram_funnel_enrollments e ON e.id=ev.enrollment_id JOIN public.telegram_funnel_launches l ON l.id=e.launch_id AND l.test_profile_id IS NULL JOIN public.telegram_funnel_crm_bindings c ON c.funnel_id=e.funnel_id WHERE ev.kind='finished' AND (ev.detail->>'button_id')::uuid=ANY(c.refusal_button_ids) LOOP
   PERFORM public.telegram_funnel_crm_move(r.profile_id,r.pipeline_id,r.refusal_stage_id);
  END LOOP;
  -- Confirmed prior sends and refusals are reconciled; paid always has priority.
