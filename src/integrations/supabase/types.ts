@@ -20691,6 +20691,7 @@ export type Database = {
           dispatch_key: string | null
           error: string | null
           external_id: string | null
+          funnel_delivery_id: string | null
           id: string
           initiator_user_id: string | null
           metadata: Json
@@ -20713,6 +20714,7 @@ export type Database = {
           dispatch_key?: string | null
           error?: string | null
           external_id?: string | null
+          funnel_delivery_id?: string | null
           id?: string
           initiator_user_id?: string | null
           metadata?: Json
@@ -20735,6 +20737,7 @@ export type Database = {
           dispatch_key?: string | null
           error?: string | null
           external_id?: string | null
+          funnel_delivery_id?: string | null
           id?: string
           initiator_user_id?: string | null
           metadata?: Json
@@ -20760,6 +20763,13 @@ export type Database = {
             columns: ["dispatch_id"]
             isOneToOne: false
             referencedRelation: "sms_broadcast_dispatches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sms_messages_funnel_delivery_id_fkey"
+            columns: ["funnel_delivery_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_funnel_deliveries"
             referencedColumns: ["id"]
           },
         ]
@@ -23008,13 +23018,14 @@ export type Database = {
       }
       telegram_funnel_enrollments: {
         Row: {
-          bot_id: string
+          bot_id: string | null
           chat_id: number | null
           created_at: string
           current_delivery_id: string | null
           funnel_id: string
           id: string
           launch_id: string
+          phone_e164: string | null
           profile_id: string
           reason: string | null
           status: string
@@ -23023,13 +23034,14 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
-          bot_id: string
+          bot_id?: string | null
           chat_id?: number | null
           created_at?: string
           current_delivery_id?: string | null
           funnel_id: string
           id?: string
           launch_id: string
+          phone_e164?: string | null
           profile_id: string
           reason?: string | null
           status: string
@@ -23038,13 +23050,14 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
-          bot_id?: string
+          bot_id?: string | null
           chat_id?: number | null
           created_at?: string
           current_delivery_id?: string | null
           funnel_id?: string
           id?: string
           launch_id?: string
+          phone_e164?: string | null
           profile_id?: string
           reason?: string | null
           status?: string
@@ -23148,7 +23161,7 @@ export type Database = {
       telegram_funnel_launches: {
         Row: {
           audience_filters: Json
-          bot_id: string
+          bot_id: string | null
           created_at: string
           created_by: string
           funnel_id: string
@@ -23162,7 +23175,7 @@ export type Database = {
         }
         Insert: {
           audience_filters: Json
-          bot_id: string
+          bot_id?: string | null
           created_at?: string
           created_by: string
           funnel_id: string
@@ -23176,7 +23189,7 @@ export type Database = {
         }
         Update: {
           audience_filters?: Json
-          bot_id?: string
+          bot_id?: string | null
           created_at?: string
           created_by?: string
           funnel_id?: string
@@ -29559,6 +29572,7 @@ export type Database = {
           dispatch_key: string | null
           error: string | null
           external_id: string | null
+          funnel_delivery_id: string | null
           id: string
           initiator_user_id: string | null
           metadata: Json
@@ -29590,6 +29604,10 @@ export type Database = {
           p_text: string
         }
         Returns: Json
+      }
+      sms_funnel_needs_telegram: {
+        Args: { p_blocks: Json; p_start: string }
+        Returns: boolean
       }
       sms_normalize_phone: { Args: { p_phone: string }; Returns: string }
       submit_site_questionnaire: {
@@ -29807,7 +29825,7 @@ export type Database = {
         }
         Returns: {
           audience_filters: Json
-          bot_id: string
+          bot_id: string | null
           created_at: string
           created_by: string
           funnel_id: string
@@ -29835,7 +29853,7 @@ export type Database = {
         }
         Returns: {
           audience_filters: Json
-          bot_id: string
+          bot_id: string | null
           created_at: string
           created_by: string
           funnel_id: string

@@ -190,6 +190,13 @@
       "when": 1795512883380,
       "tag": "0026_referral_historical_sale_retime",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795514494625,
+      "tag": "0027_sms_broadcast_channel_constraints",
+      "breakpoints": true
     }
   ]
 }
