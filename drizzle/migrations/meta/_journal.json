@@ -169,6 +169,13 @@
       "when": 1795507409315,
       "tag": "0023_sms_broadcast_channel_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795507692741,
+      "tag": "0024_sms_broadcast_channel_dispatch",
+      "breakpoints": true
     }
   ]
 }

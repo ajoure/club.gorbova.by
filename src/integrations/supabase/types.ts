@@ -28937,6 +28937,21 @@ export type Database = {
         }
         Returns: Json
       }
+      resolve_sms_broadcast_contacts: {
+        Args: { _filters: Json }
+        Returns: {
+          email: string
+          email_normalized: string
+          full_name: string
+          has_account: boolean
+          has_telegram: boolean
+          is_archived: boolean
+          phone_e164: string
+          profile_id: string
+          telegram_username: string
+          user_id: string
+        }[]
+      }
       resolve_telegram_conversation_v1: {
         Args: {
           p_bot_id?: string
@@ -29512,6 +29527,50 @@ export type Database = {
       site_questionnaire_telegram_link_ready: {
         Args: { p_user_id: string }
         Returns: boolean
+      }
+      sms_broadcast_claim: {
+        Args: { p_dispatch?: string; p_limit?: number }
+        Returns: {
+          company_id: string | null
+          contact_id: string | null
+          cost: number | null
+          created_at: string
+          deal_id: string | null
+          dispatch_id: string | null
+          dispatch_key: string | null
+          error: string | null
+          external_id: string | null
+          id: string
+          initiator_user_id: string | null
+          metadata: Json
+          phone_e164: string
+          provider: string
+          segments: number | null
+          sender: string | null
+          status: string
+          text: string
+          updated_at: string
+          workspace_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "sms_messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      sms_broadcast_enqueue: {
+        Args: {
+          p_actor: string
+          p_eligible?: string[]
+          p_filters: Json
+          p_id: string
+          p_key: string
+          p_meta: Json
+          p_self?: boolean
+          p_text: string
+        }
+        Returns: Json
       }
       sms_normalize_phone: { Args: { p_phone: string }; Returns: string }
       submit_site_questionnaire: {
