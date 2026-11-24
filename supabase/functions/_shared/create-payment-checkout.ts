@@ -1,3 +1,4 @@
+import { consultationBillingPolicy } from "./consultation-billing-policy.ts";
 import { ensureZg27PendingSubscription } from './zg27-subscription.ts';
 import { validateZg27HostedMeta, zg27HostedWidgetFields } from './zg27-hosted-installments.ts';
 import { assertZg27Checkout, Zg27CheckoutError } from './zg27-checkout-guard.ts';
@@ -780,9 +781,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null,
     };
 
-    const accessDaysSub = tariff.access_days || 30;
+    const consultationAccessPolicy = consultationBillingPolicy(product.code, payment_type, isInstallmentSubscriptionPre);
+    const accessDaysSub = consultationAccessPolicy?.accessDays ?? (tariff.access_days || 30);
     const nowSub = new Date();
-    const plannedEndSub = courseAccessEnd(tariff.meta) || new Date(nowSub.getTime() + accessDaysSub * 86_400_000);
+    const plannedEndSub = (!consultationAccessPolicy && courseAccessEnd(tariff.meta)) || new Date(nowSub.getTime() + accessDaysSub * 86_400_000);
 
     // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
     const subRouting = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });
@@ -909,7 +911,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
 
-    const accessDays = tariff.access_days || 30;
+    const consultationPolicy = consultationBillingPolicy(product.code, payment_type, isInstallmentSubscriptionPre);
+    const accessDays = consultationPolicy?.accessDays ?? (tariff.access_days || 30);
     // PATCH INSTALLMENT-PUBLIC-LINK: используем pre-computed installment-контекст (см. A1 gate выше).
     const installmentCountRaw = installmentCountRawPre;
     const isInstallmentSubscription = isInstallmentSubscriptionPre;
@@ -1100,8 +1103,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         description: planDescription,
         plan: {
           amount,
-          interval: intervalDays,
-          interval_unit: 'day',
+          interval: consultationPolicy?.bepaid.interval ?? intervalDays,
+          interval_unit: consultationPolicy?.bepaid.interval_unit ?? 'day',
         },
         ...(isInstallmentSubscription
           ? { infinite: false, billing_cycles: billingCycles, number_payment_attempts: bepaidAttemptsValue }

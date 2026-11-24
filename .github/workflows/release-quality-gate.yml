@@ -153,6 +153,7 @@ jobs:
       - name: Undated checkout source windows
         run: |
           deno test --no-lock supabase/functions/_shared/undated-subscription-window_test.ts
+          deno test --no-lock supabase/functions/_shared/stripe-recurring-period_test.ts supabase/functions/_shared/consultation-billing-policy_test.ts
           node --test scripts/historical-purchases/undated-source-window.test.mjs scripts/historical-purchases/retroapply-scope.test.mjs
       - name: Live bePaid renewal diagnostics and authorization
         run: |
