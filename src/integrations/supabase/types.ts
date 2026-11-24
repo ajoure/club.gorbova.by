@@ -29609,6 +29609,17 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_segment: Json }
         Returns: Json
       }
+      sms_funnel_claim_send: { Args: { p_delivery: string }; Returns: Json }
+      sms_funnel_finish_send: {
+        Args: {
+          p_delivery: string
+          p_error?: string
+          p_external?: string
+          p_lease: string
+          p_outcome: string
+        }
+        Returns: Json
+      }
       sms_funnel_needs_telegram: {
         Args: { p_blocks: Json; p_start: string }
         Returns: boolean
