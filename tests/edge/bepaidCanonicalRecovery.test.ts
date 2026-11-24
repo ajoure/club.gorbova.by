@@ -100,6 +100,31 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 
+it('automatically retries a persisted subscription receipt after 409 and verifies access before completing', async () => {
+  const h = fixture();
+  Object.assign(h.rows.payment_reconcile_queue[0], { status: 'pending', attempts: 0 });
+  Object.assign(h.rows.payments_v2[0], { provider_payment_id: h.tx.uid, paid_at: h.tx.paid_at });
+  h.db.functions.invoke.mockResolvedValueOnce({ data: { success: false, error: 'access_window_requires_paid_at' }, error: { status: 409 } });
+  const automatic = () => h.run({ recordPreflightFailure: true, now: new Date(),
+    expectedUpdatedAt: h.rows.payment_reconcile_queue[0].updated_at });
+  await expect(automatic()).rejects.toThrow('recovery_canonical_grant_failed');
+  expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 1 });
+  expect(h.rows.payments_v2).toHaveLength(1);
+  expect(h.rows.orders_v2).toHaveLength(1);
+  expect(h.rows.subscriptions_v2[0].status).toBe('expired');
+  expect(await automatic()).toMatchObject({ retry_deferred: 1 });
+  vi.setSystemTime(new Date(now.getTime() + 3_600_001));
+  expect(await automatic()).toMatchObject({ success: true, results: { orders_reconciled: 1 } });
+  expect(h.rows.payment_reconcile_queue[0].status).toBe('completed');
+  expect(h.rows.entitlements[0].status).toBe('active');
+  expect(h.rows.subscriptions_v2[0].status).toBe('active');
+  expect(h.rows.payments_v2).toHaveLength(1);
+  expect(h.rows.orders_v2).toHaveLength(1);
+  expect(await automatic()).toMatchObject({ already_completed: true });
+  expect(h.db.functions.invoke).toHaveBeenCalledTimes(2);
+});
+
+
 it.each(['completed', 'pending'])('preserves a reconstructed historical receipt with expired access and %s queue without claiming fulfillment', async status => {
   const h = fixture();
   const queue = h.rows.payment_reconcile_queue[0];
