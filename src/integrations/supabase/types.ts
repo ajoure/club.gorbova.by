@@ -28644,6 +28644,16 @@ export type Database = {
         }
         Returns: Json
       }
+      referral_admin_credit_historical_order_at: {
+        Args: {
+          p_available_at?: string
+          p_order_id: string
+          p_reason: string
+          p_relationship_id: string
+          p_sale_at?: string
+        }
+        Returns: Json
+      }
       referral_admin_decide_payout: {
         Args: {
           p_decision: string
