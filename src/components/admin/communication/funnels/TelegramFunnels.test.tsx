@@ -52,6 +52,27 @@ async function openSaved() { view(); fireEvent.click(await screen.findByRole('bu
 async function preview() { fireEvent.change(screen.getByLabelText('Продукт условия'), { target: { value: fixture.product } }); fireEvent.change(screen.getByLabelText('Бот запуска'), { target: { value: fixture.bot } }); fireEvent.click(screen.getByRole('button', { name: 'Проверить получателей' })); await screen.findByText('Тестовый участник'); }
 
 describe('authoring and dispatch guardrails', () => {
+  it('chooses a launch snapshot start without editing the saved graph', async () => {
+    await openSaved(); await preview();
+    fireEvent.change(screen.getByLabelText('Начать с сообщения'), { target: { value: fixture.next } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю запуск/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Запустить воронку' }));
+    await waitFor(() => expect(fixture.rpc.mock.calls.some(c => c[0] === 'telegram_funnel_begin_launch')).toBe(true));
+    expect(fixture.rpc.mock.calls.find(c => c[0] === 'telegram_funnel_begin_launch')![1].p_start_block).toBe(fixture.next);
+    expect(fixture.rpc.mock.calls.some(c => c[0] === 'telegram_funnel_save')).toBe(false);
+  });
+  it('saves opt-in Minsk next-step configuration without sending', async () => {
+    await openSaved();
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить кнопку' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Следующий шаг по расписанию' }));
+    fireEvent.change(screen.getByLabelText('Время следующего шага (Минск)'), { target: { value: '19:00' } });
+    fireEvent.change(screen.getByLabelText('Сообщение по расписанию'), { target: { value: fixture.next } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить воронку' }));
+    await screen.findByText(/Воронка сохранена/);
+    expect(fixture.rpc.mock.calls.find(c => c[0] === 'telegram_funnel_save')![1].p_blocks[0].next_step).toEqual({ at: '19:00', target_block_id: fixture.next });
+    expect(fixture.invoke).not.toHaveBeenCalled();
+  });
+
   it('selects SMS on a step, removes Telegram-only content, and saves without sending', async () => {
     await openSaved();
     fireEvent.change(screen.getByLabelText('Канал сообщения'), { target: { value: 'sms' } });
@@ -132,7 +153,7 @@ describe('authoring and dispatch guardrails', () => {
   it('launches through several bots in order: restart only on the first, each launch dispatched once', async () => {
     await openSaved(); await preview();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Также через Другой бот' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Перезапустить с первого/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Перезапустить с выбранного/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Проверить получателей' }));
     await screen.findByText(/Другой бот —/);
     fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю запуск .* выбранных ботов \(2\)/ }));
@@ -172,7 +193,7 @@ describe('authoring and dispatch guardrails', () => {
   });
   it('registers a future schedule with explicit restart and never immediately dispatches it', async () => {
     await openSaved(); await preview();
-    fireEvent.click(screen.getByRole('checkbox', { name: /Перезапустить с первого/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Перезапустить с выбранного/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Запланировать' }));
     fireEvent.change(screen.getByLabelText('Дата и время запуска'), { target: { value: '2099-01-20T10:30' } });
     fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю запуск/ }));

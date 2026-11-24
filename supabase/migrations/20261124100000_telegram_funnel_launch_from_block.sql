@@ -15,7 +15,7 @@ BEGIN
  PERFORM public.telegram_funnel_validate_segment(p_filters);
  SELECT * INTO l FROM public.telegram_funnel_launches WHERE id=p_id;
  IF FOUND THEN
-  IF l.funnel_id<>p_funnel OR l.bot_id IS DISTINCT FROM p_bot OR l.audience_filters<>p_filters OR l.restart_existing<>p_restart OR (l.graph_snapshot->>'start_block_id')<>s::text OR l.graph_snapshot->>'revision'<>p_revision::text THEN RAISE EXCEPTION 'funnel_launch_id_conflict'; END IF;
+  IF l.created_by IS DISTINCT FROM auth.uid() OR l.test_profile_id IS NOT NULL OR (p_scheduled_at IS NOT NULL AND l.scheduled_for IS DISTINCT FROM p_scheduled_at) OR l.funnel_id<>p_funnel OR l.bot_id IS DISTINCT FROM p_bot OR l.audience_filters<>p_filters OR l.restart_existing<>p_restart OR (l.graph_snapshot->>'start_block_id')<>s::text OR l.graph_snapshot->>'revision'<>p_revision::text THEN RAISE EXCEPTION 'funnel_launch_id_conflict'; END IF;
   RETURN l;
  END IF;
  INSERT INTO public.telegram_funnel_launches(id,funnel_id,bot_id,graph_snapshot,audience_filters,restart_existing,created_by,scheduled_for)

@@ -117,7 +117,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
     const target = e.target as HTMLElement | null;
     const currentTarget = e.currentTarget as HTMLElement | null;
     console.info('[KanbanCard] content-click', {
-      buildFingerprint: (window as any).__BUILD_FINGERPRINT__,
+      buildFingerprint: (window as Window & { __BUILD_FINGERPRINT__?: unknown }).__BUILD_FINGERPRINT__,
       origin: window.location.origin,
       dealId: deal.id,
       pipelineId,
@@ -167,6 +167,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
     ? getCardAccentColor(stageColor, stageType)
     : "transparent";
 
+  const cohort = deal.meta && typeof deal.meta === 'object' && 'telegram_funnel_cohort' in deal.meta ? String(deal.meta.telegram_funnel_cohort) : '';
   const productName = deal.product_name || "—";
   const tariffName = deal.tariff_name;
 
@@ -221,6 +222,8 @@ export const KanbanDealCard = memo(function KanbanDealCard({
           </span>
           <Icon className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", iconColor)} />
         </div>
+
+        {cohort && <Badge variant="outline" className="mb-1">{cohort}</Badge>}
 
         {tariffName && tariffName !== productName && (
           <div className="mb-1 truncate text-[11px] text-muted-foreground/80">
