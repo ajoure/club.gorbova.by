@@ -20650,6 +20650,36 @@ export type Database = {
           },
         ]
       }
+      sms_broadcast_dispatches: {
+        Row: {
+          actor_id: string | null
+          created_at: string
+          filters: Json
+          id: string
+          metadata: Json
+          request_key: string
+          text: string
+        }
+        Insert: {
+          actor_id?: string | null
+          created_at?: string
+          filters: Json
+          id: string
+          metadata?: Json
+          request_key: string
+          text: string
+        }
+        Update: {
+          actor_id?: string | null
+          created_at?: string
+          filters?: Json
+          id?: string
+          metadata?: Json
+          request_key?: string
+          text?: string
+        }
+        Relationships: []
+      }
       sms_messages: {
         Row: {
           company_id: string | null
@@ -20657,6 +20687,8 @@ export type Database = {
           cost: number | null
           created_at: string
           deal_id: string | null
+          dispatch_id: string | null
+          dispatch_key: string | null
           error: string | null
           external_id: string | null
           id: string
@@ -20677,6 +20709,8 @@ export type Database = {
           cost?: number | null
           created_at?: string
           deal_id?: string | null
+          dispatch_id?: string | null
+          dispatch_key?: string | null
           error?: string | null
           external_id?: string | null
           id?: string
@@ -20697,6 +20731,8 @@ export type Database = {
           cost?: number | null
           created_at?: string
           deal_id?: string | null
+          dispatch_id?: string | null
+          dispatch_key?: string | null
           error?: string | null
           external_id?: string | null
           id?: string
@@ -20717,6 +20753,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sms_messages_dispatch_id_fkey"
+            columns: ["dispatch_id"]
+            isOneToOne: false
+            referencedRelation: "sms_broadcast_dispatches"
             referencedColumns: ["id"]
           },
         ]
@@ -29470,6 +29513,7 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: boolean
       }
+      sms_normalize_phone: { Args: { p_phone: string }; Returns: string }
       submit_site_questionnaire: {
         Args: {
           p_block_id: string

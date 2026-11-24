@@ -162,6 +162,13 @@
       "when": 1793818077544,
       "tag": "0022_crm_company_billing_contact_unlink",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795507409315,
+      "tag": "0023_sms_broadcast_channel_schema",
+      "breakpoints": true
     }
   ]
 }
