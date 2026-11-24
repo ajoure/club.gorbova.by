@@ -304,6 +304,7 @@ jobs:
           node-version: 22
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node --test scripts/tests/sms-scheduler.test.mjs
+      - run: node scripts/tests/sms-managed-package.test.mjs
       - run: node scripts/tests/sms-handler.test.mjs
       - run: npx vitest run tests/edge/smsTransport.test.ts tests/edge/smsAudience.test.ts
       - run: node scripts/tests/sms-broadcast-native.test.mjs

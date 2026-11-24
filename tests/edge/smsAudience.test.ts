@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {resolveSmsAudience,validateSmsAudienceFilters} from '../../supabase/functions/_shared/sms-audience';
+import {resolveSmsAudience,validateSmsAudienceFilters} from '../../supabase/functions/websms-send/sms-audience';
 const education={lesson_id:'00000000-0000-4000-8000-000000000001',status:'lesson_completed'};
 function dbFixture(rows:any[],completed:string[]=[]){
  const rpc=vi.fn(()=>({order:()=>({range:async(a:number,b:number)=>({data:rows.slice(a,b+1),error:null})})}));
