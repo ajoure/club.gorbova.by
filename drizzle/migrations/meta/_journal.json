@@ -225,6 +225,13 @@
       "when": 1795515157527,
       "tag": "0031_sms_broadcast_channel_enroll",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795515257212,
+      "tag": "0032_sms_broadcast_channel_activate",
+      "breakpoints": true
     }
   ]
 }
