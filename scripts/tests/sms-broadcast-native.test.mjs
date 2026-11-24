@@ -1,3 +1,4 @@
+import { createHash as migrationHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
@@ -26,8 +27,10 @@ const bootstrap=`
 `;
 const cutoffSource=await readFile(new URL('../../supabase/migrations/20261010150000_questionnaire_notification_cutoff.sql',import.meta.url),'utf8');
 const cutoffGuard=cutoffSource.slice(0,cutoffSource.indexOf('-- Queue new entrants'));
-const migration=await readFile(new URL('../../supabase/migrations/20261123061600_sms_broadcast_channel.sql',import.meta.url),'utf8');
-code=code.replace('await run(imageTextMigration);',()=>`await run(imageTextMigration);\nawait run(${JSON.stringify(bootstrap+cutoffGuard)});\nawait run(${JSON.stringify(migration)});`);
+const migrationFiles=["20261123061600_sms_broadcast_channel_schema.sql", "20261123061601_sms_broadcast_channel_dispatch.sql", "20261123061602_sms_broadcast_channel_funnel.sql", "20261123061603_sms_broadcast_channel_delivery.sql"];
+const migrations=await Promise.all(migrationFiles.map(name=>readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8')));
+assert.equal(migrationHash('sha256').update(migrations.join('')).digest('hex'),'105423d837f9209bbd63872f28e9dcdbb748490b1e8dcf23f44775ab143812dc');
+code=code.replace('await run(imageTextMigration);',()=>`await run(imageTextMigration);\nawait run(${JSON.stringify(bootstrap+cutoffGuard)});\n${migrations.map(migration=>'await run('+JSON.stringify('BEGIN;\n'+migration+'\nCOMMIT;')+');').join('\n')}`);
 code+=`
 // SMS-only admission: a phone-only contact never needs email/Auth/Telegram.
 {
