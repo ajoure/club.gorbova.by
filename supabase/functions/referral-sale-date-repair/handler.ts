@@ -3,6 +3,7 @@ import { requestHasServiceRoleKey } from "../_shared/service-request-auth.ts";
 type RpcResult = { data: unknown; error: { message?: string } | null };
 export type RepairDependencies = {
   serviceKey: string;
+  authorizeAdmin?: (req: Request) => Promise<boolean>;
   rpc: (args: Record<string, unknown>) => PromiseLike<RpcResult>;
 };
 const reply = (status: number, body: unknown) =>
@@ -20,7 +21,10 @@ export async function handleRepair(
   deps: RepairDependencies,
 ): Promise<Response> {
   if (req.method !== "POST") return reply(405, { error: "method_not_allowed" });
-  if (!requestHasServiceRoleKey(req, deps.serviceKey)) {
+  if (
+    !requestHasServiceRoleKey(req, deps.serviceKey) &&
+    !await deps.authorizeAdmin?.(req).catch(() => false)
+  ) {
     return reply(401, { error: "unauthorized" });
   }
   let body: Record<string, unknown>;

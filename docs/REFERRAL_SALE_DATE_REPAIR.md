@@ -18,3 +18,5 @@ operation key independently before further action. A successful response must
 still be independently checked against balances, dates, ledger and exclusions.
 Do not use a real financial write as a smoke test. Customer-specific request
 bodies and before/after artifacts belong only in the private operational folder.
+
+Administrators may also call from the Referrals manual-entry tab. A genuine user JWT is validated via auth.getUser, then has_role_v2 must confirm admin or super_admin. Role lookup errors deny access. No client-selected actor ID or service credential is accepted as a role assertion. Browser CORS uses the shared headers. The form requires a successful unchanged dry-run before one apply; uncertain apply locks the form for independent review.

@@ -1,3 +1,4 @@
+import { ReferralDateRepair } from "@/components/referrals/ReferralDateRepair";
 /* eslint-disable @typescript-eslint/no-explicit-any -- removed after Lovable regenerates Supabase types */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -162,6 +163,7 @@ export default function AdminReferrals() {
       </TabsContent>
 
       <TabsContent value="manual" className="space-y-4">
+        {canManage && <ReferralDateRepair />}
         <Section title="Исторические рекомендации" subtitle="Связи и начисления, которые администратор внёс для существующих контактов">
           <div className="divide-y">
             {data.relationships.filter((relationship: any) => relationship.metadata?.administrative_historical).map((relationship: any) => <CompactRow key={relationship.id} title={`${relationship.partner?.profiles?.full_name || relationship.partner?.profiles?.email || relationship.partner?.partner_code || "Партнёр"} → ${relationship.referred?.full_name || relationship.referred?.email || "Пользователь"}`} meta={`Связь внесена администратором · ${relationship.manual_reason || "основание не указано"} · ${new Date(relationship.attached_at).toLocaleDateString("ru-BY")}`} aside={<Badge variant="secondary" className="text-[11px] font-medium">Ручная связь</Badge>} />)}

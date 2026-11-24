@@ -112,3 +112,33 @@ Deno.test("unknown transport outcome is reported once without retry", async () =
   assertEquals((await response.json()).error, "rpc_transport_unknown");
   assertEquals(calls, 1);
 });
+
+Deno.test("verified administrator may invoke, role denial or lookup failure cannot reach RPC", async () => {
+  let calls = 0;
+  const deps = {
+    serviceKey: key,
+    rpc: () => {
+      calls++;
+      return Promise.resolve({ data: { dry_run: true }, error: null });
+    },
+  };
+  assertEquals(
+    (await handleRepair(request(body, false), {
+      ...deps,
+      authorizeAdmin: async () => true,
+    })).status,
+    200,
+  );
+  for (
+    const authorizeAdmin of [async () => false, async () => {
+      throw new Error("lookup failed");
+    }]
+  ) {
+    assertEquals(
+      (await handleRepair(request(body, false), { ...deps, authorizeAdmin }))
+        .status,
+      401,
+    );
+  }
+  assertEquals(calls, 1);
+});
