@@ -253,6 +253,13 @@
       "when": 1795515582065,
       "tag": "0035_sms_broadcast_channel_questionnaire",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795515676883,
+      "tag": "0036_sms_broadcast_channel_summaries",
+      "breakpoints": true
     }
   ]
 }

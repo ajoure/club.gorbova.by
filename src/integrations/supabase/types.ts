@@ -29560,6 +29560,10 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: boolean
       }
+      sms_broadcast_audience_count: {
+        Args: { p_filters: Json }
+        Returns: number
+      }
       sms_broadcast_claim: {
         Args: { p_dispatch?: string; p_limit?: number }
         Returns: {
@@ -29605,6 +29609,7 @@ export type Database = {
         }
         Returns: Json
       }
+      sms_broadcast_summary: { Args: { p_dispatch: string }; Returns: Json }
       sms_funnel_audience: {
         Args: { p_limit?: number; p_offset?: number; p_segment: Json }
         Returns: Json
