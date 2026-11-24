@@ -1,5 +1,5 @@
 import { filterUsersByEducationCondition, parseEducationCondition } from './broadcastEducation.ts';
-import { filterUsersByWebinarRegistration } from '../broadcast-audience-preview/webinarRegistration.ts';
+import { filterUsersByWebinarRegistration } from './broadcast-webinar.ts';
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Invalid exclusions must never silently turn a restricted SMS into a full-base send. */
 export function validateSmsAudienceFilters(filters:Record<string,any>){
