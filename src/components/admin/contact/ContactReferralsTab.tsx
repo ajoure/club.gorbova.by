@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { buildReferralLink, formatBynMinor, referralStatusLabel } from "@/lib/referrals";
 import { ContactPickerDialog, type PickedContact } from "@/components/admin/shared/pickers/ContactPickerDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ReferralRedemptionPanel } from "@/components/referrals/ReferralRedemptionPanel";
@@ -29,6 +30,8 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
   const [historicalRelationshipId, setHistoricalRelationshipId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [creditReason, setCreditReason] = useState("");
+  const [saleDateOverride, setSaleDateOverride] = useState("");
+  const [availableDateOverride, setAvailableDateOverride] = useState("");
   const [relationshipForCorrection, setRelationshipForCorrection] = useState<any | null>(null);
   const [relationshipAction, setRelationshipAction] = useState<"revoke" | null>(null);
   const [saleCorrection, setSaleCorrection] = useState<SaleCorrection | null>(null);
@@ -117,10 +120,12 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
     mutationFn: async () => {
       if (!selectedOrder || !activeHistoricalRelationshipId) throw new Error("Покупка не выбрана");
       if (!creditReason.trim()) throw new Error("Укажите основание начисления");
-      const { error } = await (supabase.rpc as any)("referral_admin_credit_historical_order", {
+      const { error } = await (supabase.rpc as any)("referral_admin_credit_historical_order_at", {
         p_relationship_id: activeHistoricalRelationshipId,
         p_order_id: selectedOrder.order_id,
         p_reason: creditReason.trim(),
+        p_sale_at: saleDateOverride ? new Date(saleDateOverride).toISOString() : null,
+        p_available_at: availableDateOverride ? new Date(availableDateOverride).toISOString() : null,
       });
       if (error) throw error;
     },
@@ -128,6 +133,8 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
       toast.success("Реферальное начисление добавлено по правилам продукта");
       setSelectedOrder(null);
       setCreditReason("");
+      setSaleDateOverride("");
+      setAvailableDateOverride("");
       qc.invalidateQueries({ queryKey: ["contact-referral-historical-orders", activeHistoricalRelationshipId] });
       qc.invalidateQueries({ queryKey: ["contact-referrals", profileId] });
       qc.invalidateQueries({ queryKey: ["admin-referrals-overview"] });
@@ -241,8 +248,11 @@ export function ContactReferralsTab({ profileId }: { profileId: string }) {
     <Dialog open={pickedContact !== null} onOpenChange={(open) => { if (!open) { setPickedContact(null); setPickerMode(null); setLinkReason(""); } }}>
       <DialogContent><DialogHeader><DialogTitle>{pickerMode === "replace-partner" ? "Изменить рекомендателя" : "Подтвердить историческую рекомендацию"}</DialogTitle><DialogDescription>{pickerMode === "replace-partner" ? "Действующие начисления сначала нужно исключить из реферального расчёта. Клиентские покупки при этом не отменяются." : "Связь будет внесена администратором и не начислит покупки автоматически: их нужно выбрать отдельно."}</DialogDescription></DialogHeader><div className="space-y-2"><Label>Основание</Label><Textarea value={linkReason} onChange={(event) => setLinkReason(event.target.value)} placeholder="Например: рекомендация подтверждена менеджером 25.07.2026" /></div><DialogFooter><Button variant="outline" onClick={() => { setPickedContact(null); setPickerMode(null); setRelationshipForCorrection(null); }}>Отмена</Button><Button disabled={attachHistorical.isPending || !linkReason.trim()} onClick={() => attachHistorical.mutate()}>{pickerMode === "replace-partner" ? "Изменить рекомендателя" : "Сохранить связь"}</Button></DialogFooter></DialogContent>
     </Dialog>
-    <Dialog open={selectedOrder !== null} onOpenChange={(open) => { if (!open) { setSelectedOrder(null); setCreditReason(""); } }}>
-      <DialogContent><DialogHeader><DialogTitle>Подтвердить начисление</DialogTitle><DialogDescription>Будет создана реферальная операция с пометкой «внесено администратором». Сумма и распределение 60/40 рассчитываются сервером.</DialogDescription></DialogHeader><div className="space-y-2"><Label>Основание</Label><Textarea value={creditReason} onChange={(event) => setCreditReason(event.target.value)} placeholder="Например: историческая покупка подтверждена по договору" /></div><DialogFooter><Button variant="outline" onClick={() => setSelectedOrder(null)}>Отмена</Button><Button disabled={creditHistoricalOrder.isPending || !creditReason.trim()} onClick={() => creditHistoricalOrder.mutate()}>Начислить</Button></DialogFooter></DialogContent>
+    <Dialog open={selectedOrder !== null} onOpenChange={(open) => { if (!open) { setSelectedOrder(null); setCreditReason(""); setSaleDateOverride(""); setAvailableDateOverride(""); } }}>
+      <DialogContent><DialogHeader><DialogTitle>Подтвердить начисление</DialogTitle><DialogDescription>По умолчанию срок ожидания считается от даты оплаты покупки по правилам программы. Сумма и распределение 60/40 рассчитываются сервером.</DialogDescription></DialogHeader>
+        <div className="space-y-2"><Label htmlFor="referral-sale-date">Дата продажи (необязательно)</Label><Input id="referral-sale-date" type="datetime-local" value={saleDateOverride} onChange={(event) => setSaleDateOverride(event.target.value)} /><p className="text-xs text-muted-foreground">Оставьте пустым, чтобы использовать дату оплаты. Введённое время — местное время вашего браузера.</p></div>
+        <div className="space-y-2"><Label htmlFor="referral-available-date">Дата доступности (изменить вручную)</Label><Input id="referral-available-date" type="datetime-local" value={availableDateOverride} onChange={(event) => setAvailableDateOverride(event.target.value)} /><p className="text-xs text-muted-foreground">По умолчанию — дата продажи плюс срок ожидания программы. Другая дата и основание сохраняются в истории.</p></div>
+        <div className="space-y-2"><Label>Основание</Label><Textarea value={creditReason} onChange={(event) => setCreditReason(event.target.value)} placeholder="Например: историческая покупка подтверждена по договору" /></div><DialogFooter><Button variant="outline" onClick={() => { setSelectedOrder(null); setSaleDateOverride(""); setAvailableDateOverride(""); }}>Отмена</Button><Button disabled={creditHistoricalOrder.isPending || !creditReason.trim()} onClick={() => creditHistoricalOrder.mutate()}>Начислить</Button></DialogFooter></DialogContent>
     </Dialog>
     <Dialog open={saleCorrection !== null} onOpenChange={(open) => { if (!open) { setSaleCorrection(null); setCorrectionReason(""); } }}>
       <DialogContent><DialogHeader><DialogTitle>{saleCorrection?.action === "reverse" ? "Исключить покупку из реферального расчёта" : "Восстановить реферальное начисление"}</DialogTitle><DialogDescription>{saleCorrection?.action === "reverse" ? "Покупка клиента и её оплата не отменяются. Будет отменено только ожидающее реферальное начисление; операция останется в истории." : "Будет восстановлено то же начисление по сохранённым правилам продукта."}</DialogDescription></DialogHeader><p className="text-sm font-medium">{saleCorrection?.label}</p><div className="space-y-2"><Label>Основание</Label><Textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Например: покупка не относится к рекомендации" /></div><DialogFooter><Button variant="outline" onClick={() => setSaleCorrection(null)}>Отмена</Button><Button disabled={correctSale.isPending || !correctionReason.trim()} variant={saleCorrection?.action === "reverse" ? "destructive" : "default"} onClick={() => correctSale.mutate()}>{saleCorrection?.action === "reverse" ? "Исключить" : "Восстановить"}</Button></DialogFooter></DialogContent>
