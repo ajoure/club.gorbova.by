@@ -84,6 +84,7 @@ jobs:
           REFERRAL_DATE_SQL_FIXTURE: /tmp/referral-sale-date-fixture.sql
         run: |
           node --test scripts/referrals/sale-date-hold.test.mjs
+          node scripts/referrals/sale-date-once.test.mjs
           psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE referral_sale_date_test'
           node scripts/referrals/sale-date-concurrency.test.mjs
       - name: Sales customer real PostgreSQL concurrency
