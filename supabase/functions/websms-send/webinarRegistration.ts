@@ -36,7 +36,7 @@ export async function resolveWebinarBroadcastCounts(supabase:any,filters:Record<
   if(data.length<200)break;
  }
  let eligible=await filterUsersByWebinarRegistration(supabase,users,filters.webinar_registration);
- if(filters.education){const {filterUsersByEducationCondition}=await import("./broadcastEducation.ts");eligible=await filterUsersByEducationCondition(supabase,[...eligible],filters.education);}
+ if(filters.education){const {filterUsersByEducationCondition}=await import("../_shared/broadcastEducation.ts");eligible=await filterUsersByEducationCondition(supabase,[...eligible],filters.education);}
  let telegram_count=0,email_count=0,total_count=0;
  const ids=[...eligible];
  for(let offset=0;offset<ids.length;offset+=200){
@@ -47,7 +47,7 @@ export async function resolveWebinarBroadcastCounts(supabase:any,filters:Record<
  return {telegram_count,email_count,total_count};
 }
 
-import {evaluateBroadcastGuards,type BroadcastGuardInput,type BroadcastGuardResult} from "./broadcast-guards.ts";
+import {evaluateBroadcastGuards,type BroadcastGuardInput,type BroadcastGuardResult} from "../_shared/broadcast-guards.ts";
 /** Extend the existing guard only for the additional concrete, server-enforced restriction. */
 export function evaluateWebinarBroadcastGuards(input:BroadcastGuardInput):BroadcastGuardResult{
  const result=evaluateBroadcastGuards(input);

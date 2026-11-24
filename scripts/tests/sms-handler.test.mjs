@@ -5,8 +5,8 @@ const transpile=source=>ts.transpileModule(source,{compilerOptions:{target:ts.Sc
 const guardSource=await readFile(new URL('../../supabase/functions/_shared/broadcast-guards.ts',import.meta.url),'utf8');
 const guards=await import(`data:text/javascript;base64,${Buffer.from(transpile(guardSource)).toString('base64')}`);
 const load=async(path,names,deps={})=>new Function(...Object.keys(deps),transpile((await readFile(new URL(path,import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/export /g,''))+';return {'+names+'};')(...Object.values(deps));
-const {evaluateWebinarBroadcastGuards}=await load('../../supabase/functions/_shared/broadcast-webinar.ts','evaluateWebinarBroadcastGuards',{evaluateBroadcastGuards:guards.evaluateBroadcastGuards});
-const {validateSmsAudienceFilters}=await load('../../supabase/functions/_shared/sms-audience.ts','validateSmsAudienceFilters');
+const {evaluateWebinarBroadcastGuards}=await load('../../supabase/functions/websms-send/webinarRegistration.ts','evaluateWebinarBroadcastGuards',{evaluateBroadcastGuards:guards.evaluateBroadcastGuards});
+const {validateSmsAudienceFilters}=await load('../../supabase/functions/websms-send/sms-audience.ts','validateSmsAudienceFilters');
 const source=await readFile(new URL('../../supabase/functions/websms-send/index.ts',import.meta.url),'utf8');
 const code=transpile(source.replace(/^import .*;\n/gm,''));
 const id='00000000-0000-4000-8000-000000000001';

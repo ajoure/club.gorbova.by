@@ -1,5 +1,5 @@
-import { resolveSmsAudience, validateSmsAudienceFilters } from '../_shared/sms-audience.ts';
-import { evaluateWebinarBroadcastGuards } from '../_shared/broadcast-webinar.ts';
+import { resolveSmsAudience, validateSmsAudienceFilters } from './sms-audience.ts';
+import { evaluateWebinarBroadcastGuards } from './webinarRegistration.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 import { normalizeSmsPhone, smsConfiguration, sendSmsByTransport, drainSmsBroadcastQueue, smsDispatchSummary, checkSmsDelivery } from '../_shared/sms-transport.ts';
