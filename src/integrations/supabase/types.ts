@@ -28822,6 +28822,15 @@ export type Database = {
         }
         Returns: Json
       }
+      referral_retime_historical_sales: {
+        Args: {
+          p_dry_run?: boolean
+          p_expected_balances: Json
+          p_items: Json
+          p_operation_key: string
+        }
+        Returns: Json
+      }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       reorder_tariff_offers: {
         Args: { p_ordered_ids: string[]; p_tariff_id: string }
