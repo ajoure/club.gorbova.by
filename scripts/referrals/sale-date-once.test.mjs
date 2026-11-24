@@ -1,5 +1,6 @@
 import {PGlite} from '@electric-sql/pglite';
 import {fixtureSql} from './sale-date-fixture.mjs';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';import assert from 'node:assert/strict';
 // Entirely synthetic cohort; production identifiers stay in private artifacts.
 const uid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -16,6 +17,7 @@ const db=new PGlite();
 try{
  await db.exec((await fixtureSql()).replaceAll("current_setting('test.jwt',true)","current_setting('request.jwt.claims',true)"));
  await db.exec("TRUNCATE referral_sale_attributions,referral_balance_entries,referral_balance_transactions,payments_v2,orders_v2,referral_partners CASCADE;SELECT set_config('test.uid','',false);SELECT set_config('request.jwt.claims','{}',false)");
+ await db.exec(once); // New/empty environment must not break the migration chain.
  for(const p of before.balances)await db.query('INSERT INTO referral_partners(id,status) VALUES($1,$2)',[p.partner_id,p.status]);
  for(const s of before.sales){
   await db.query('INSERT INTO orders_v2(id,status,paid_amount,currency) VALUES($1,$2,$3,$4)',[s.order_id,s.order_status,s.paid_amount,s.currency]);
@@ -30,9 +32,12 @@ try{
  await db.query("INSERT INTO referral_balance_entries(transaction_id,partner_id,bucket,amount_minor) VALUES($1,$2,'internal',-164000)",[tx,p]);
  const snap=async()=>JSON.stringify((await db.query('SELECT * FROM referral_sale_attributions ORDER BY id')).rows);
  // Replace only the production fingerprint with the synthetic fixture fingerprint.
+ const ids=before.sales.map(x=>"'"+createHash('md5').update(x.id).digest('hex')+"'").join(',');
+ once=once.replace(/WHERE md5\(id::text\) IN \([^)]*\)/,`WHERE md5(id::text) IN (${ids})`);
  const fingerprintQuery=once.slice(once.indexOf(' SELECT md5'),once.indexOf(' IF fingerprint')).replace(' INTO fingerprint','').replace(/\bop\b/g,"'referral-hold-sale-date-20261124-v1'");
  const fingerprint=Object.values((await db.query(fingerprintQuery)).rows[0])[0];
  once=once.replace(/fingerprint IS DISTINCT FROM '[0-9a-f]{32}'/,`fingerprint IS DISTINCT FROM '${fingerprint}'`);
+ await db.exec('BEGIN');await db.exec('DELETE FROM referral_sale_attributions WHERE id=(SELECT min(id::text)::uuid FROM referral_sale_attributions)');await assert.rejects(()=>db.exec(once),/incomplete_frozen_cohort/);await db.exec('ROLLBACK');
  const initial=await snap();await db.exec('BEGIN');await db.exec("UPDATE payments_v2 SET refunded_amount=1 WHERE id=(SELECT min(id::text)::uuid FROM payments_v2)");await assert.rejects(()=>db.exec(once),/frozen_financial_snapshot_changed/);await db.exec('ROLLBACK');assert.equal(await snap(),initial);
  await db.exec('BEGIN');await db.exec(once);await db.exec('COMMIT');
  const shid=before.balances.find(x=>x.balance.pending===79162).partner_id;

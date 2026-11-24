@@ -6,11 +6,18 @@ DECLARE
  op constant text := 'referral-hold-sale-date-20261124-v1';
  fingerprint text; items jsonb; balances jsonb; preview jsonb; result jsonb;
  old_claims text := current_setting('request.jwt.claims',true);
+ old_claim text := current_setting('request.jwt.claim',true);
+ matching_ids integer;
  pending_partner uuid; available_partner uuid;
 BEGIN
  IF NOT pg_has_role(session_user,'postgres','MEMBER') THEN
   RAISE EXCEPTION 'managed_migration_operator_required';
  END IF;
+ -- COHORT_ID_HASHES_BEGIN: no-op only when this production cohort is absent.
+ SELECT count(*) INTO matching_ids FROM public.referral_sale_attributions WHERE md5(id::text) IN ('42be009d5fb609942b9f25473f3d8747','021bcb2a1f1835313de0b8fd370f787e','4021e701155d3658f5195dd23c5deb83','9190db684def0d584da8e58f46ebc292','2a1194749be0781d443fec492193d97e');
+ -- COHORT_ID_HASHES_END
+ IF matching_ids=0 THEN RETURN; END IF;
+ IF matching_ids<>5 THEN RAISE EXCEPTION 'incomplete_frozen_cohort'; END IF;
  PERFORM set_config('lock_timeout','5s',true);
  LOCK TABLE public.referral_sale_attributions IN SHARE ROW EXCLUSIVE MODE;
  SELECT md5(jsonb_agg(jsonb_build_array(
@@ -45,9 +52,11 @@ BEGIN
  IF preview->>'no_writes'<>'true' OR (preview->>'date_changes')::int<>4 OR (preview->>'expected_matured')::int<>2 THEN RAISE EXCEPTION 'repair_dry_run_changed'; END IF;
  -- The managed DB operator establishes service context only in this transaction.
  -- No token, user impersonation, permanent role grant or auth function change.
+ PERFORM set_config('request.jwt.claim','',true);
  PERFORM set_config('request.jwt.claims','{"role":"service_role"}',true);
  result:=public.referral_retime_historical_sales(op,items,balances,false);
  PERFORM set_config('request.jwt.claims',coalesce(old_claims,''),true);
+ PERFORM set_config('request.jwt.claim',coalesce(old_claim,''),true);
  IF (result->>'changed')::int<>4 OR (result->>'matured')::int<>2 THEN RAISE EXCEPTION 'repair_effect_count_changed'; END IF;
  IF result->'balances_after'->pending_partner::text IS DISTINCT FROM jsonb_build_object('available',79162,'held',0,'internal',118743,'internal_held',0,'internal_pending',0,'paid',0,'pending',0)
  OR result->'balances_after'->available_partner::text IS DISTINCT FROM balances->available_partner::text THEN RAISE EXCEPTION 'repair_balance_readback_failed'; END IF;
