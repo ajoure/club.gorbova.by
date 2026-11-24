@@ -1,3 +1,4 @@
+import { consultationBillingPolicy } from "../_shared/consultation-billing-policy.ts";
 /**
  * admin-create-public-link
  *
@@ -160,7 +161,7 @@ Deno.serve(async (req) => {
 
     // ── Validate referential integrity ──
     const { data: product } = await supabase
-      .from('products_v2').select('id, is_active, primary_domain').eq('id', product_id).maybeSingle();
+      .from('products_v2').select('id, code, is_active, primary_domain').eq('id', product_id).maybeSingle();
     if (!product) return errorResponse('Product not found', 400);
     if (product.is_active === false) return errorResponse('Product is not active', 400);
 
@@ -648,7 +649,8 @@ Deno.serve(async (req) => {
           .maybeSingle();
         const offerMetaRecurring = (offerForRecurring as any)?.meta ?? {};
         const recurringMeta = (offerMetaRecurring as any)?.recurring ?? {};
-        const intervalRaw = String(recurringMeta?.interval ?? recurringMeta?.period ?? 'month').toLowerCase();
+        const consultationPolicy = consultationBillingPolicy(product.code, payment_type, !!installmentBlock);
+        const intervalRaw = consultationPolicy?.stripe.interval ?? String(recurringMeta?.interval ?? recurringMeta?.period ?? 'month').toLowerCase();
         const ALLOWED_INTERVALS = new Set(['day', 'week', 'month', 'year']);
         if (!ALLOWED_INTERVALS.has(intervalRaw)) {
           return errorResponse(
@@ -661,7 +663,7 @@ Deno.serve(async (req) => {
         linkMetaStripePriceMode = 'inline_override';
         linkMetaStripeRecurringSnapshot = {
           interval: intervalRaw,
-          interval_count: Number(recurringMeta?.interval_count ?? 1) || 1,
+          interval_count: consultationPolicy?.stripe.interval_count ?? (Number(recurringMeta?.interval_count ?? 1) || 1),
         };
       }
 

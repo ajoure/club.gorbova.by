@@ -1,3 +1,5 @@
+import { consultationBillingPolicy } from "./consultation-billing-policy.ts";
+import { stripeRecurringPeriod } from "./stripe-recurring-period.ts";
 import { assertZg27Checkout, Zg27CheckoutError } from './zg27-checkout-guard.ts';
 import { requireZg27InstallmentExecution } from './zg27-installments.ts';
 import { reusePendingSubscriptionCheckout } from './pending-subscription-checkout.ts';
@@ -93,6 +95,17 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   }
   if (!currency) {
     return { success: false, provider: 'stripe', error: 'missing_currency' };
+  }
+
+  // Stripe checkout has no finite-cycle writer. Reject legacy or malformed
+  // installment links before resolving credentials or materializing a purchase.
+  const installment = meta_extra?.installment as Record<string, unknown> | undefined;
+  if (meta_extra?.payment_method === 'internal_installment'
+    || installment?.payment_method === 'internal_installment'
+    || installment?.as_finite_subscription === true
+    || installment?.model === 'bepaid_finite_subscription'
+    || installment?.infinite === false) {
+    return { success: false, provider: 'stripe', error: 'stripe_finite_installment_unsupported' };
   }
 
   try {
@@ -409,7 +422,8 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   // Если subscription checkout создаётся из payment_link, бизнес-SOT суммы —
   // payment_links.amount/currency (caller передал amountMajor + currency).
   // Игнорируем saved offer.meta.stripe.price_id и строим inline recurring price_data.
-  const useInlinePrice = Boolean(payment_link_id);
+  const consultationPolicy = consultationBillingPolicy(product.code, payment_type);
+  const useInlinePrice = Boolean(payment_link_id) || consultationPolicy !== null;
 
   if (!useInlinePrice && !offer_price_id) {
     return { success: false, provider: 'stripe', error: 'stripe_price_missing_in_offer_meta' };
@@ -420,10 +434,10 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   //   payment_links.meta.stripe_recurring_snapshot (записан admin-create-public-link).
   // Fallback — offer.meta.recurring (canonical product SOT) с расширенной нормализацией
   //   billing_period_mode ∈ {day(s), week(s), month(s), year(s)}.
-  let inlineRecurring: { interval: 'day' | 'week' | 'month' | 'year'; interval_count: number } | null = null;
+  let inlineRecurring: { interval: 'day' | 'week' | 'month' | 'year'; interval_count: number } | null = consultationPolicy?.stripe ?? null;
   if (useInlinePrice) {
     // 1) Try payment_links snapshot.
-    if (payment_link_id) {
+    if (!inlineRecurring && payment_link_id) {
       const { data: linkRow } = await supabase
         .from('payment_links')
         .select('meta')
@@ -445,20 +459,9 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       if (!rec || rec.is_recurring !== true) {
         return { success: false, provider: 'stripe', error: 'offer_not_recurring_for_subscription_link' };
       }
-      const rawMode = String((rec.billing_period_mode as string) || 'days').toLowerCase();
-      const normMode = rawMode.endsWith('s') ? rawMode.slice(0, -1) : rawMode; // day|week|month|year
+      const rawMode = String(rec.billing_period_mode || "days");
       const periodDays = Number(rec.billing_period_days ?? rec.recurring_interval_days ?? 0);
-
-      if (['day','week','month','year'].includes(normMode)) {
-        // Direct interval mapping (e.g. mode='month' → 1 month per cycle).
-        inlineRecurring = { interval: normMode as 'day'|'week'|'month'|'year', interval_count: 1 };
-      } else if (rawMode === 'days' && Number.isFinite(periodDays) && periodDays > 0) {
-        // Legacy days-based mapping.
-        if (periodDays === 30 || periodDays === 31) inlineRecurring = { interval: 'month', interval_count: 1 };
-        else if (periodDays === 7) inlineRecurring = { interval: 'week', interval_count: 1 };
-        else if (periodDays === 365 || periodDays === 366) inlineRecurring = { interval: 'year', interval_count: 1 };
-        else if (periodDays <= 365) inlineRecurring = { interval: 'day', interval_count: periodDays };
-      }
+      inlineRecurring = stripeRecurringPeriod(rec);
       if (!inlineRecurring) {
         return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { rawMode, periodDays } };
       }
@@ -470,7 +473,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     user_id, product_id, tariff_id, offer_id, final_price: amountMajor,
     currency: currency.toUpperCase(),
     meta: { ...(meta_extra ?? {}), replacement_of_subscription_v2_id: replacement_of_subscription_v2_id ?? null },
-    purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
+    purchase_snapshot: {access_days:consultationPolicy?.accessDays ?? (tariff.access_days || 30),is_trial:false},
     };
     const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'stripe', resolved_account_code);
     if(recoveredCheckout) return recoveredCheckout as StripeBranchSuccess;
@@ -566,7 +569,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     purchase_snapshot: buildPurchaseSnapshot({
       product_id, product_public_id: product.public_id, product_name: product.name, product_code: product.code,
       tariff_id, tariff_public_id: tariff.public_id, tariff_name: tariff.name, tariff_code: tariff.code,
-      offer_id, price: amountMajor, currency: currency.toUpperCase(), access_days: tariff.access_days || 30,
+      offer_id, price: amountMajor, currency: currency.toUpperCase(), access_days: consultationPolicy?.accessDays ?? (tariff.access_days || 30),
     }),
   }, 'subscription', 'stripe', resolved_account_code);
   if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as StripeBranchSuccess;
@@ -640,7 +643,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       tariff_name: tariff.name,
       account_code: resolved_account_code,
       payment_link_id: payment_link_id ?? null,
-      price_source: useInlinePrice ? 'inline_payment_link' : 'offer_saved_price_id',
+      price_source: consultationPolicy ? 'inline_consultation_monthly' : useInlinePrice ? 'inline_payment_link' : 'offer_saved_price_id',
       inline_amount_major: useInlinePrice ? amountMajor : null,
       inline_currency: useInlinePrice ? currency.toUpperCase() : null,
       order_id: checkoutClaim.order.id,
