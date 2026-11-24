@@ -61,18 +61,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ffmpeg
           node --test scripts/sales-knowledge/*.test.mjs
-      - name: Referral sale-date hold and atomic maturation
-        env:
-          PGHOST: 127.0.0.1
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: referral-test-only
-          PGDATABASE: referral_sale_date_test
-          REFERRAL_DATE_SQL_FIXTURE: /tmp/referral-sale-date-fixture.sql
-        run: |
-          node --test scripts/referrals/sale-date-hold.test.mjs
-          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE referral_sale_date_test'
-          node scripts/referrals/sale-date-concurrency.test.mjs
       - name: Referral redemption money and access contracts
         run: node scripts/referrals/redemption-database.test.mjs
       - name: Referral wallet real PostgreSQL concurrency
@@ -86,6 +74,18 @@ jobs:
         run: |
           node scripts/referrals/redemption-database.test.mjs
           node scripts/referrals/redemption-concurrency.test.mjs
+      - name: Referral sale-date hold and atomic maturation
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: referral-test-only
+          PGDATABASE: referral_sale_date_test
+          REFERRAL_DATE_SQL_FIXTURE: /tmp/referral-sale-date-fixture.sql
+        run: |
+          node --test scripts/referrals/sale-date-hold.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'CREATE DATABASE referral_sale_date_test'
+          node scripts/referrals/sale-date-concurrency.test.mjs
       - name: Sales customer real PostgreSQL concurrency
         env:
           PGHOST: 127.0.0.1
