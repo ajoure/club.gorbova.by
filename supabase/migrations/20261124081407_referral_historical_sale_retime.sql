@@ -44,7 +44,7 @@ BEGIN
   IF sale.metadata->'old_dates'->>'operation_key'=p_operation_key THEN
    IF sale.available_at IS DISTINCT FROM expected_at
     OR sale.status IS DISTINCT FROM (CASE WHEN item->>'expected_status'='pending' AND expected_at<=now() THEN 'available' ELSE item->>'expected_status' END)
-    OR sale.metadata->'old_dates'->'sale_ids' IS DISTINCT FROM to_jsonb(ids)
+    OR sale.metadata->'old_dates'->>'batch_hash' IS DISTINCT FROM md5(to_jsonb(ids)::text)
     OR (sale.metadata->'old_dates'->>'created_at')::timestamptz IS DISTINCT FROM (item->>'expected_created_at')::timestamptz
     OR (sale.metadata->'old_dates'->>'available_at')::timestamptz IS DISTINCT FROM (item->>'expected_available_at')::timestamptz
     THEN RAISE EXCEPTION 'repaired_date_changed'; END IF;
@@ -72,7 +72,7 @@ BEGIN
   UPDATE public.referral_sale_attributions a SET
    available_at=(item->>'sale_paid_at')::timestamptz+make_interval(days=>hold_days),
    metadata=coalesce(a.metadata,'{}'::jsonb)||jsonb_build_object('old_dates',jsonb_build_object(
-    'operation_key',p_operation_key,'sale_ids',ids,'created_at',a.created_at,'available_at',a.available_at,'saved_at',now(),
+    'operation_key',p_operation_key,'batch_hash',md5(to_jsonb(ids)::text),'created_at',a.created_at,'available_at',a.available_at,'saved_at',now(),
     'sale_paid_at',(item->>'sale_paid_at')::timestamptz,'hold_days',hold_days))
   WHERE a.id=(item->>'id')::uuid;
   changed:=changed+1;
