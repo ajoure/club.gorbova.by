@@ -232,6 +232,13 @@
       "when": 1795515257212,
       "tag": "0032_sms_broadcast_channel_activate",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795515362919,
+      "tag": "0033_sms_broadcast_channel_audience",
+      "breakpoints": true
     }
   ]
 }

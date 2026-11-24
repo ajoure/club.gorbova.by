@@ -29605,6 +29605,10 @@ export type Database = {
         }
         Returns: Json
       }
+      sms_funnel_audience: {
+        Args: { p_limit?: number; p_offset?: number; p_segment: Json }
+        Returns: Json
+      }
       sms_funnel_needs_telegram: {
         Args: { p_blocks: Json; p_start: string }
         Returns: boolean
