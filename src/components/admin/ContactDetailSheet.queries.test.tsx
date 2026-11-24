@@ -47,6 +47,8 @@ for (const [path, name] of [
 vi.doMock("@/components/installments/ContactInstallmentsTabContent", () => ({ ContactInstallmentsTabContent: () => null }));
 vi.doMock("@/components/admin/contact/ContactDealsTab", () => ({ ContactDealsTab: ({ deals }: { deals?: unknown[] }) => <div>Сделок: {deals?.length ?? "загрузка"}</div> }));
 
+vi.doMock("@/components/admin/communication/funnels/FunnelReportPanel", () => ({ ContactFunnelHistory: ({ profileId }: { profileId: string }) => <div>Воронки контакта: {profileId}</div> }));
+
 const { ContactDetailSheet } = await import("./ContactDetailSheet");
 const contact = { id: "profile", user_id: "auth-user", email: null, full_name: "Synthetic", first_name: "Synthetic", last_name: null, phone: null,
   telegram_username: null, telegram_user_id: null, avatar_url: null, status: "active", created_at: "2026-01-01T12:00:00Z", last_seen_at: null, duplicate_flag: null, deals_count: 1, last_deal_at: null };
@@ -61,6 +63,20 @@ beforeEach(() => { network.reads.length = 0; network.failDeals = false; network.
 afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear()); });
 
 describe("contact sheet visible query scopes", () => {
+  it("opens funnels independently of failed deals and does not mount them on profile or deals", async () => {
+    network.failDeals = true;
+    renderSheet();
+    expect(screen.queryByText("Воронки контакта: profile")).not.toBeInTheDocument();
+    selectTab(/^Сделки/);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Не удалось загрузить сделки"));
+    expect(screen.queryByText("Воронки контакта: profile")).not.toBeInTheDocument();
+    selectTab(/^Воронки$/);
+    await screen.findByText("Воронки контакта: profile");
+    expect(screen.queryByText(/Не удалось загрузить сделки/)).not.toBeInTheDocument();
+    selectTab(/^Профиль/);
+    await waitFor(() => expect(screen.queryByText("Воронки контакта: profile")).not.toBeInTheDocument());
+  });
+
   it("starts zero sheet reads when closed and defers heavy tabs on the initial profile", async () => {
     const view = renderSheet(false);
     await new Promise((resolve) => setTimeout(resolve, 30));

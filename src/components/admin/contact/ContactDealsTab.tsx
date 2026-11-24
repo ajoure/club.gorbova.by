@@ -1,5 +1,5 @@
 import { dealStatusLabel, isReferralRedemption } from "@/lib/deals/dealFinancialKind";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,14 +25,12 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { formatEffectiveDealDate, getEffectiveDealTimestamp } from "@/utils/getEffectiveDealDate";
 import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
-const ContactFunnelHistory = lazy(() => import('../communication/funnels/FunnelReportPanel').then(module => ({ default: module.ContactFunnelHistory })));
 
 // ── Types ───────────────────────────────────────────────────────────
 
 type AnyDeal = any;
 
 interface ContactDealsTabProps {
-  profileId?: string;
   deals: AnyDeal[] | undefined;
   isLoading: boolean;
   moduleMetaMap?: Map<string, any>;
@@ -176,7 +174,6 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
 // ── Main component ──────────────────────────────────────────────────
 
 export function ContactDealsTab({
-  profileId,
   deals,
   isLoading,
   moduleMetaMap,
@@ -223,7 +220,6 @@ export function ContactDealsTab({
           <p className="text-muted-foreground text-sm">Нет сделок</p>
         </CardContent>
       </Card>
-      {profileId && <Suspense fallback={<p>Загружаем историю воронок…</p>}><ContactFunnelHistory key={profileId} profileId={profileId}/></Suspense>}
       </>
     );
   }
@@ -231,7 +227,6 @@ export function ContactDealsTab({
   return (
     <TooltipProvider delayDuration={200}>
       <div className="space-y-2">
-        {profileId && <Suspense fallback={<p>Загружаем историю воронок…</p>}><ContactFunnelHistory key={profileId} profileId={profileId}/></Suspense>}
         {groups.map(group => (
           <DealsGroupSection
             key={group.key}
