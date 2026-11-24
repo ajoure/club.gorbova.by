@@ -6,7 +6,7 @@ export type { TelegramFunnelSegment, TelegramFunnelSegmentNode } from '../../../
 // Additive managed schema: keep contracts outside generated types.ts until Cloud sync.
 export const funnelDb = supabase as unknown as SupabaseClient;
 export type FunnelButton = { id: string; text: string } & ({ kind: 'url'; url: string } | { kind: 'next'; target_block_id: string } | { kind: 'finish'; tag?: string | null });
-export interface FunnelBlock { channel?: 'telegram' | 'sms'; id: string; text: string; image_path?: string | null; buttons: FunnelButton[] }
+export interface FunnelBlock { next_step?: { at: string; target_block_id: string } | null; channel?: 'telegram' | 'sms'; id: string; text: string; image_path?: string | null; buttons: FunnelButton[] }
 export interface FunnelRecord { id: string; name: string; status: 'draft' | 'active' | 'stopped'; revision: number; start_block_id: string; blocks: FunnelBlock[]; created_at?: string; created_by?: string }
 export interface FunnelLaunch { id: string; funnel_id: string; bot_id: string | null; scheduled_for: string; status: string; created_at: string }
 export interface FunnelReportRow { id?: string; enrollment_id?: string; funnel_name?: string; profile_name?: string; status?: string; reason?: string | null; current_block?: string; block_id?: string; text?: string; buttons?: FunnelButton[]; created_at?: string; kind?: string; button_id?: string; error_code?: string | null; detail?: Record<string, unknown> }
@@ -41,6 +41,9 @@ export function graphErrors(funnel: FunnelRecord): string[] {
   if (!ids.has(funnel.start_block_id)) errors.push('Выберите стартовое сообщение.');
   if (ids.size !== funnel.blocks.length) errors.push('Повторяются ID сообщений.');
   for (const [i, block] of funnel.blocks.entries()) {
+    if (block.next_step && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(block.next_step.at) || block.next_step.target_block_id === block.id || !funnel.blocks.some(b => b.id === block.next_step?.target_block_id && (b.channel || 'telegram') === (block.channel || 'telegram')) || block.buttons.some(b => b.kind === 'next'))) errors.push(`Сообщение ${i + 1}: выберите время и другое сообщение того же канала; уберите кнопки перехода.`);
+    const visited = new Set<string>(); let cursor: FunnelBlock | undefined = block;
+    while (cursor?.next_step) { if (visited.has(cursor.id)) { errors.push(`Сообщение ${i + 1}: расписание не должно образовывать цикл.`); break; } visited.add(cursor.id); cursor = funnel.blocks.find(b => b.id === cursor?.next_step?.target_block_id); }
     if (block.channel === 'sms') {
       if (!block.text.trim() || block.text.length > 1000) errors.push(`Сообщение ${i + 1}: текст SMS должен содержать 1–1000 символов.`);
       if (block.image_path || block.buttons.length) errors.push(`Сообщение ${i + 1}: SMS не поддерживает изображения и интерактивные кнопки.`);

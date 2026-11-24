@@ -29842,6 +29842,7 @@ export type Database = {
           p_restart?: boolean
           p_revision: number
           p_scheduled_at?: string
+          p_start_block?: string
         }
         Returns: {
           audience_filters: Json
