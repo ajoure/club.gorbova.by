@@ -218,6 +218,13 @@
       "when": 1795515054915,
       "tag": "0030_sms_broadcast_channel_self_test",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795515157527,
+      "tag": "0031_sms_broadcast_channel_enroll",
+      "breakpoints": true
     }
   ]
 }
