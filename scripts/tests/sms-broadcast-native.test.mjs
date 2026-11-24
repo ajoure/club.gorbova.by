@@ -27,7 +27,7 @@ const bootstrap=`
 `;
 const cutoffSource=await readFile(new URL('../../supabase/migrations/20261010150000_questionnaire_notification_cutoff.sql',import.meta.url),'utf8');
 const cutoffGuard=cutoffSource.slice(0,cutoffSource.indexOf('-- Queue new entrants'));
-const migrationFiles=["20261123061600_sms_broadcast_channel_schema.sql", "20261123061601_sms_broadcast_channel_dispatch.sql", "20261123061602_sms_broadcast_channel_funnel.sql", "20261123061603_sms_broadcast_channel_delivery.sql"];
+const migrationFiles=["20261123061600_sms_broadcast_channel_schema.sql", "20261123061601_sms_broadcast_channel_dispatch.sql", "20261123061602_sms_broadcast_channel_constraints.sql", "20261123061603_sms_broadcast_channel_graph.sql", "20261123061604_sms_broadcast_channel_launch.sql", "20261123061605_sms_broadcast_channel_self_test.sql", "20261123061606_sms_broadcast_channel_enroll.sql", "20261123061607_sms_broadcast_channel_activate.sql", "20261123061608_sms_broadcast_channel_audience.sql", "20261123061609_sms_broadcast_channel_send.sql", "20261123061610_sms_broadcast_channel_questionnaire.sql", "20261123061611_sms_broadcast_channel_summaries.sql"];
 const migrations=await Promise.all(migrationFiles.map(name=>readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8')));
 assert.equal(migrationHash('sha256').update(migrations.join('')).digest('hex'),'105423d837f9209bbd63872f28e9dcdbb748490b1e8dcf23f44775ab143812dc');
 code=code.replace('await run(imageTextMigration);',()=>`await run(imageTextMigration);\nawait run(${JSON.stringify(bootstrap+cutoffGuard)});\n${migrations.map(migration=>'await run('+JSON.stringify('BEGIN;\n'+migration+'\nCOMMIT;')+');').join('\n')}`);

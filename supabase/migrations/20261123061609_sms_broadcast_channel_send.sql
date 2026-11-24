@@ -1,16 +1,3 @@
-
-CREATE OR REPLACE FUNCTION public.sms_funnel_audience(p_segment jsonb,p_offset integer DEFAULT 0,p_limit integer DEFAULT 50) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE result jsonb;
-BEGIN
- IF NOT public.telegram_funnel_can_manage() THEN RAISE EXCEPTION 'communication_manage_required' USING ERRCODE='42501';END IF;
- PERFORM public.telegram_funnel_validate_segment(p_segment);
- IF p_offset IS NULL OR p_limit IS NULL OR p_offset NOT BETWEEN 0 AND 1000000 OR p_limit NOT BETWEEN 1 AND 200 THEN RAISE EXCEPTION 'funnel_page_invalid';END IF;
- WITH candidates AS MATERIALIZED(SELECT p.id profile_id,p.user_id,p.full_name,public.sms_normalize_phone(p.phone) phone FROM private.telegram_funnel_matching_profiles(p_segment)m JOIN public.profiles p ON p.id=m), matched AS MATERIALIZED(SELECT c.profile_id,c.user_id,c.full_name,(c.phone IS NOT NULL AND row_number()OVER(PARTITION BY c.phone ORDER BY(c.user_id IS NOT NULL)DESC,c.profile_id)=1) has_dialog FROM candidates c),
- paged AS(SELECT * FROM matched ORDER BY profile_id LIMIT p_limit OFFSET p_offset)
- SELECT jsonb_build_object('total',(SELECT count(*) FROM matched),'available_count',(SELECT count(*) FROM matched WHERE has_dialog),'recipients',coalesce((SELECT jsonb_agg(to_jsonb(pg) ORDER BY profile_id) FROM paged pg),'[]')) INTO result;RETURN result;
-END $$;
-REVOKE ALL ON FUNCTION public.sms_funnel_audience(jsonb,integer,integer) FROM PUBLIC,anon;
-GRANT EXECUTE ON FUNCTION public.sms_funnel_audience(jsonb,integer,integer) TO authenticated;
 CREATE OR REPLACE FUNCTION public.sms_funnel_claim_send(p_delivery uuid) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE e public.telegram_funnel_enrollments;d public.telegram_funnel_deliveries;l public.telegram_funnel_launches;b jsonb;lease uuid;sms uuid;
 BEGIN
@@ -66,52 +53,3 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.sms_funnel_claim_send(uuid),public.sms_funnel_finish_send(uuid,uuid,text,text,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.sms_funnel_claim_send(uuid),public.sms_funnel_finish_send(uuid,uuid,text,text,text) TO service_role;
-
-ALTER TABLE public.broadcast_automation_deliveries DROP CONSTRAINT IF EXISTS broadcast_automation_deliveries_channel_check;
-ALTER TABLE public.broadcast_automation_deliveries ADD CONSTRAINT broadcast_automation_deliveries_channel_check CHECK(channel IN('email','telegram','sms'));
-CREATE OR REPLACE FUNCTION public.queue_site_questionnaire_broadcasts(_submission_id uuid, _channel text DEFAULT NULL)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE v_submission public.site_form_submissions%ROWTYPE; v_profile public.profiles%ROWTYPE;
-BEGIN
-  SELECT * INTO v_submission FROM public.site_form_submissions WHERE id = _submission_id;
-  IF NOT FOUND OR v_submission.status <> 'processed' OR v_submission.metadata->>'questionnaire_first' IS DISTINCT FROM 'true' THEN RETURN; END IF;
-  SELECT p.* INTO v_profile FROM public.profiles p JOIN auth.users u ON u.id = p.user_id
-  WHERE p.id = v_submission.profile_id AND p.status = 'active' AND NOT coalesce(p.is_archived,false)
-    AND p.merged_to_profile_id IS NULL AND u.email_confirmed_at IS NOT NULL AND u.deleted_at IS NULL
-    AND (u.banned_until IS NULL OR u.banned_until <= now());
-  IF NOT FOUND OR v_profile.user_id::text IS DISTINCT FROM v_submission.metadata->>'user_id' THEN RETURN; END IF;
-  INSERT INTO public.broadcast_automation_deliveries(template_id,user_id,event_key,channel,available_at)
-  SELECT bt.id,v_profile.user_id,
-    'site_form:' || v_submission.page_id::text || ':' || (v_submission.metadata->>'block_id') || ':submitted:' || ch.value,
-    ch.value, now()+make_interval(mins=>coalesce((bt.metadata->'site_form_condition'->>'delay_minutes')::int,0))
-  FROM public.broadcast_templates bt
-  CROSS JOIN LATERAL jsonb_array_elements_text(
-    CASE WHEN coalesce(array_length(bt.channels,1),0) > 0 THEN to_jsonb(bt.channels) ELSE jsonb_build_array(bt.channel) END
-  ) ch(value)
-  WHERE bt.trigger_kind = 'site_form_event' AND bt.status = 'recurring' AND bt.approval_status = 'approved'
-    AND bt.metadata->'site_form_condition'->>'event' = 'submitted'
-    AND public.site_questionnaire_after_cutoff(v_submission.created_at,bt.metadata->'site_form_condition')
-    AND bt.metadata->'site_form_condition'->>'page_id' = v_submission.page_id::text
-    AND bt.metadata->'site_form_condition'->>'block_id' = v_submission.metadata->>'block_id'
-    AND (bt.metadata->'site_form_condition'->>'delay_minutes' IS NULL OR
-      CASE WHEN bt.metadata->'site_form_condition'->>'delay_minutes' ~ '^[0-9]{1,5}$' THEN
-        (bt.metadata->'site_form_condition'->>'delay_minutes')::int BETWEEN 0 AND 10080 ELSE false END)
-    AND ch.value IN ('email','telegram','sms') AND (_channel IS NULL OR ch.value = _channel)
-    AND (ch.value = 'email' OR(ch.value='telegram' AND v_profile.telegram_user_id IS NOT NULL) OR(ch.value='sms' AND public.sms_normalize_phone(v_profile.phone) IS NOT NULL))
-  ON CONFLICT (template_id,user_id,event_key) DO NOTHING;
-END;
-$$;
-REVOKE ALL ON FUNCTION public.queue_site_questionnaire_broadcasts(uuid,text) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.queue_site_questionnaire_broadcasts(uuid,text) TO service_role;
-
-CREATE OR REPLACE FUNCTION public.sms_broadcast_summary(p_dispatch uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
- SELECT jsonb_build_object('dispatch_id',p_dispatch,'queued',count(*) FILTER(WHERE status='queued'),'sent',count(*) FILTER(WHERE status IN('sent','delivered')),'failed',count(*) FILTER(WHERE status='failed'),'unknown',count(*) FILTER(WHERE status IN('sending','unknown')),'skipped',count(*) FILTER(WHERE status='skipped'),'total',count(*),'sms_ids',coalesce((SELECT jsonb_agg(id) FROM(SELECT id FROM public.sms_messages WHERE dispatch_id=p_dispatch ORDER BY id LIMIT 20)s),'[]'::jsonb),'delivery_status','not_confirmed') FROM public.sms_messages WHERE dispatch_id=p_dispatch;
-$$;
-REVOKE ALL ON FUNCTION public.sms_broadcast_summary(uuid) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.sms_broadcast_summary(uuid) TO service_role;
-
-CREATE OR REPLACE FUNCTION public.sms_broadcast_audience_count(p_filters jsonb) RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
- SELECT count(*) FROM public.resolve_sms_broadcast_contacts(p_filters);
-$$;
-REVOKE ALL ON FUNCTION public.sms_broadcast_audience_count(jsonb) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.sms_broadcast_audience_count(jsonb) TO service_role;
