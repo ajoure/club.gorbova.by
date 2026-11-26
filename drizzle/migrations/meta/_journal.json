@@ -267,6 +267,27 @@
       "when": 1795518593898,
       "tag": "0037_referral_authorized_date_repair_once",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795673956005,
+      "tag": "0038_telegram_funnel_launch_from_block",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795674015800,
+      "tag": "0039_telegram_funnel_timed_next",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795674057199,
+      "tag": "0040_telegram_funnel_crm_stages",
+      "breakpoints": true
     }
   ]
 }

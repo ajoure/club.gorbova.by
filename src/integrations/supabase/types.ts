@@ -22953,10 +22953,80 @@ export type Database = {
           },
         ]
       }
+      telegram_funnel_crm_bindings: {
+        Row: {
+          block_stages: Json
+          created_at: string
+          funnel_id: string
+          paid_stage_id: string
+          pipeline_id: string
+          product_id: string
+          refusal_button_ids: string[]
+          refusal_stage_id: string
+        }
+        Insert: {
+          block_stages: Json
+          created_at?: string
+          funnel_id: string
+          paid_stage_id: string
+          pipeline_id: string
+          product_id: string
+          refusal_button_ids?: string[]
+          refusal_stage_id: string
+        }
+        Update: {
+          block_stages?: Json
+          created_at?: string
+          funnel_id?: string
+          paid_stage_id?: string
+          pipeline_id?: string
+          product_id?: string
+          refusal_button_ids?: string[]
+          refusal_stage_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_funnel_crm_bindings_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: true
+            referencedRelation: "telegram_funnels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_crm_bindings_paid_stage_id_fkey"
+            columns: ["paid_stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_crm_bindings_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_crm_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_funnel_crm_bindings_refusal_stage_id_fkey"
+            columns: ["refusal_stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_funnel_deliveries: {
         Row: {
           block_id: string
           created_at: string
+          due_at: string
           enrollment_id: string
           error_code: string | null
           finished_at: string | null
@@ -22972,6 +23042,7 @@ export type Database = {
         Insert: {
           block_id: string
           created_at?: string
+          due_at?: string
           enrollment_id: string
           error_code?: string | null
           finished_at?: string | null
@@ -22987,6 +23058,7 @@ export type Database = {
         Update: {
           block_id?: string
           created_at?: string
+          due_at?: string
           enrollment_id?: string
           error_code?: string | null
           finished_at?: string | null
@@ -29842,6 +29914,7 @@ export type Database = {
           p_restart?: boolean
           p_revision: number
           p_scheduled_at?: string
+          p_start_block?: string
         }
         Returns: {
           audience_filters: Json
@@ -29909,6 +29982,14 @@ export type Database = {
         Args: { p_delivery: string; p_tokens: Json }
         Returns: Json
       }
+      telegram_funnel_crm_has_paid: {
+        Args: { p_product: string; p_profile: string }
+        Returns: boolean
+      }
+      telegram_funnel_crm_move: {
+        Args: { p_pipeline: string; p_profile: string; p_stage: string }
+        Returns: undefined
+      }
       telegram_funnel_delivery_context: {
         Args: { p_delivery: string }
         Returns: Json
@@ -29938,6 +30019,10 @@ export type Database = {
       telegram_funnel_known_dialog: {
         Args: { p_bot: string; p_profile: string }
         Returns: boolean
+      }
+      telegram_funnel_next_minsk_time: {
+        Args: { p_after: string; p_at: string }
+        Returns: string
       }
       telegram_funnel_prepare_audience: {
         Args: { p_launch: string }
