@@ -200,10 +200,12 @@ export function ContactInternalInstallments({
                   </span>
                 </div>
                 <div className="flex justify-between col-span-2 sm:col-span-1">
-                  <span className="text-muted-foreground">Следующее</span>
+                  <span className="text-muted-foreground">{plan.model === "historical_manual_installment" ? "Срок остатка" : "Следующее"}</span>
                   <span className="font-medium">
                     {plan.uiStatus === "completed"
                       ? "—"
+                      : plan.model === "historical_manual_installment" && plan.dueBasis === "recovery_now"
+                        ? "К оплате сейчас"
                       : plan.nextChargeAt
                         ? format(new Date(plan.nextChargeAt), "d MMM yyyy", { locale: ru })
                         : "—"}

@@ -26,7 +26,7 @@ describe('native historical agreement review',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Проверить расчёт'}));
     await screen.findByRole('button',{name:'Подтвердить условия'});
     expect(state.invoke).toHaveBeenCalledTimes(1);expect(state.invoke.mock.calls[0][1]).toMatchObject({action:'preview',profile_id:'profile',
-      order_id:'order',first_payment_id:'receipt',total_byn:2650,interval_days:30});
+      order_id:'order',first_payment_id:'receipt',total_byn:2650,interval_days:0});
     state.invoke.mockResolvedValueOnce({data:{success:true,confirmed:true,total_byn:2650,paid_byn:1325,remaining_byn:1325,second_due_at:'2026-08-14T10:00:00Z'},error:null});
     fireEvent.click(screen.getByRole('button',{name:'Подтвердить условия'}));
     await screen.findByRole('button',{name:'Проверить доступ по первому взносу'});

@@ -82,7 +82,7 @@ export function quoteInstallmentRepayment(context: Awaited<ReturnType<typeof loa
   if (perPayment <= 0) throw new RepaymentPlanError('invalid_installment_amount');
   const count = input.count ?? Math.max(1, Math.ceil(context.balance.remainingMinor / perPayment));
   const scheduleMinor = splitRemainingDebt(context.balance.remainingMinor, count);
-  const intervalDays = input.interval_days ?? context.agreement.interval_days ?? 30;
+  const intervalDays = context.agreement.model === 'historical_manual_installment' ? 1 : input.interval_days ?? context.agreement.interval_days ?? 30;
   if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 366) throw new RepaymentPlanError('invalid_repayment_interval');
   const uniform = scheduleMinor.every(n => n === scheduleMinor[0]);
   if (input.payment_type === 'subscription' && (count < 2 || !uniform)) {

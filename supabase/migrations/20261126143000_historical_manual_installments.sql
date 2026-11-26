@@ -8,8 +8,9 @@ CREATE TABLE public.historical_manual_installments (
   first_payment_id uuid NOT NULL REFERENCES public.payments_v2(id),
   total_byn numeric(12,2) NOT NULL CHECK(total_byn>0),
   per_payment_byn numeric(12,2) NOT NULL CHECK(per_payment_byn>0),
-  interval_days integer NOT NULL CHECK(interval_days BETWEEN 1 AND 366),
+  interval_days integer NOT NULL CHECK(interval_days BETWEEN 0 AND 366),
   second_due_at timestamptz NOT NULL,
+  due_basis text GENERATED ALWAYS AS (CASE WHEN interval_days=0 THEN 'recovery_now' ELSE 'first_payment_interval' END) STORED,
   reason text NOT NULL CHECK(length(trim(reason)) BETWEEN 10 AND 1000),
   created_by uuid NOT NULL,
   request_id uuid NOT NULL UNIQUE,
@@ -36,14 +37,14 @@ CREATE FUNCTION public.admin_historical_manual_installment_v1(
 SET lock_timeout='3s' SET statement_timeout='15s' AS $$
 DECLARE o public.orders_v2%ROWTYPE; first_payment public.payments_v2%ROWTYPE;
   existing public.historical_manual_installments%ROWTYPE; agreement public.historical_manual_installments%ROWTYPE;
-  receipt_count integer; paid numeric; fingerprint text; terms jsonb; payments jsonb;
+  receipt_count integer; paid numeric; fingerprint text; terms jsonb; payments jsonb; resolved_due_at timestamptz;
 BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' OR p_actor_id IS NULL
     OR public.has_admin_section_access(p_actor_id,'payments','edit') IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'historical_manual_forbidden';
   END IF;
   IF p_request_id IS NULL OR length(trim(coalesce(p_reason,''))) NOT BETWEEN 10 AND 1000
-    OR p_interval_days IS NULL OR p_interval_days NOT BETWEEN 1 AND 366
+    OR p_interval_days IS NULL OR p_interval_days NOT BETWEEN 0 AND 366
     OR p_total_byn IS NULL OR p_total_byn<=0 OR p_total_byn<>round(p_total_byn,2) THEN
     RAISE EXCEPTION 'historical_manual_invalid_terms';
   END IF;
@@ -62,7 +63,7 @@ BEGIN
     END IF;
     RETURN jsonb_build_object('success',true,'confirmed',true,'reused',true,'agreement_id',existing.id,'order_id',o.id,
       'total_byn',existing.total_byn,'paid_byn',o.paid_amount,'remaining_byn',existing.total_byn-o.paid_amount,
-      'second_due_at',existing.second_due_at);
+      'second_due_at',existing.second_due_at,'due_basis',existing.due_basis);
   END IF;
   IF o.meta ? 'installment' OR o.meta ? 'installment_progress' OR o.payment_plan_id IS NOT NULL THEN
     RAISE EXCEPTION 'historical_manual_existing_agreement';
@@ -89,18 +90,20 @@ BEGIN
       AND status::text='succeeded' AND coalesce(transaction_type,'payment') IN ('payment','capture','Платеж','Платёж');
   IF receipt_count<>1 OR paid<>first_payment.amount OR o.paid_amount<>paid OR p_total_byn<>2*paid
     OR o.final_price NOT IN (paid,p_total_byn) THEN RAISE EXCEPTION 'historical_manual_balance_mismatch'; END IF;
+  resolved_due_at:=CASE WHEN p_interval_days=0 THEN date_trunc('day',now() AT TIME ZONE 'Europe/Minsk') AT TIME ZONE 'Europe/Minsk'
+    ELSE first_payment.paid_at+make_interval(days=>p_interval_days) END;
   terms:=jsonb_build_object('model','historical_manual_installment','infinite',false,'original_order_id',o.id,
     'billing_cycles',2,'per_payment_byn',paid,'effective_total_byn',p_total_byn,'interval_days',p_interval_days,
-    'first_payment_id',first_payment.id,'second_due_at',first_payment.paid_at+make_interval(days=>p_interval_days));
+    'first_payment_id',first_payment.id,'due_basis',CASE WHEN p_interval_days=0 THEN 'recovery_now' ELSE 'first_payment_interval' END,'second_due_at',resolved_due_at);
   fingerprint:=md5(jsonb_build_object('order',to_jsonb(o),'payments',payments,'terms',terms,'reason',trim(p_reason))::text);
   IF NOT p_confirm THEN RETURN jsonb_build_object('success',true,'confirmed',false,'fingerprint',fingerprint,
     'order_id',o.id,'total_byn',p_total_byn,'paid_byn',paid,'remaining_byn',p_total_byn-paid,
-    'second_due_at',terms->'second_due_at','new_orders',0,'new_payments',0,'provider_calls',0); END IF;
+    'second_due_at',terms->'second_due_at','due_basis',terms->'due_basis','new_orders',0,'new_payments',0,'provider_calls',0); END IF;
   IF p_expected_fingerprint IS DISTINCT FROM fingerprint THEN RAISE EXCEPTION 'historical_manual_quote_changed'; END IF;
   INSERT INTO public.historical_manual_installments(order_id,profile_id,user_id,first_payment_id,total_byn,per_payment_byn,
     interval_days,second_due_at,reason,created_by,request_id)
     VALUES(o.id,o.profile_id,o.user_id,first_payment.id,p_total_byn,paid,p_interval_days,
-      first_payment.paid_at+make_interval(days=>p_interval_days),trim(p_reason),p_actor_id,p_request_id) RETURNING * INTO agreement;
+      resolved_due_at,trim(p_reason),p_actor_id,p_request_id) RETURNING * INTO agreement;
   UPDATE public.orders_v2 SET base_price=p_total_byn,final_price=p_total_byn,status='partial',
     meta=coalesce(meta,'{}')||jsonb_build_object('installment',terms,'historical_manual_agreement_id',agreement.id)
     WHERE id=o.id;
@@ -110,7 +113,7 @@ BEGIN
         'old_total',o.final_price,'total',p_total_byn,'first_payment_id',first_payment.id,'paid',paid,'remaining',p_total_byn-paid,
         'new_orders',0,'new_payments',0,'provider_calls',0,'access_changed',false));
   RETURN jsonb_build_object('success',true,'confirmed',true,'reused',false,'agreement_id',agreement.id,'order_id',o.id,
-    'total_byn',p_total_byn,'paid_byn',paid,'remaining_byn',p_total_byn-paid,'second_due_at',agreement.second_due_at);
+    'total_byn',p_total_byn,'paid_byn',paid,'remaining_byn',p_total_byn-paid,'second_due_at',agreement.second_due_at,'due_basis',agreement.due_basis);
 END $$;
 REVOKE ALL ON FUNCTION public.admin_historical_manual_installment_v1(uuid,uuid,uuid,uuid,numeric,integer,text,uuid,boolean,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_historical_manual_installment_v1(uuid,uuid,uuid,uuid,numeric,integer,text,uuid,boolean,text) TO service_role;

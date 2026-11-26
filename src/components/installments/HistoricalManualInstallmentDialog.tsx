@@ -10,11 +10,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAdminAccess } from '@/hooks/useAdminAccess';
 
 type Preview={success:boolean;confirmed:boolean;fingerprint?:string;order_id:string;total_byn:number;paid_byn:number;
-  remaining_byn:number;second_due_at:string;error?:string};
+  remaining_byn:number;second_due_at:string;due_basis?:string;error?:string};
 export function HistoricalManualInstallmentDialog({profileId,userId}:{profileId?:string|null;userId?:string|null}) {
   const access=useAdminAccess(); const cache=useQueryClient();
   const [open,setOpen]=useState(false),[orderId,setOrderId]=useState(''),[total,setTotal]=useState(''),
-    [interval,setInterval]=useState('30'),[reason,setReason]=useState(''),[busy,setBusy]=useState(false),
+    [dueBasis,setDueBasis]=useState<'recovery_now'|'first_payment_interval'>('recovery_now'),[interval,setInterval]=useState(''),[reason,setReason]=useState(''),[busy,setBusy]=useState(false),
     [preview,setPreview]=useState<Preview|null>(null),[message,setMessage]=useState('');
   const requestId=useRef(crypto.randomUUID());
   const orders=useQuery({queryKey:['historical-manual-orders',profileId,userId],enabled:open && !!profileId && !!userId,
@@ -33,7 +33,7 @@ export function HistoricalManualInstallmentDialog({profileId,userId}:{profileId?
     setBusy(true);setMessage('');
     try {
       const {data,error}=await invokeAuthenticatedFunction<Preview & {access?:{state:string};agreement_saved?:boolean}>('admin-historical-manual-installment',{action,
-        profile_id:profileId,order_id:orderId,first_payment_id:receipt?.[0]?.id,total_byn:Number(total),interval_days:Number(interval),
+        profile_id:profileId,order_id:orderId,first_payment_id:receipt?.[0]?.id,total_byn:Number(total),interval_days:dueBasis==='recovery_now'?0:Number(interval),
         reason,request_id:requestId.current,fingerprint:preview?.fingerprint});
       if(error || data?.error || !data?.success)throw Error(data?.error || 'Операция не подтверждена. Обновите данные и проверьте исходную сделку.');
       if(action==='ensure_access')setMessage(data.access?.state==='complete'?'Доступ по исходной сделке проверен.':'Выдача уже запускалась; требуется проверка результата. Повторно не запускаем.');
@@ -54,12 +54,13 @@ export function HistoricalManualInstallmentDialog({profileId,userId}:{profileId?
       {orders.isError && <p role="alert">Не удалось загрузить сделки. Закройте окно и повторите проверку.</p>}
     </div>
     <div className="space-y-2"><Label htmlFor="historical-total">Подтверждённая общая сумма, BYN</Label><Input id="historical-total" type="number" min="1" step="0.01" disabled={busy || !!preview?.confirmed} value={total} onChange={e=>{setTotal(e.target.value);reset();}}/></div>
-    <div className="space-y-2"><Label htmlFor="historical-interval">Срок второго взноса, дней от первой оплаты</Label><Input id="historical-interval" type="number" min="1" max="366" disabled={busy || !!preview?.confirmed} value={interval} onChange={e=>{setInterval(e.target.value);reset();}}/></div>
+    <div className="space-y-2"><Label htmlFor="historical-due-basis">Срок остатка</Label><select id="historical-due-basis" className="w-full rounded-md border bg-background p-2" value={dueBasis} disabled={busy || !!preview?.confirmed} onChange={e=>{setDueBasis(e.target.value as typeof dueBasis);reset();}}><option value="recovery_now">Остаток к оплате сейчас</option><option value="first_payment_interval">Согласованный срок от первого платежа</option></select></div>
+    {dueBasis==='first_payment_interval' && <div className="space-y-2"><Label htmlFor="historical-interval">Срок второго взноса, дней от первой оплаты</Label><Input id="historical-interval" type="number" min="1" max="366" disabled={busy || !!preview?.confirmed} value={interval} onChange={e=>{setInterval(e.target.value);reset();}}/></div>}
     <div className="space-y-2"><Label htmlFor="historical-reason">Решение владельца и основание</Label><Textarea id="historical-reason" disabled={busy || !!preview?.confirmed} value={reason} onChange={e=>{setReason(e.target.value);reset();}} placeholder="Укажите подтверждённые условия и основание исправления"/></div>
-    {preview && <div className="rounded-lg border p-3 text-sm space-y-1" aria-live="polite"><p>Общая сумма: {preview.total_byn} BYN</p><p>Подтверждено оплатами: {preview.paid_byn} BYN</p><p>Осталось: {preview.remaining_byn} BYN</p><p>Второй взнос: до {new Date(preview.second_due_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Minsk'})}</p><p>Доступ и платежи сохраняются. По остатку будет доступна только разовая ссылка.</p></div>}
+    {preview && <div className="rounded-lg border p-3 text-sm space-y-1" aria-live="polite"><p>Общая сумма: {preview.total_byn} BYN</p><p>Подтверждено оплатами: {preview.paid_byn} BYN</p><p>Осталось: {preview.remaining_byn} BYN</p><p>{preview.due_basis==='recovery_now'?'Остаток к оплате сейчас':`Второй взнос: до ${new Date(preview.second_due_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Minsk'})}`}</p><p>Доступ и платежи сохраняются. По остатку будет доступна только разовая ссылка.</p></div>}
     {message && <p role="status" className="text-sm break-words">{message}</p>}
     <div className="flex flex-wrap gap-2">
-      {!preview?.confirmed && <Button variant="outline" disabled={busy || !orderId || reason.trim().length<10 || receipt?.length!==1} onClick={()=>send('preview')}>Проверить расчёт</Button>}
+      {!preview?.confirmed && <Button variant="outline" disabled={busy || !orderId || reason.trim().length<10 || (dueBasis==='first_payment_interval' && (!Number.isInteger(Number(interval)) || Number(interval)<1)) || receipt?.length!==1} onClick={()=>send('preview')}>Проверить расчёт</Button>}
       {preview && !preview.confirmed && <Button disabled={busy} onClick={()=>send('confirm')}>Подтвердить условия</Button>}
       {preview?.confirmed && <Button disabled={busy} onClick={()=>send('ensure_access')}>Проверить доступ по первому взносу</Button>}
     </div>

@@ -28,7 +28,7 @@ describe('historical manual two-part agreements',()=>{
       INSERT INTO subscriptions_v2(order_id,user_id,product_id,tariff_id,status,auto_renew,access_start_at,access_end_at)
       VALUES('${ids.order}','${ids.user}','${ids.product}','${ids.tariff}','active',false,now()-interval '100 days',now()+interval '100 days');`);
     const before=(await db.query('SELECT to_jsonb(s) s FROM subscriptions_v2 s')).rows;
-    const a=args();a[4]=2650;const preview=await invoke(db,a);a[8]=true;a[9]=preview.fingerprint;await invoke(db,a);
+    const a=args();a[4]=2650;a[5]=0;const preview=await invoke(db,a);a[8]=true;a[9]=preview.fingerprint;expect(preview.due_basis).toBe('recovery_now');await invoke(db,a);
     expect((await db.query('SELECT status,final_price::int total,paid_amount::int paid FROM orders_v2')).rows).toEqual([{status:'partial',total:2650,paid:1325}]);
     expect((await db.query('SELECT to_jsonb(s) s FROM subscriptions_v2 s')).rows).toEqual(before);
     const access=(await db.query<{result:any}>(accessCall,[ids.actor,ids.order,ids.profile])).rows[0].result;

@@ -12,6 +12,7 @@ import { installmentFamilyBalance, installmentPaymentFamily, readInstallmentFami
 
 export interface UiPlan {
   model?: string;
+  dueBasis?: string;
   orderId: string;
   userId: string;
   orderNumber: string | null;
@@ -114,6 +115,7 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
 
   return {
     model: canonical.model,
+    dueBasis: canonical.due_basis,
     orderId: order.id,
     userId: order.user_id,
     orderNumber: order.order_number ?? null,
