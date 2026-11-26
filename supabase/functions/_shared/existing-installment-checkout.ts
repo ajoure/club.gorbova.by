@@ -16,11 +16,12 @@ function checkoutUrlFrom(link: PaymentLink): string | null {
     : null;
 }
 
-function checkoutClaimState(link: PaymentLink): { state: string; attemptId: string | null } {
+export function checkoutClaimState(link: PaymentLink): { state: string; attemptId: string | null } {
   const repayment = link?.meta?.repayment || {};
   const state = String(repayment.checkout_state || 'draft');
   const started = Date.parse(String(repayment.checkout_started_at || ''));
-  if (state === 'creating' && Number.isFinite(started) && Date.now() - started < 2 * 60_000) {
+  if (state === 'creating' && (repayment.agreement_model === 'historical_manual_installment'
+      || (Number.isFinite(started) && Date.now() - started < 2 * 60_000))) {
     throw new RepaymentPlanError('repayment_checkout_in_progress');
   }
   if (!['draft', 'failed', 'ready', 'creating'].includes(state)) {
@@ -146,7 +147,7 @@ export async function createExistingInstallmentCheckout(input: {
     }
   } catch {
     await supabase.from('payment_links').update({ meta: { ...creatingMeta, repayment: { ...creatingMeta.repayment,
-      checkout_state: 'failed', checkout_error: 'provider_transport_error' } } }).eq('id', link.id);
+      checkout_state: repayment.agreement_model === 'historical_manual_installment' ? 'unknown' : 'failed', checkout_error: 'provider_transport_error' } } }).eq('id', link.id);
     throw new RepaymentPlanError('repayment_provider_transport_error');
   }
 
@@ -156,9 +157,12 @@ export async function createExistingInstallmentCheckout(input: {
     : String(result?.checkout?.redirect_url || '');
   const checkoutToken = repayment.payment_type === 'one_time' ? String(result?.checkout?.token || '') : null;
   if (!response.ok || !/^https:\/\/checkout\.bepaid\.by\//.test(redirectUrl)
-      || (repayment.payment_type === 'subscription' && !providerSubscriptionId)) {
+      || (repayment.payment_type === 'subscription' && !providerSubscriptionId)
+      || (repayment.agreement_model === 'historical_manual_installment' && !checkoutToken)) {
     await supabase.from('payment_links').update({ meta: { ...creatingMeta, repayment: { ...creatingMeta.repayment,
-      checkout_state: 'failed', checkout_error: 'provider_rejected', provider_http_status: response.status } } }).eq('id', link.id);
+      checkout_state: repayment.agreement_model === 'historical_manual_installment'
+        && (response.ok || response.status >= 500 || [408,409,429].includes(response.status)) ? 'unknown' : 'failed',
+      checkout_error: 'provider_rejected', provider_http_status: response.status } } }).eq('id', link.id);
     throw new RepaymentPlanError('repayment_provider_rejected');
   }
 

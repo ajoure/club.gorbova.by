@@ -3,6 +3,8 @@ import { load } from './zg27-ingress-harness';
 import { loadInstallmentRepaymentContext,quoteInstallmentRepayment } from '../../supabase/functions/_shared/installment-repayment-context';
 import { mapOrderToPlan } from '../../src/hooks/useContactInstallmentsData';
 import { handleExistingInstallmentRepaymentWebhook } from '../../supabase/functions/_shared/existing-installment-webhook';
+import { checkoutClaimState } from '../../supabase/functions/_shared/existing-installment-checkout';
+import { RepaymentPlanError } from '../../supabase/functions/_shared/installment-repayment-plan';
 const id='00000000-0000-4000-8000-000000000004';
 const agreement={model:'historical_manual_installment',infinite:false,original_order_id:id,billing_cycles:2,
   per_payment_byn:1325,effective_total_byn:2650,first_payment_id:'receipt',interval_days:30,second_due_at:'2026-08-14T10:00:00Z'};
@@ -19,6 +21,32 @@ function fixture(){
   return {db,order,saved,sub,providers,effect};
 }
 describe('historical manual repayment boundaries',()=>{
+  it('never releases a manual unknown or old creating provider attempt by elapsed time',()=>{
+    const old={checkout_state:'creating',checkout_started_at:'2020-01-01T00:00:00Z',checkout_attempt_id:'started'};
+    expect(checkoutClaimState({meta:{repayment:old}})).toMatchObject({state:'creating'});
+    expect(()=>checkoutClaimState({meta:{repayment:{...old,agreement_model:agreement.model}}})).toThrow('repayment_checkout_in_progress');
+    expect(()=>checkoutClaimState({meta:{repayment:{...old,agreement_model:agreement.model,checkout_state:'unknown'}}})).toThrow('repayment_checkout_unavailable');
+  });
+  it('actual manual checkout keeps a missing provider response unknown and does not call provider again',async()=>{
+    const link={id:'link',user_id:'buyer',amount:132500,meta:{repayment:{contract_version:1,agreement_model:agreement.model,
+      original_order_id:id,subscription_v2_id:'sub',fingerprint:'factual',remaining_minor:132500,schedule_minor:[132500],
+      payment_type:'one_time',preserves_purchase:true,changes_access:false,checkout_state:'draft'}}};
+    const updates:any[]=[];
+    const db={from(table:string){if(!['payment_links','profiles'].includes(table))throw Error('unrelated mutation');
+      return {select(){return this;},eq(){return this;},update(value:any){updates.push(value);link.meta=value.meta;return this;},
+        maybeSingle:async()=>({data:table==='profiles'?{id:'profile',email:'synthetic@example.invalid',full_name:'Test'}:{id:'link'},error:null})};}};
+    const h=load('supabase/functions/_shared/existing-installment-checkout.ts',{
+      './payment-checkout-lifetime.ts':{isPaymentCheckoutAlive:()=>false,paymentCheckoutExpiresAt:()=> '2026-11-27T10:00:00Z'},
+      './bepaid-credentials.ts':{getBepaidCredsStrict:async()=>({test_mode:true}),isBepaidCredsError:()=>false,createBepaidAuthHeader:()=> 'synthetic'},
+      './installment-repayment-plan.ts':{RepaymentPlanError},
+      './installment-repayment-context.ts':{loadInstallmentRepaymentContext:async()=>({order:{id,user_id:'buyer'},sub:{id:'sub'},agreement,
+        fingerprint:'factual',balance:{remainingMinor:132500},liveProviders:[]})},
+    });
+    await expect(h.exports.createExistingInstallmentCheckout({supabase:db,link,origin:'https://synthetic.invalid'})).rejects.toThrow('repayment_provider_transport_error');
+    expect(updates.at(-1).meta.repayment.checkout_state).toBe('unknown');expect(h.effects).toHaveBeenCalledOnce();
+    await expect(h.exports.createExistingInstallmentCheckout({supabase:db,link,origin:'https://synthetic.invalid'})).rejects.toThrow('repayment_checkout_unavailable');
+    expect(h.effects).toHaveBeenCalledOnce();
+  });
   it('loads genuine saved agreement without a provider and quotes only1325 remaining on same purchase',async()=>{
     const f=fixture();const c=await loadInstallmentRepaymentContext(f.db as never,id);
     expect(quoteInstallmentRepayment(c,{payment_type:'one_time',count:1})).toMatchObject({agreement_model:agreement.model,
