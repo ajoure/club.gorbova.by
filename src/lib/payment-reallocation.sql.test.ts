@@ -23,7 +23,7 @@ beforeAll(async()=>{
     create table provider_subscriptions(id uuid primary key,user_id uuid,subscription_v2_id uuid,state text,last_charge_at timestamptz,next_charge_at timestamptz,order_id uuid);
     create table entitlements(id uuid primary key,user_id uuid,product_id uuid,order_id uuid,status text,expires_at timestamptz,meta jsonb default '{}');
     create table access_grant_ledger(id uuid primary key,user_id uuid,source_order_id uuid,reason_code text,status text,result jsonb,created_at timestamptz);
-    create table entitlement_sources(id uuid,user_id uuid,product_id uuid);
+    create table entitlement_sources(id uuid,user_id uuid,product_id uuid,order_id uuid,meta jsonb default '{}');
     create table tariff_offers(id uuid primary key,tariff_id uuid,is_active boolean,offer_type text,payment_method text,amount numeric);
     create table order_groups(id uuid primary key,primary_order_id uuid,profile_id uuid,user_id uuid,status text,total_amount numeric,currency text,quote_snapshot jsonb,meta jsonb default '{}');
     create table order_group_items(id uuid primary key,order_group_id uuid,order_id uuid,role text,product_id uuid,tariff_id uuid,offer_id uuid,quantity integer,final_amount numeric,item_snapshot jsonb);

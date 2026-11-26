@@ -30,7 +30,7 @@ declare
   grant_row public.telegram_access_grants%rowtype;
   prior_order uuid; source_end timestamptz; target_end timestamptz;
   old_club uuid; new_club uuid; fingerprint jsonb; summary jsonb;
-  bonus jsonb; b record; affected integer; uid uuid; source_product constant uuid := '11c9f1b8-0355-4753-bd74-40b42aa53616';
+  bonus jsonb; uid uuid; source_product constant uuid := '11c9f1b8-0355-4753-bd74-40b42aa53616';
   target_product constant uuid := '85046734-2282-4ded-b0d3-8c66c8f5bc2b';
 begin
   select user_id into strict uid from public.profiles where id=p_profile_id and not coalesce(is_archived,false);
@@ -145,6 +145,7 @@ begin
     to_jsonb(source_sub),to_jsonb(target_sub),to_jsonb(old_ent),to_jsonb(new_ent),to_jsonb(grant_row),to_jsonb(offer),
     (select jsonb_agg(to_jsonb(e) order by id) from public.entitlements e where user_id=uid),
     (select jsonb_agg(to_jsonb(l) order by id) from public.access_grant_ledger l where user_id=uid),
+    (select jsonb_agg(to_jsonb(es) order by id) from public.entitlement_sources es where user_id=uid),
     (select jsonb_agg(to_jsonb(t) order by id) from public.tariffs t where id=target_sub.tariff_id),
     (select jsonb_agg(to_jsonb(a) order by id) from public.telegram_access a where user_id=uid and club_id in(old_club,new_club)),
     (select jsonb_agg(to_jsonb(a) order by id) from public.provider_subscriptions a where user_id=uid),
@@ -192,6 +193,7 @@ begin
   perform 1 from public.payment_allocations where payment_id=p_payment_id order by id for update;
   perform 1 from public.order_groups where primary_order_id=oid for update;
   perform 1 from public.order_group_items where order_id=oid for update;
+  perform 1 from public.entitlement_sources where user_id=uid order by id for update;
   perform 1 from public.access_grant_ledger where user_id=uid order by id for update;
   g:=public.payment_reallocation_graph(p_profile_id,p_payment_id);
   if g->>'before_hash' is distinct from p_before_hash then raise exception 'reallocation_preview_changed'; end if;
@@ -214,11 +216,11 @@ begin
     offer_id=(g->>'target_offer_id')::uuid,item_snapshot=snapshot where id=(g->>'item_id')::uuid;
   update public.order_groups set quote_snapshot=quote,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'group_id')::uuid;
   update public.subscriptions_v2 set access_end_at=(g->>'source_new_end')::timestamptz,next_charge_at=(g->>'source_new_end')::timestamptz,
-    meta=jsonb_set(coalesce(meta,'{}'::jsonb),'{extended_by_orders}',(meta->'extended_by_orders')-oid::text) where id=source_sub;
+    meta=jsonb_set(coalesce(meta,'{}'::jsonb),'{extended_by_orders}',(meta->'extended_by_orders')-oid::text)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=source_sub;
   update public.subscriptions_v2 set access_end_at=(g->>'target_new_end')::timestamptz,
-    meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('extended_by_orders',coalesce(meta->'extended_by_orders','[]'::jsonb)||jsonb_build_array(oid::text)) where id=target_sub;
-  update public.entitlements set expires_at=(g->>'source_new_end')::timestamptz,order_id=(g->>'prior_order_id')::uuid where id=(g->>'source_entitlement_id')::uuid;
-  update public.entitlements set expires_at=(g->>'target_new_end')::timestamptz,order_id=oid where id=(g->>'target_entitlement_id')::uuid;
+    meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('extended_by_orders',coalesce(meta->'extended_by_orders','[]'::jsonb)||jsonb_build_array(oid::text),'payment_reallocation_request_id',p_request_id) where id=target_sub;
+  update public.entitlements set expires_at=(g->>'source_new_end')::timestamptz,order_id=(g->>'prior_order_id')::uuid,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'source_entitlement_id')::uuid;
+  update public.entitlements set expires_at=(g->>'target_new_end')::timestamptz,order_id=oid,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'target_entitlement_id')::uuid;
   for b in select value from jsonb_array_elements(g->'bonus_restorations') loop
     update public.entitlements set expires_at=(b->>'previous_expires_at')::timestamptz,
       meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id,
@@ -266,3 +268,90 @@ begin
 end $$;
 revoke all on function public.admin_get_payment_reallocation(uuid,uuid) from public,anon;
 grant execute on function public.admin_get_payment_reallocation(uuid,uuid) to authenticated;
+
+-- Fence every access projection at the database boundary. An Edge invocation
+-- may have read the old order before the correction committed; its old payload
+-- must not resurrect the reversed purchase after the early replay check.
+create or replace function public.guard_payment_reallocation_projection()
+returns trigger language plpgsql volatile security definer set search_path=pg_catalog,public,pg_temp as $$
+declare j jsonb:=to_jsonb(new); oldj jsonb; r record; g jsonb; k text; protected boolean; product uuid;
+begin
+  if TG_OP='UPDATE' then oldj:=to_jsonb(old); end if;
+  -- VOLATILE performs a fresh READ COMMITTED lookup after PostgreSQL has
+  -- acquired the target row lock. Do not acquire a profile lock here: an
+  -- UPDATE already owns its row and reversing the correction's lock order
+  -- would create an avoidable profile/entitlement deadlock.
+  for r in select * from public.payment_reallocations where before_state->>'user_id'=j->>'user_id'
+    or (TG_TABLE_NAME='orders_v2' and before_state->>'order_id'=j->>'id') loop
+    g:=r.before_state; protected:=false;
+    if TG_TABLE_NAME='orders_v2' and j->>'id'=g->>'order_id' then
+      if j->'meta'->>'payment_reallocation_request_id' is distinct from r.request_id::text
+        or j->>'product_id' is distinct from g->>'target_product_id'
+        or j->>'tariff_id' is distinct from g->>'target_tariff_id'
+        or j->>'offer_id' is distinct from g->>'target_offer_id'
+        then raise exception 'reallocation_stale_order_write'; end if;
+    elsif TG_TABLE_NAME='subscriptions_v2' then
+      if j->>'product_id'=g->>'source_product_id' and (j->'meta'->'extended_by_orders') ? (g->>'order_id')
+        then raise exception 'reallocation_stale_source_subscription'; end if;
+      protected:=j->>'id' in(g->>'source_subscription_id',g->>'target_subscription_id');
+      if protected and TG_OP='UPDATE' then
+        if j->'meta'->>'payment_reallocation_request_id' is distinct from r.request_id::text
+          then raise exception 'reallocation_stale_subscription_meta'; end if;
+        if j->>'access_end_at' is distinct from oldj->>'access_end_at'
+          or j->>'next_charge_at' is distinct from oldj->>'next_charge_at' then
+          k:=j->'meta'->'extended_by_orders'->>-1;
+          if k is null or k=g->>'order_id' or k is not distinct from oldj->'meta'->'extended_by_orders'->>-1
+            or not exists(select 1 from public.orders_v2 o where o.id::text=k and o.user_id=(j->>'user_id')::uuid
+              and o.product_id=(j->>'product_id')::uuid and o.status::text='paid')
+            then raise exception 'reallocation_stale_subscription_window'; end if;
+        end if;
+      end if;
+    elsif TG_TABLE_NAME='entitlements' then
+      protected:=j->>'id' in(g->>'source_entitlement_id',g->>'target_entitlement_id')
+        or (TG_OP='INSERT' and j->>'product_id' in(g->>'source_product_id',g->>'target_product_id'))
+        or exists(select 1 from jsonb_array_elements(g->'bonus_restorations') b join public.entitlements e
+          on e.id=(b->>'entitlement_id')::uuid where b->>'entitlement_id'=j->>'id'
+            or (TG_OP='INSERT' and e.product_id=(j->>'product_id')::uuid));
+      if protected then
+        if j->'meta'->>'payment_reallocation_request_id' is distinct from r.request_id::text
+          then raise exception 'reallocation_stale_entitlement_meta'; end if;
+        if TG_OP='UPDATE' and (j->>'expires_at' is distinct from oldj->>'expires_at' or j->>'status' is distinct from oldj->>'status' or j->>'order_id' is distinct from oldj->>'order_id')
+          and not(j->>'status'='expired' and j->>'expires_at' is not distinct from oldj->>'expires_at'
+            and j->>'order_id' is not distinct from oldj->>'order_id' and (j->>'expires_at')::timestamptz<=now()) then
+          k:=case when j->>'id' in(g->>'source_entitlement_id',g->>'target_entitlement_id') then j->>'order_id'
+            else j->'meta'->>'source_order_id' end;
+          if k is null or k=g->>'order_id' or k=coalesce(oldj->'meta'->>'source_order_id',oldj->>'order_id')
+            or not exists(select 1 from public.orders_v2 o where o.id::text=k and o.user_id=(j->>'user_id')::uuid
+              and o.status::text='paid' and (o.product_id=(j->>'product_id')::uuid or
+                (j->>'id' not in(g->>'source_entitlement_id',g->>'target_entitlement_id') and o.product_id=(g->>'source_product_id')::uuid)))
+            then raise exception 'reallocation_stale_entitlement_window'; end if;
+        end if;
+      end if;
+    elsif TG_TABLE_NAME='telegram_access_grants' and j->>'source_id'=g->>'order_id' then
+      if j->>'club_id' is distinct from g->>'target_club_id'
+        or (j->>'end_at')::timestamptz is distinct from (g->>'target_new_end')::timestamptz
+        or (j->>'start_at')::timestamptz is distinct from (g->>'target_old_end')::timestamptz
+        then raise exception 'reallocation_stale_telegram_grant'; end if;
+    elsif TG_TABLE_NAME='telegram_access' and j->>'club_id' in(g->>'source_club_id',g->>'target_club_id') then
+      product:=case when j->>'club_id'=g->>'source_club_id' then (g->>'source_product_id')::uuid else (g->>'target_product_id')::uuid end;
+      if (j->>'active_until')::timestamptz is distinct from
+        (select max(access_end_at) from public.subscriptions_v2 where user_id=(j->>'user_id')::uuid and product_id=product and status::text='active')
+        then raise exception 'reallocation_stale_telegram_projection'; end if;
+    elsif TG_TABLE_NAME='entitlement_sources' and (j->>'order_id'=g->>'order_id'
+      or j->'meta'->>'source_order_id'=g->>'order_id') then
+      raise exception 'reallocation_stale_entitlement_source';
+    elsif TG_TABLE_NAME='access_grant_ledger' and j->>'source_order_id'=g->>'order_id' and j->>'status' in('granted','extended','reactivated') then
+      raise exception 'reallocation_stale_grant_ledger';
+    end if;
+  end loop;
+  return new;
+end $$;
+revoke all on function public.guard_payment_reallocation_projection() from public,anon,authenticated;
+create trigger zz_payment_reallocation_guard before insert or update on public.orders_v2 for each row execute function public.guard_payment_reallocation_projection();
+create trigger zz_payment_reallocation_guard before insert or update on public.subscriptions_v2 for each row execute function public.guard_payment_reallocation_projection();
+create trigger zz_payment_reallocation_guard before insert or update on public.entitlements for each row execute function public.guard_payment_reallocation_projection();
+create trigger zz_payment_reallocation_guard before insert or update on public.telegram_access_grants for each row execute function public.guard_payment_reallocation_projection();
+create trigger zz_payment_reallocation_guard before insert or update on public.telegram_access for each row execute function public.guard_payment_reallocation_projection();
+create trigger zz_payment_reallocation_guard before insert or update on public.access_grant_ledger for each row execute function public.guard_payment_reallocation_projection();
+
+create trigger zz_payment_reallocation_guard before insert or update on public.entitlement_sources for each row execute function public.guard_payment_reallocation_projection();
