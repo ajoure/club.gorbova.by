@@ -79,3 +79,57 @@ describe('actual new-sale eligibility boundaries', () => {
     expect(r.status).toBe(200); expect(debt).toHaveBeenCalledOnce(); expect(f.effect).not.toHaveBeenCalled(); expect(h.effects).not.toHaveBeenCalled();
   });
 });
+
+describe('invoice offers cannot cross other new-sale ingress', () => {
+  it('common checkout refuses an invoice offer before creating an order or provider checkout', async () => {
+    const f = fixture(); Object.assign(f.state.offer, { offer_type: 'invoice', payment_method: 'bank_transfer' });
+    const h = load('supabase/functions/_shared/create-payment-checkout.ts', {
+      './zg27-checkout-guard.ts': guard, './zg27-installments.ts': installments });
+    const result = await h.exports.createPaymentCheckout({ supabase: f.db, user_id: 'recipient', product_id: policy.ZG27_PRODUCT_ID,
+      tariff_id: f.state.offer.tariff_id, offer_id: 'offer', amount: 89000, payment_type: 'one_time', allowAdminInvoice: true });
+    expect(result).toMatchObject({ success: false, error: 'zg27_invoice_unavailable' });
+    expect(f.effect).not.toHaveBeenCalled(); expect(h.effects).not.toHaveBeenCalled();
+  });
+  it('actual public payment-link handler refuses an invoice offer even with a forged opt-in body', async () => {
+    const f = fixture(); Object.assign(f.state.offer, { offer_type: 'invoice', payment_method: 'bank_transfer' });
+    const h = load('supabase/functions/public-checkout/index.ts', {
+      'npm:@supabase/supabase-js@2': { createClient: () => f.db }, '../_shared/zg27-checkout-guard.ts': guard,
+      '../_shared/cors.ts': cors });
+    const response = await h.handler(new Request('https://synthetic.invalid', { method: 'POST',
+      headers: { Authorization: 'Bearer synthetic' }, body: JSON.stringify({ url_token: 'synthetic', allowAdminInvoice: true }) }));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: 'zg27_invoice_unavailable' });
+    expect(f.effect).not.toHaveBeenCalled(); expect(h.effects).not.toHaveBeenCalled();
+  });
+});
+
+it('direct Stripe helper rejects invoice offers before credentials, order claims and provider calls', async () => {
+  const f = fixture(); Object.assign(f.state.offer, { offer_type: 'invoice', payment_method: 'bank_transfer' });
+  const h = load('supabase/functions/_shared/create-stripe-checkout.ts', {
+    './zg27-checkout-guard.ts': guard, './zg27-installments.ts': installments });
+  const result = await h.exports.createStripeCheckout({ supabase: f.db, user_id: 'recipient', product_id: policy.ZG27_PRODUCT_ID,
+    tariff_id: f.state.offer.tariff_id, offer_id: 'offer', amount: 890, currency: 'BYN', payment_type: 'one_time', allowAdminInvoice: true });
+  expect(result).toMatchObject({ success: false, error: 'zg27_invoice_unavailable' });
+  expect(f.effect).not.toHaveBeenCalled(); expect(h.effects).not.toHaveBeenCalled();
+});
+
+for (const endpoint of ['invoice-checkout-issue', 'bepaid-create-token', 'public-create-installment-link']) {
+  it(`actual ${endpoint} denies invoice offers without any document, link, order or provider writes`, async () => {
+    const f = fixture(); Object.assign(f.state.offer, { offer_type: 'invoice', payment_method: 'bank_transfer' });
+    f.db.auth.getUser = async () => ({ data: { user: { id: 'recipient', email: 'synthetic@example.invalid' } }, error: null });
+    const h = load(`supabase/functions/${endpoint}/index.ts`, {
+      'npm:@supabase/supabase-js@2': { createClient: () => f.db }, '../_shared/zg27-checkout-guard.ts': guard,
+      '../_shared/cors.ts': cors,
+      '../_shared/sales-runtime/checkout-auth.ts': { cbAlumniOfferAllowed: async () => true },
+      '../_shared/resolve-composable-checkout.ts': { ComposableCheckoutError: class extends Error {}, resolveComposableCheckout: async () => ({
+        total: 890, currency: 'BYN', items: [{ product_id: policy.ZG27_PRODUCT_ID, tariff_id: f.state.offer.tariff_id }] }) },
+    });
+    const response = await h.handler(new Request('https://synthetic.invalid', { method: 'POST',
+      headers: { Authorization: 'Bearer synthetic' }, body: JSON.stringify({
+        product_id: policy.ZG27_PRODUCT_ID, tariff_id: f.state.offer.tariff_id, offer_id: 'offer', legal_details_id: 'legal',
+        productId: policy.ZG27_PRODUCT_ID, offerId: 'offer', customerEmail: 'synthetic@example.invalid', allowAdminInvoice: true,
+      }) }));
+    expect(response.status).toBe(endpoint === 'public-create-installment-link' ? 400 : 409);
+    expect(await response.json()).toMatchObject({ error: endpoint === 'public-create-installment-link' ? 'offer_type_invoice_not_chargeable' : 'zg27_invoice_unavailable' });
+    expect(f.effect).not.toHaveBeenCalled(); expect(h.effects).not.toHaveBeenCalled();
+  });
+}

@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
       db: admin, userId: body.target_user_id, productId: body.product_id,
       tariffId: offer.tariff_id, offerId: body.offer_id,
       amountMinor: Math.round(Number(composableQuote.total) * 100),
-      currency: composableQuote.currency, installmentCount: 1,
+      currency: composableQuote.currency, installmentCount: 1, allowAdminInvoice: true,
     });
     if (zg27Quote.applicable && !zg27Quote.invoiceAccess) {
       return json({ error: "zg27_invoice_full_payment_required" }, 403);

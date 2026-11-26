@@ -52,6 +52,8 @@ export async function assertZg27Checkout(input: {
   db: Db; userId: string | null | undefined; productId: string; tariffId: string | null | undefined;
   offerId: string | null | undefined; amountMinor?: number; amountKind?: 'total' | 'first_payment';
   currency?: string; installmentCount?: number; pageSlug?: string; now?: Date;
+  /** Trusted admin-invoice caller only; never forwarded from a public request. */
+  allowAdminInvoice?: boolean;
 }): Promise<Zg27CheckoutQuote> {
   const { db } = input;
   const knownTariff = [ZG27_TIERS.first.tariffId, ZG27_TIERS.repeat.tariffId].includes(input.tariffId as any);
@@ -80,6 +82,7 @@ export async function assertZg27Checkout(input: {
   }
   if (!eligibility.eligible) throw new Zg27CheckoutError('zg27_not_eligible');
   const isInvoice = offer.offer_type === 'invoice';
+  if (isInvoice && input.allowAdminInvoice !== true) throw new Zg27CheckoutError('zg27_invoice_unavailable', 409);
   // Generic invoices use bank_transfer, not full_payment. Only the approved
   // single full-price invoice is admitted; invoice installments remain closed.
   if (isInvoice && (offer.payment_method !== 'bank_transfer' || offer.installment_count !== 1)) {

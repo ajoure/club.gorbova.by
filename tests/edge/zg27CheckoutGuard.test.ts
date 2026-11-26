@@ -33,3 +33,12 @@ await test('unrelated legacy no-offer path does not query eligibility',async()=>
 await test('unrelated product remains outside scoped gate',async()=>{const f=fixture();f.state.offer.tariffs.product_id='other';assert.deepEqual(await assertZg27Checkout({...f.request,productId:'other',tariffId:'other'}),{applicable:false});assert.equal(f.state.rpcCalls,0)});
 await test('forwarded link still requires logged-in recipient',async()=>{const f=fixture();await assert.rejects(()=>requireZg27Recipient(new Request('https://example.test'),f.db,'recipient'),e=>e.code==='zg27_login_required');f.state.actor='other';await assert.rejects(()=>requireZg27Recipient(new Request('https://example.test',{headers:{Authorization:'Bearer synthetic-only'}}),f.db,'recipient'),e=>e.code==='zg27_recipient_mismatch');f.state.actor='recipient';await requireZg27Recipient(new Request('https://example.test',{headers:{Authorization:'Bearer synthetic-only'}}),f.db,'recipient')});
 
+
+await test('invoice offers require explicit trusted admin opt-in', async () => {
+ const f=fixture(); Object.assign(f.state.offer,{offer_type:'invoice',payment_method:'bank_transfer',installment_count:1});
+ for (const allowAdminInvoice of [undefined,false]) {
+  await assert.rejects(()=>assertZg27Checkout({...f.request,allowAdminInvoice}),e=>e.code==='zg27_invoice_unavailable'&&e.status===409);
+ }
+ const quote=await assertZg27Checkout({...f.request,allowAdminInvoice:true});
+ assert.equal(quote.applicable,true); assert.equal(quote.invoiceAccess?.service_period_to,'2027-04-30');
+});
