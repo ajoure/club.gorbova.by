@@ -31,6 +31,8 @@ import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-t
 import {requireSalesOrPaymentsEdit,cbAlumniOfferAllowed} from "../_shared/sales-runtime/checkout-auth.ts";
 import { resolveSalesManagerForCreation, SalesManagerSelectionError } from "../_shared/sales-manager-attribution.ts";
 
+import { assertZg27Checkout, Zg27CheckoutError, type Zg27CheckoutQuote } from "../_shared/zg27-checkout-guard.ts";
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -204,6 +206,28 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!product) return json({ error: "product_not_found" }, 404);
 
+  // Gate the recipient (not the issuing administrator) before order numbers,
+  // pending claims, document generation or delivery can have side effects.
+  let zg27Quote: Zg27CheckoutQuote;
+  try {
+    zg27Quote = await assertZg27Checkout({
+      db: admin, userId: body.target_user_id, productId: body.product_id,
+      tariffId: offer.tariff_id, offerId: body.offer_id,
+      amountMinor: Math.round(Number(composableQuote.total) * 100),
+      currency: composableQuote.currency, installmentCount: 1,
+    });
+    if (zg27Quote.applicable && !zg27Quote.invoiceAccess) {
+      return json({ error: "zg27_invoice_full_payment_required" }, 403);
+    }
+    if (zg27Quote.applicable && (composableQuote.items.length !== 1 || requestedAdjustment !== 0)) {
+      return json({ error: "zg27_invoice_composition_unsupported" }, 403);
+    }
+  } catch (error) {
+    if (error instanceof Zg27CheckoutError) return json({ error: error.code, page_slug: error.pageSlug }, error.status);
+    return json({ error: "zg27_eligibility_unavailable" }, 503);
+  }
+  const zg27InvoiceAccess = zg27Quote.applicable ? zg27Quote.invoiceAccess : undefined;
+
   const routing = await resolveOfferRouting(admin, offer.id);
   const routingSnapshot = routing.ok ? routing.snapshot : null;
 
@@ -242,8 +266,11 @@ Deno.serve(async (req) => {
       requisites: ld ? buildRequisitesSnapshot(ld) : null,
       captured_at: new Date().toISOString(),
     },
+    ...(zg27InvoiceAccess ? { zg27_invoice_access: zg27InvoiceAccess } : {}),
     composable_checkout: composableQuote,
     document_data: {
+      ...(zg27InvoiceAccess ? { service_period_from: zg27InvoiceAccess.service_period_from,
+        service_period_to: zg27InvoiceAccess.service_period_to, months_count: null } : {}),
       service_name: serviceName,
       unit: "доступ",
       quantity: 1,
@@ -280,6 +307,10 @@ Deno.serve(async (req) => {
     customer_email: targetProfile.email,
     reconcile_source: "admin_invoice_checkout",
     meta: orderMeta,
+    ...(zg27InvoiceAccess ? { purchase_snapshot: {
+      course_access: { kind: "fixed_exclusive_end", timezone: "Europe/Minsk", end_exclusive: zg27InvoiceAccess.access_end_exclusive },
+      planned_access_end_at: zg27InvoiceAccess.access_end_exclusive,
+    } } : {}),
   };
   if (routingSnapshot) {
     orderInsert.pipeline_id = routingSnapshot.pipeline_id;

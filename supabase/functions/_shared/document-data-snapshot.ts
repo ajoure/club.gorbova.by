@@ -27,6 +27,9 @@ import { buildPurchaseCompositionTitle } from './purchase-composition-title.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
+import { zg27InvoiceDocumentPeriod } from './zg27-checkout-guard.ts';
+import { ZG27_PRODUCT_ID } from './zg27-policy.ts';
+
 export const SNAPSHOT_VERSION = '1.3';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
@@ -355,14 +358,24 @@ export async function snapshotOrderDocumentData(
 
     // Service period — use offer/tariff defaults if present; else fallback to
     // [paid_at, paid_at + months_count*30] when months_count provided.
-    let periodFrom = pick<string>('service_period_from');
+    let periodFrom: string | null | undefined = pick<string>('service_period_from');
     let periodTo = pick<string>('service_period_to');
-    const monthsCount = pick<number>('months_count');
+    let monthsCount = pick<number>('months_count');
     if (!periodFrom && paidAt) periodFrom = paidAt.slice(0, 10);
     if (!periodTo && periodFrom && monthsCount) {
       const d = new Date(periodFrom);
       d.setMonth(d.getMonth() + Number(monthsCount));
       periodTo = d.toISOString().slice(0, 10);
+    }
+
+    // ZG27 admin invoices freeze the access promise from the canonical guard.
+    // Never inherit CB training dates/month counts or invent a training start.
+    if (order.product_id === ZG27_PRODUCT_ID && orderMetaAny.source === 'admin_invoice_checkout'
+      && orderMetaAny.checkout_kind === 'invoice') {
+      const period = zg27InvoiceDocumentPeriod(orderMetaAny.zg27_invoice_access);
+      periodFrom = period.service_period_from;
+      periodTo = period.service_period_to;
+      monthsCount = null;
     }
 
     // === Sprint 12: priority resolver ============================================
