@@ -87,3 +87,15 @@ describe('authenticated ZG27 quotes and hosted full-payment links', () => {
     expect(response.status).toBe(403); expect(f.writes).toEqual([]);
   });
 });
+
+describe('invoice offers stay closed to actual public ZG27 handlers', () => {
+  for (const endpoint of ['zg27-public-quote','zg27-create-full-link']) it(`${endpoint} refuses invoice offers before any link or provider effect`, async () => {
+    const f = fixture();
+    Object.assign(f.offers[0], { offer_type: 'invoice', payment_method: 'bank_transfer', installment_count: 1 });
+    const h = f.handler(endpoint);
+    const response = await h.handler(f.request({ offer_id: 'offer-1', tariff_id: f.tier.tariffId, page_slug: f.tier.page,
+      allowAdminInvoice: true, allow_admin_invoice: true }));
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(f.writes).toEqual([]); expect(h.effects).not.toHaveBeenCalled();
+  });
+});
