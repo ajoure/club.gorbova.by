@@ -139,10 +139,11 @@ export function ExistingInstallmentRepaymentDialog({
     1,
     Math.ceil(plan.remainingTotal / Math.max(plan.perPayment, 1)),
   );
+  const manual = plan.model === "historical_manual_installment";
   const defaultCount = Math.max(2, naturalRemainingCount);
   const [open, setOpen] = useState(false);
   const [paymentType, setPaymentType] = useState<"one_time" | "subscription">(
-    naturalRemainingCount >= 2 ? "subscription" : "one_time",
+    !manual && naturalRemainingCount >= 2 ? "subscription" : "one_time",
   );
   const [count, setCount] = useState(defaultCount);
   const [reason, setReason] = useState(
@@ -463,6 +464,7 @@ export function ExistingInstallmentRepaymentDialog({
                 <RadioGroup
                   value={paymentType}
                   onValueChange={(value) => {
+                    if (manual && value !== "one_time") return;
                     const nextType = value as typeof paymentType;
                     setPaymentType(nextType);
                     if (nextType === "subscription" && count < 2) setCount(defaultCount);
@@ -492,7 +494,7 @@ export function ExistingInstallmentRepaymentDialog({
                       paymentType === "subscription" && "border-primary bg-primary/[0.05] ring-1 ring-primary",
                     )}
                   >
-                    <RadioGroupItem value="subscription" className="mt-0.5" />
+                    <RadioGroupItem value="subscription" className="mt-0.5" disabled={manual} />
                     <span>
                       <span className="flex items-center gap-2 font-medium">
                         <RefreshCw className="h-4 w-4" /> Автоплатежи

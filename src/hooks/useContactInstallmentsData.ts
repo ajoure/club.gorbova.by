@@ -11,6 +11,7 @@ import { installmentFamilyBalance, installmentPaymentFamily, readInstallmentFami
  */
 
 export interface UiPlan {
+  model?: string;
   orderId: string;
   userId: string;
   orderNumber: string | null;
@@ -86,7 +87,8 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
   // рассрочка клиента. Такие записи видны только в диагностике автоплатежей.
   if (!hasLedgerPayment && !lineageError && paidCycles <= 0 && factualPaid <= 0) return null;
 
-  let nextChargeAt = progress?.next_charge_at ?? null;
+  let nextChargeAt = canonical.model === 'historical_manual_installment' && remainingTotal > 0
+    ? canonical.second_due_at ?? null : progress?.next_charge_at ?? null;
   if (Array.isArray(order.provider_subscriptions)) {
     type ProviderSchedule = { state: string; provider: string; order_id: string | null; user_id: string | null; next_charge_at?: string | null };
     const terminal = new Set(['canceled', 'cancelled', 'failed', 'expired', 'completed', 'terminated']);
@@ -98,7 +100,7 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
       nextChargeAt = null;
     } else {
       const value = providers[0]?.next_charge_at;
-      nextChargeAt = typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+      if (canonical.model !== 'historical_manual_installment') nextChargeAt = typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
     }
   }
   // Verified receipts remain visible during review. Disputed agreement terms
@@ -111,6 +113,7 @@ export function mapOrderToPlan(order: any, familyOrders?: InstallmentLedgerOrder
   else if (paidTotal > 0) uiStatus = "active";
 
   return {
+    model: canonical.model,
     orderId: order.id,
     userId: order.user_id,
     orderNumber: order.order_number ?? null,
@@ -169,6 +172,7 @@ export function useContactInternalInstallments(
         const model = (row?.meta?.installment as Record<string, unknown> | undefined)?.model;
         const progressModel = (row?.meta?.installment_progress as Record<string, unknown> | undefined)?.model;
         return (
+          model === "historical_manual_installment" ||
           model === "bepaid_finite_subscription" ||
           progressModel === "bepaid_finite_subscription"
         );

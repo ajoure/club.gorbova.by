@@ -37,7 +37,7 @@ export async function createExistingInstallmentCheckout(input: {
   const { supabase, link, origin } = input;
   const repayment = (link?.meta?.repayment || {}) as Record<string, any>;
   const reusable = checkoutUrlFrom(link);
-  if (reusable) return { success: true, redirect_url: reusable, reused: true };
+  if (reusable && repayment.agreement_model !== 'historical_manual_installment') return { success: true, redirect_url: reusable, reused: true };
 
   if (!link?.id || !link.user_id || repayment.contract_version !== 1 || repayment.preserves_purchase !== true
       || repayment.changes_access !== false || repayment.original_order_id == null
@@ -53,11 +53,15 @@ export async function createExistingInstallmentCheckout(input: {
   }
 
   const context = await loadInstallmentRepaymentContext(supabase, String(repayment.original_order_id));
-  if (context.order.user_id !== link.user_id || context.sub.id !== repayment.subscription_v2_id
+  if ((context.agreement.model === 'historical_manual_installment') !== (repayment.agreement_model === 'historical_manual_installment')
+      || (context.agreement.model === 'historical_manual_installment' && (repayment.payment_type !== 'one_time' || schedule.length !== 1))
+      || context.order.user_id !== link.user_id || context.sub.id !== repayment.subscription_v2_id
       || context.fingerprint !== repayment.fingerprint || context.balance.remainingMinor !== Number(repayment.remaining_minor)
       || schedule.reduce((sum, n) => sum + n, 0) !== context.balance.remainingMinor) {
     throw new RepaymentPlanError('repayment_quote_changed');
   }
+
+  if (reusable) return { success: true, redirect_url: reusable, reused: true };
 
   const attemptId = crypto.randomUUID();
   const expectedClaim = checkoutClaimState(link);
