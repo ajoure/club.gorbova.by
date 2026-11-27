@@ -9,6 +9,7 @@ CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT coalesce(curr
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
 CREATE FUNCTION public.has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$ SELECT $1='${ids.actor}'::uuid $$;
 CREATE TABLE profiles(id uuid PRIMARY KEY,user_id uuid);
+CREATE TABLE products_v2(id uuid PRIMARY KEY,entitlement_mode text);
 CREATE TABLE orders_v2(id uuid PRIMARY KEY,profile_id uuid,user_id uuid,product_id uuid,tariff_id uuid,currency text,status text,is_deleted boolean DEFAULT false,
   paid_amount numeric,final_price numeric,base_price numeric,payment_plan_id uuid,meta jsonb DEFAULT '{}',purchase_snapshot jsonb DEFAULT '{}',
   responsible_user_id uuid,updated_at timestamptz DEFAULT now());
@@ -32,6 +33,7 @@ BEGIN SELECT sum(amount) INTO paid FROM payments_v2 WHERE order_id=$1 AND status
 UPDATE orders_v2 SET paid_amount=paid,status=CASE WHEN paid>=final_price THEN 'paid' ELSE 'partial' END WHERE id=$1;
 RETURN '{"ok":true}'::jsonb; END $$;
 INSERT INTO profiles VALUES('${ids.profile}','${ids.user}');
+INSERT INTO products_v2 VALUES('${ids.product}','subscription');
 INSERT INTO tariffs VALUES('${ids.tariff}','${ids.product}',180);
 INSERT INTO orders_v2(id,profile_id,user_id,product_id,tariff_id,currency,status,paid_amount,final_price,base_price)
 VALUES('${ids.order}','${ids.profile}','${ids.user}','${ids.product}','${ids.tariff}','BYN','partial',250,500,500);
