@@ -10643,6 +10643,102 @@ export type Database = {
           },
         ]
       }
+      historical_manual_access_dispatch: {
+        Row: {
+          agreement_id: string
+          dispatched_at: string
+        }
+        Insert: {
+          agreement_id: string
+          dispatched_at?: string
+        }
+        Update: {
+          agreement_id?: string
+          dispatched_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "historical_manual_access_dispatch_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: true
+            referencedRelation: "historical_manual_installments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      historical_manual_installments: {
+        Row: {
+          created_at: string
+          created_by: string
+          due_basis: string | null
+          first_payment_id: string
+          id: string
+          interval_days: number
+          order_id: string
+          per_payment_byn: number
+          profile_id: string
+          reason: string
+          request_id: string
+          second_due_at: string
+          total_byn: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          due_basis?: string | null
+          first_payment_id: string
+          id?: string
+          interval_days: number
+          order_id: string
+          per_payment_byn: number
+          profile_id: string
+          reason: string
+          request_id: string
+          second_due_at: string
+          total_byn: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          due_basis?: string | null
+          first_payment_id?: string
+          id?: string
+          interval_days?: number
+          order_id?: string
+          per_payment_byn?: number
+          profile_id?: string
+          reason?: string
+          request_id?: string
+          second_due_at?: string
+          total_byn?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "historical_manual_installments_first_payment_id_fkey"
+            columns: ["first_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historical_manual_installments_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historical_manual_installments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       impersonation_sessions: {
         Row: {
           actor_user_id: string
@@ -25478,6 +25574,10 @@ export type Database = {
         Returns: string
       }
       admin_archived_login_merge_g9: { Args: { _phase: string }; Returns: Json }
+      admin_claim_historical_manual_access_v1: {
+        Args: { p_actor_id: string; p_order_id: string; p_profile_id: string }
+        Returns: Json
+      }
       admin_confirm_historical_cb_date: {
         Args: { _mode?: string; _payload: Json }
         Returns: Json
@@ -25831,6 +25931,21 @@ export type Database = {
           telegram_user_id: number
           user_id: string
         }[]
+      }
+      admin_historical_manual_installment_v1: {
+        Args: {
+          p_actor_id: string
+          p_confirm?: boolean
+          p_expected_fingerprint?: string
+          p_first_payment_id: string
+          p_interval_days: number
+          p_order_id: string
+          p_profile_id: string
+          p_reason: string
+          p_request_id: string
+          p_total_byn: number
+        }
+        Returns: Json
       }
       admin_import_historical_cb_17_18: {
         Args: { _mode?: string; _payload: Json }
@@ -28662,6 +28777,16 @@ export type Database = {
           s: string
           t: string
           u: string
+        }
+        Returns: Json
+      }
+      record_historical_manual_repayment_v1: {
+        Args: {
+          p_amount_minor: number
+          p_currency: string
+          p_link_id: string
+          p_paid_at: string
+          p_provider_uid: string
         }
         Returns: Json
       }

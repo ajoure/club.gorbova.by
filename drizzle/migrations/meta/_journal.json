@@ -288,6 +288,13 @@
       "when": 1795674057199,
       "tag": "0040_telegram_funnel_crm_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795802816656,
+      "tag": "0041_historical_manual_installments",
+      "breakpoints": true
     }
   ]
 }
