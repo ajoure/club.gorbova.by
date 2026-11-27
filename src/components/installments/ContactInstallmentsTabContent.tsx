@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ContactInternalInstallments } from "./ContactInternalInstallments";
 import { ContactInstallments } from "./ContactInstallments";
+import { HistoricalManualInstallmentDialog } from "./HistoricalManualInstallmentDialog";
 import {
   useContactInternalInstallments,
   useContactLegacyInstallments,
@@ -90,15 +91,16 @@ export function ContactInstallmentsTabContent({
 
   if (internalPlans.length === 0 && legacyRows.length === 0) {
     return (
-      <div className="text-center py-8 text-muted-foreground">
+      <div className="space-y-4"><HistoricalManualInstallmentDialog profileId={profileId} userId={userId}/><div className="text-center py-8 text-muted-foreground">
         <CreditCard className="w-12 h-12 mx-auto mb-3 opacity-30" />
         <p>Нет рассрочек</p>
-      </div>
+      </div></div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <HistoricalManualInstallmentDialog profileId={profileId} userId={userId}/>
       {internalPlans.length > 0 && (
         <ContactInternalInstallments
           profileId={profileId}

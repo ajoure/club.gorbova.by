@@ -15,7 +15,8 @@ export async function loadInstallmentRepaymentContext(db: SupabaseClient, orderI
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy JSON agreement is validated field by field below
   const orderMeta = order.meta as Record<string, any>;
   const agreement = orderMeta?.installment;
-  if (orderMeta?.manual_review || !agreement || agreement.model !== 'bepaid_finite_subscription'
+  const manual = agreement?.model === 'historical_manual_installment';
+  if (orderMeta?.manual_review || !agreement || (!manual && agreement.model !== 'bepaid_finite_subscription')
       || agreement.infinite !== false || agreement.original_order_id !== order.id) {
     throw new RepaymentPlanError('installment_agreement_requires_review');
   }
@@ -30,14 +31,24 @@ export async function loadInstallmentRepaymentContext(db: SupabaseClient, orderI
   const sub = subs[0];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy JSON agreement is validated field by field below
   const subAgreement = (sub.meta as Record<string, any>)?.installment;
-  for (const field of ['model', 'infinite', 'original_order_id', 'billing_cycles', 'per_payment_byn', 'effective_total_byn']) {
+  if (!manual) for (const field of ['model', 'infinite', 'original_order_id', 'billing_cycles', 'per_payment_byn', 'effective_total_byn']) {
     if (subAgreement?.[field] !== agreement[field]) throw new RepaymentPlanError('installment_snapshot_mismatch');
   }
   const { data: providers, error: providerError } = await db.from('provider_subscriptions')
     .select('id,provider,provider_subscription_id,subscription_v2_id,order_id,user_id,state,meta,updated_at')
     .eq('subscription_v2_id', sub.id);
   if (providerError) throw new RepaymentPlanError('repayment_read_failed');
-  if (!providers?.length) throw new RepaymentPlanError('installment_provider_missing');
+  if (manual) {
+    const { data: saved, error: savedError } = await db.from('historical_manual_installments')
+      .select('id,order_id,profile_id,user_id,first_payment_id,total_byn,per_payment_byn,interval_days,second_due_at')
+      .eq('order_id', order.id).maybeSingle();
+    if (savedError || !saved || saved.id !== orderMeta.historical_manual_agreement_id
+      || saved.user_id !== order.user_id || saved.profile_id !== order.profile_id
+      || Number(saved.total_byn) !== Number(agreement.effective_total_byn)
+      || Number(saved.per_payment_byn) !== Number(agreement.per_payment_byn)
+      || saved.first_payment_id !== agreement.first_payment_id || saved.interval_days !== agreement.interval_days
+      || agreement.billing_cycles !== 2 || providers?.length) throw new RepaymentPlanError('historical_manual_agreement_mismatch');
+  } else if (!providers?.length) throw new RepaymentPlanError('installment_provider_missing');
   if (providers.some(p => p.provider !== 'bepaid' || p.user_id !== order.user_id || p.order_id !== order.id)) {
     throw new RepaymentPlanError('installment_provider_identity_mismatch');
   }
@@ -65,18 +76,20 @@ export function quoteInstallmentRepayment(context: Awaited<ReturnType<typeof loa
   count?: number; payment_type: 'one_time' | 'subscription'; interval_days?: number;
 }) {
   if (!['one_time', 'subscription'].includes(input.payment_type)) throw new RepaymentPlanError('invalid_payment_type');
+  if (context.agreement.model === 'historical_manual_installment' && (input.payment_type !== 'one_time'
+    || (input.count !== undefined && input.count !== 1))) throw new RepaymentPlanError('historical_manual_single_repayment_only');
   const perPayment = moneyMinor(context.agreement.per_payment_byn);
   if (perPayment <= 0) throw new RepaymentPlanError('invalid_installment_amount');
   const count = input.count ?? Math.max(1, Math.ceil(context.balance.remainingMinor / perPayment));
   const scheduleMinor = splitRemainingDebt(context.balance.remainingMinor, count);
-  const intervalDays = input.interval_days ?? context.agreement.interval_days ?? 30;
+  const intervalDays = context.agreement.model === 'historical_manual_installment' ? 1 : input.interval_days ?? context.agreement.interval_days ?? 30;
   if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 366) throw new RepaymentPlanError('invalid_repayment_interval');
   const uniform = scheduleMinor.every(n => n === scheduleMinor[0]);
   if (input.payment_type === 'subscription' && (count < 2 || !uniform)) {
     throw new RepaymentPlanError('autopay_requires_equal_remaining_payments');
   }
   return {
-    contract_version: 1, original_order_id: context.order.id, subscription_v2_id: context.sub.id,
+    contract_version: 1, agreement_model: context.agreement.model, original_order_id: context.order.id, subscription_v2_id: context.sub.id,
     currency: context.order.currency, total_minor: context.balance.totalMinor,
     paid_minor: context.balance.paidMinor, paid_count: context.balance.paidCount,
     remaining_minor: context.balance.remainingMinor, schedule_minor: scheduleMinor,

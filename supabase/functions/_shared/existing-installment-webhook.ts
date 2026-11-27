@@ -41,7 +41,11 @@ export async function handleExistingInstallmentRepaymentWebhook(input: {
       || repayment.preserves_purchase !== true || repayment.changes_access !== false) {
     return response({ ok: false, status: 'manual_review', reason: 'repayment_link_mismatch' }, 202, corsHeaders);
   }
+  const manual = repayment.agreement_model === 'historical_manual_installment';
   const isSubscription = repayment.payment_type === 'subscription';
+  if (manual && (isSubscription || repayment.schedule_minor?.length !== 1 || repayment.replaces_provider_subscription_id)) {
+    return response({ ok: false, status: 'manual_review', reason: 'historical_manual_single_repayment_only' }, 202, corsHeaders);
+  }
   if (isSubscription && (!subscriptionId || String(repayment.provider_subscription_id) !== subscriptionId)) {
     return response({ ok: false, status: 'manual_review', reason: 'repayment_provider_mismatch' }, 202, corsHeaders);
   }
@@ -56,6 +60,18 @@ export async function handleExistingInstallmentRepaymentWebhook(input: {
         changes_access: false } });
     return response({ ok: false, status: 'manual_review', reason: 'repayment_refund_requires_reconciliation',
       refund_queued: true }, 202, corsHeaders);
+  }
+  if (manual) {
+    if (!['successful','settled'].includes(transactionStatus)) return response({ok:true,status:'repayment_waiting_for_success'},200,corsHeaders);
+    if (!['payment','capture'].includes(transactionType) || !transactionUid || !transaction?.paid_at) {
+      return response({ok:false,status:'manual_review',reason:'historical_manual_invalid_receipt'},202,corsHeaders);
+    }
+    const {data,error}=await supabase.rpc('record_historical_manual_repayment_v1',{
+      p_link_id:linkId,p_provider_uid:transactionUid,p_amount_minor:transaction.amount,
+      p_currency:transaction.currency,p_paid_at:transaction.paid_at,
+    });
+    if(error || data?.success!==true) return response({ok:false,status:'manual_review',reason:'historical_manual_receipt_requires_review'},202,corsHeaders);
+    return response({ok:true,status:'repayment_processed',...data},200,corsHeaders);
   }
   const succeeded = ['successful', 'settled', 'authorized'].includes(transactionStatus);
   if (!succeeded) {
@@ -81,6 +97,7 @@ export async function handleExistingInstallmentRepaymentWebhook(input: {
   ]);
   if (!order || !sub || order.user_id !== link.user_id || sub.order_id !== order.id || sub.user_id !== order.user_id
       || sub.product_id !== order.product_id || sub.tariff_id !== order.tariff_id
+      || (manual && order.meta?.installment?.model !== 'historical_manual_installment')
       || (isSubscription && (!providerRow || providerRow.subscription_v2_id !== sub.id || providerRow.order_id !== order.id))) {
     return response({ ok: false, status: 'manual_review', reason: 'repayment_identity_mismatch' }, 202, corsHeaders);
   }
