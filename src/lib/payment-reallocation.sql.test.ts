@@ -145,3 +145,23 @@ describe('atomic mistaken payment correction',()=>{
     await db.exec('RESET ROLE');
   });
 });
+
+// Correction after an actual paid boundary passed must not restart billing.
+describe('late correction of an existing paid window',()=>{
+ const expire=async(state='canceled')=>db.exec(`
+   update payments_v2 set paid_at=now()-interval '2 days' where id='${id(3)}';
+   update subscriptions_v2 set status='expired',auto_renew=false,access_end_at=now()-interval '1 day' where id='${id(10)}';
+   update entitlements set status='expired',expires_at=now()-interval '1 day' where id='${id(14)}';
+   update telegram_access_grants set status='expired',end_at=now()-interval '1 day' where club_id='${id(21)}';
+   update telegram_access set active_until=now()-interval '1 day' where club_id='${id(21)}';
+   insert into provider_subscriptions(id,user_id,subscription_v2_id,state) values('${id(600)}','${id(2)}','${id(10)}','${state}');`);
+ it('credits the original next30days and reactivates rights while canceled provider stays unchanged',async()=>{
+   await expire();const oldEnd=(await db.query<{access_end_at:Date}>(`select access_end_at from subscriptions_v2 where id='${id(10)}'`)).rows[0].access_end_at;const g=await preview();await commit(String(g.before_hash));
+   expect((await db.query(`select s.status,s.auto_renew,e.status as right_status,p.state,s.access_end_at=$1::timestamptz+interval '30 days' as anchored from subscriptions_v2 s join entitlements e on e.id='${id(14)}' join provider_subscriptions p on p.id='${id(600)}' where s.id='${id(10)}'`,[oldEnd])).rows[0]).toMatchObject({status:'active',auto_renew:false,right_status:'active',state:'canceled',anchored:true});
+   expect((await db.query(`select count(*)::int n from payments_v2`)).rows[0]).toEqual({n:2});
+ });
+ it('rejects an expired target with an active provider',async()=>{await expire('active');await expect(preview()).rejects.toThrow('billing_not_stopped');});
+ it('rejects receipts outside the exact old-window two-day boundary',async()=>{await expire();await db.exec(`update payments_v2 set paid_at=now()-interval '5 days' where id='${id(3)}'`);await expect(preview()).rejects.toThrow('period_not_eligible');});
+ it('rejects an old receipt whose corrected window has itself expired',async()=>{await expire();await db.exec(`update payments_v2 set paid_at=now()-interval '34 days' where id='${id(3)}';update subscriptions_v2 set access_end_at=now()-interval '33 days' where id='${id(10)}'`);await expect(preview()).rejects.toThrow(/receipt_not_eligible|period_not_eligible/);});
+ it('does not reactivate revoked rights',async()=>{await expire();await db.exec(`update entitlements set status='revoked' where id='${id(14)}'`);await expect(preview()).rejects.toThrow();});
+});

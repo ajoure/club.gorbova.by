@@ -63,12 +63,20 @@ begin
     or (select count(*) from public.payment_allocations where order_group_id=grp.id)<>1
     then raise exception 'reallocation_single_item_required'; end if;
   select * into strict source_sub from public.subscriptions_v2 where user_id=uid and product_id=source_product and status::text='active';
-  select * into strict target_sub from public.subscriptions_v2 where user_id=uid and product_id=target_product and status::text='active';
-  if source_sub.auto_renew is distinct from false or source_sub.access_end_at is null or target_sub.access_end_at is null or target_sub.access_end_at<now()
-    or target_sub.access_end_at>now()+interval '2 days'
+  select * into strict target_sub from public.subscriptions_v2 where user_id=uid and product_id=target_product and status::text in('active','expired');
+  if source_sub.auto_renew is distinct from false or source_sub.access_end_at is null or target_sub.access_end_at is null or pay.paid_at is null or target_sub.access_end_at<pay.paid_at
+    or target_sub.access_end_at>pay.paid_at+interval '2 days'
+    or target_sub.access_end_at+interval '30 days'<=now()
     or jsonb_array_length(coalesce(source_sub.meta->'extended_by_orders','[]'::jsonb))<2
     or source_sub.meta->'extended_by_orders'->>-1<>deal.id::text
     then raise exception 'reallocation_period_not_eligible'; end if;
+  -- A real misdirected receipt may be corrected after the old period expired.
+  -- This credits only its already-paid next window, never a new free period.
+  -- An expired target requires billing to have been explicitly stopped first.
+  if target_sub.status::text='expired' and (target_sub.auto_renew is distinct from false
+    or not exists(select 1 from public.provider_subscriptions p where p.subscription_v2_id=target_sub.id and p.state='canceled')
+    or exists(select 1 from public.provider_subscriptions p where p.subscription_v2_id=target_sub.id and p.state in('active','trial','pending')))
+    then raise exception 'reallocation_expired_target_billing_not_stopped'; end if;
   if exists(select 1 from public.provider_subscriptions p join public.subscriptions_v2 s on s.id=p.subscription_v2_id
       where p.user_id=uid and s.product_id=source_product and p.state in('active','trial'))
     then raise exception 'reallocation_source_recurring_active'; end if;
@@ -92,7 +100,7 @@ begin
   if not exists(select 1 from public.tariffs where id=target_sub.tariff_id and product_id=target_product and is_active)
     then raise exception 'reallocation_target_tariff_invalid'; end if;
   select * into strict old_ent from public.entitlements where user_id=uid and product_id=source_product and status='active';
-  select * into strict new_ent from public.entitlements where user_id=uid and product_id=target_product and status='active';
+  select * into strict new_ent from public.entitlements where user_id=uid and product_id=target_product and status in('active','expired');
   if old_ent.order_id<>deal.id or old_ent.expires_at<>source_sub.access_end_at or new_ent.expires_at<>target_sub.access_end_at
     or exists(select 1 from public.entitlement_sources where user_id=uid and product_id in(source_product,target_product))
     then raise exception 'reallocation_access_graph_not_supported'; end if;
@@ -217,10 +225,10 @@ begin
   update public.order_groups set quote_snapshot=quote,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'group_id')::uuid;
   update public.subscriptions_v2 set access_end_at=(g->>'source_new_end')::timestamptz,next_charge_at=(g->>'source_new_end')::timestamptz,
     meta=jsonb_set(coalesce(meta,'{}'::jsonb),'{extended_by_orders}',(meta->'extended_by_orders')-oid::text)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=source_sub;
-  update public.subscriptions_v2 set access_end_at=(g->>'target_new_end')::timestamptz,
+  update public.subscriptions_v2 set access_end_at=(g->>'target_new_end')::timestamptz,status='active',
     meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('extended_by_orders',coalesce(meta->'extended_by_orders','[]'::jsonb)||jsonb_build_array(oid::text),'payment_reallocation_request_id',p_request_id) where id=target_sub;
   update public.entitlements set expires_at=(g->>'source_new_end')::timestamptz,order_id=(g->>'prior_order_id')::uuid,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'source_entitlement_id')::uuid;
-  update public.entitlements set expires_at=(g->>'target_new_end')::timestamptz,order_id=oid,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'target_entitlement_id')::uuid;
+  update public.entitlements set expires_at=(g->>'target_new_end')::timestamptz,status='active',order_id=oid,meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id) where id=(g->>'target_entitlement_id')::uuid;
   for b in select value from jsonb_array_elements(g->'bonus_restorations') loop
     update public.entitlements set expires_at=(b->>'previous_expires_at')::timestamptz,
       meta=coalesce(meta,'{}'::jsonb)||jsonb_build_object('payment_reallocation_request_id',p_request_id,
