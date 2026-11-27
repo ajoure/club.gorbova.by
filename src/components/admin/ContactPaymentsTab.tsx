@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreditCard, RefreshCw, Loader2, ArrowDownLeft, ArrowUpRight, ExternalLink, Layers } from "lucide-react";
+import { PaymentReallocationDialog } from "./contact/PaymentReallocationDialog";
 
 interface ContactPaymentsTabProps {
   contactId: string;
@@ -431,6 +432,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0 sm:justify-end sm:shrink-0">
+                    {!payment.is_attempt && payment.status === 'succeeded' && payment.amount === 250
+                      && payment.productName === 'Gorbova Club' && <PaymentReallocationDialog profileId={contactId} paymentId={payment.id}/>}
                     {payment.productName && (
                       <Badge variant="outline" className="text-xs gap-1 max-w-full sm:max-w-[200px] min-w-0">
                         <ProductCategoryBadge category={(payment as any).category} />

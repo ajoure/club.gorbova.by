@@ -13,6 +13,7 @@ import {
 } from "./sbs_mismatch_guard.ts";
 import { resolveProviderLinkedSubscription } from "./provider_linked_subscription_resolver.ts";
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { paymentReallocationReplay } from '../_shared/payment-reallocation-replay.ts';
 import { writeLedgerEntry, buildPostCheck } from '../_shared/fulfillment-executor.ts';
 import { checkPriorPurchase } from '../_shared/check-prior-purchase.ts';
 import {
@@ -335,6 +336,19 @@ Deno.serve(async (req) => {
     if (historicalOrderRead.error) return new Response(JSON.stringify({ success: false,
       error: 'historical_receipt_guard_lookup_failed' }),
       { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    // A committed product correction already froze both paid periods atomically.
+    // Webhook/repair replays must not extend that corrected purchase a second time.
+    const reallocationReplay = await paymentReallocationReplay(orderId,
+      historicalOrderRead.data?.meta?.payment_reallocation_request_id, async request => {
+        const frozen = await supabase.from('payment_reallocations').select('result').eq('request_id', request).maybeSingle();
+        return { result: frozen.data?.result, error: frozen.error };
+      });
+    if (reallocationReplay === 'blocked') return new Response(JSON.stringify({ success: false, error: 'payment_reallocation_guard_failed' }),
+      { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (reallocationReplay === 'retained') {
+      return new Response(JSON.stringify({ success: true, skipped: true, reason: 'payment_reallocation_period_retained' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     if (hasHistoricalReceiptMarker(historicalOrderRead.data?.meta)) {
       return new Response(JSON.stringify({ success: false, skipped: true,
         error: 'historical_receipt_access_retained_on_parent' }),
